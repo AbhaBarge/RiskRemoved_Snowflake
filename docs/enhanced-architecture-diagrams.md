@@ -1,47 +1,37 @@
-# Risk & Compliance Copilot — Enhanced Architecture Diagrams
+# Risk & Compliance Copilot — Architecture Diagrams
 
-> Merges the deep dive's infrastructure diagrams with the strategy doc's fatal-gap fills:
-> agent design, data generation methodology, governance mechanisms, testing framework,
-> LLM boundary, SCD2 temporal model, typologies, and the replay harness.
->
 > All diagrams are Mermaid. Render in GitHub, VS Code, Streamlit, or [mermaid.live](https://mermaid.live).
 
 ---
 
 ## Diagrams Index
 
-| # | Diagram | Source | What It Fixes |
-|---|---|---|---|
-| 1 | Entity Relationship Model | Deep dive + Strategy Part 3 | Adds TYPOLOGY, AGENT_ACTION_LOG, SCD2 on PARTY, leg-vs-pair grain decision |
-| 2 | Data Generation — Three-Layer Model | **NEW** (Strategy Part 4) | Original had no generation methodology at all |
-| 3 | Data Ingestion Architecture | Deep dive (trimmed) | Drops IP/credit Marketplace feeds; adds replay harness |
-| 4 | Transformation Pipeline — Two-Speed | Deep dive (adjusted lags) | Fixes DT_VELOCITY to TARGET_LAG = DOWNSTREAM |
-| 5 | Cross-Domain Signal Detection | Deep dive (scoped) | Marks which 3 signals to build vs. stretch |
-| 6 | Signal-to-Artifact Pipeline | Deep dive + Strategy Part 2 | Unchanged — both docs agree |
-| 7 | Multi-Agent Architecture | **NEW** (Strategy Part 7) | Original had a 6-bullet placeholder |
-| 8 | LLM Boundary | **NEW** (Strategy Part 7) | What is deterministic vs. what the LLM does |
-| 9 | Notification and Case Routing | Deep dive | Unchanged |
-| 10 | Policy Ingestion Pipeline | Deep dive + Strategy Part 5 | Adds Cortex Search hybrid index, clause-level chunking, two-layer separation |
-| 11 | Governance Mechanisms | **NEW** (Strategy Part 8) | RLS, audit trail, reproducibility, refusal, maker-checker, DMFs |
-| 12 | Testing and Validation Framework | **NEW** (Strategy Part 10) | 5 test suites — original had zero testing |
-| 13 | MCP and External Loop Closing | **NEW** (Strategy Part 7) | Jira, Slack, agent-as-MCP-server |
-| 14 | Demo Spine — One Entity, Four Lenses | Deep dive | Unchanged |
-| 15 | Complete Storage Model | Deep dive + Strategy | Adds TYPOLOGY, AGENT_ACTION_LOG, REVIEW; marks hackathon tiers |
-| 16 | System Boundary | Deep dive + Strategy Part 0 | Adds "Complement, Do Not Compete" framing |
-| 17 | CoCo Lifecycle Evidence Map | **NEW** (Strategy Part 12) | Planning → Development → Execution → Testing |
-| 18 | Replay Harness Architecture | **NEW** (Strategy Part 6) | How synthetic data enters the live pipeline |
+| # | Diagram | Description |
+|---|---|---|
+| 1 | Entity Relationship Model | TYPOLOGY, AGENT_ACTION_LOG, SCD2 on PARTY, leg-vs-pair grain decision |
+| 2 | Data Generation — Three-Layer Model | Data generation methodology: entity skeleton, behavioural ledger, narratives |
+| 3 | Data Ingestion Architecture | Replay harness, sanctions feeds, policy document extraction |
+| 4 | Transformation Pipeline — Two-Speed | Fast lane (seconds-to-minutes) and slow lane (daily batch) dynamic tables |
+| 5 | Cross-Domain Signal Detection | Tier 1 signals to build, Tier 2 stretch goals, on-demand agent tools |
+| 6 | Signal-to-Artifact Pipeline | The evidence chain from detection through attestation |
+| 7 | Multi-Agent Architecture | Four agent roles: Sentinel, Investigator, Drafter, Reviewer |
+| 8 | LLM Boundary | Deterministic vs. LLM responsibilities |
+| 9 | Notification and Case Routing | Signal stream to case creation and notification dispatch |
+| 10 | Policy Ingestion Pipeline | Document extraction, human-gated activation, two-layer output |
+| 11 | Governance Mechanisms | RLS, audit trail, reproducibility, refusal, maker-checker, DMFs |
+| 12 | Testing and Validation Framework | 5 test suites covering detection, SQL, groundedness, adversarial, pipeline |
+| 13 | MCP and External Loop Closing | Jira, Slack, agent-as-MCP-server, scheduled automations |
+| 14 | Demo Spine — One Entity, Four Lenses | Single entity traced through fraud, AML, and credit lenses |
+| 15 | Complete Storage Model | Full table inventory with tier markings |
+| 16 | System Boundary | Complement-not-compete design principle and system constraints |
+| 17 | CoCo Lifecycle Evidence Map | Planning, Development, Execution, Testing phases |
+| 18 | Replay Harness Architecture | How synthetic data enters the live pipeline |
 
 ---
 
-## 1. Entity Relationship Model (Enhanced)
+## 1. Entity Relationship Model
 
-**Changes from original:**
-- Added `TYPOLOGY` table (Strategy Part 3, decision #3) — links detection rules to FATF/RBI text
-- Added `AGENT_ACTION_LOG` (Strategy Part 3, governance layer) — immutable audit of every agent turn
-- Added `REVIEW` (Strategy Part 3) — maker-checker decisions
-- Added `effective_from`/`effective_to` on PARTY for SCD2 (Strategy Part 3, decision #2)
-- Added `RULE_DEFINITION` linking rules to policy clauses (Strategy Part 3)
-- Transaction grain note: physical table is leg-level; pair-level exposed as a view
+Physical table is leg-level grain; pair-level exposed as a view.
 
 ```mermaid
 erDiagram
@@ -250,9 +240,7 @@ erDiagram
 
 ---
 
-## 2. Data Generation — Three-Layer Model (NEW)
-
-**Gap filled:** The original diagrams had no data generation methodology. A developer looking at the ingestion diagram would ask "where does the data come from?" and get no answer.
+## 2. Data Generation — Three-Layer Model
 
 ```mermaid
 flowchart TB
@@ -313,14 +301,7 @@ flowchart TB
 
 ---
 
-## 3. Data Ingestion Architecture (Revised)
-
-**Changes from original:**
-- Dropped IPinfo/MaxMind/Fraud Blocker (no IP data in synthetic ledger, no detection rules use them)
-- Dropped FactSet, credit Marketplace feeds (hackathon scope: AML spine only)
-- Added Replay Harness as the transaction source (replaces assumption of live CBS)
-- Added OpenSanctions as primary consolidated source (Strategy Part 6)
-- Kept TRUVITY PEP for Marketplace integration demo
+## 3. Data Ingestion Architecture
 
 ```mermaid
 flowchart TB
@@ -382,12 +363,7 @@ flowchart TB
 
 ---
 
-## 4. Transformation Pipeline — Two-Speed (Revised)
-
-**Changes from original:**
-- DT_TXN_VELOCITY_FEATURES changed to `TARGET_LAG = DOWNSTREAM` (refreshes only when SIGNALS needs it — saves credits)
-- Credit/liquidity slow lane marked as Tier 2 (build only if AML spine works)
-- Added DT_SANCTIONS_CONSOLIDATED explicit position
+## 4. Transformation Pipeline — Two-Speed
 
 ```mermaid
 flowchart TB
@@ -431,11 +407,9 @@ flowchart TB
 
 ---
 
-## 5. Cross-Domain Signal Detection (Scoped)
+## 5. Cross-Domain Signal Detection
 
-**Changes from original:**
-- 3 signals marked TIER 1 (build these), 2 marked TIER 2 (stretch), 2 marked CUT
-- Added note: MULE_RING_CANDIDATE cannot be a DT (recursive CTE not incrementally refreshable) — must be an on-demand agent tool
+Three signals are Tier 1 (build these), two are Tier 2 (stretch), and MULE_RING_CANDIDATE cannot be a DT (recursive CTE not incrementally refreshable) — it must be an on-demand agent tool.
 
 ```mermaid
 flowchart TB
@@ -492,8 +466,6 @@ flowchart TB
 
 ## 6. Signal-to-Artifact Pipeline (The Evidence Chain)
 
-Unchanged from original — both documents agree on this flow.
-
 ```mermaid
 flowchart LR
     subgraph DETECT["1. DETECT"]
@@ -543,9 +515,7 @@ flowchart LR
 
 ---
 
-## 7. Multi-Agent Architecture (NEW)
-
-**Gap filled:** The original deep dive had a single "Agent Chain" box with 6 bullets. This is what a developer actually needs to build.
+## 7. Multi-Agent Architecture
 
 ```mermaid
 flowchart TB
@@ -611,9 +581,7 @@ flowchart TB
 
 ---
 
-## 8. LLM Boundary (NEW)
-
-**Gap filled:** Neither the original diagrams nor the deep dive made the deterministic-vs-LLM boundary explicit. A developer needs this to know which components require SQL and which require prompt engineering.
+## 8. LLM Boundary
 
 ```mermaid
 flowchart LR
@@ -653,8 +621,6 @@ flowchart LR
 
 ## 9. Notification and Case Routing
 
-Unchanged from original.
-
 ```mermaid
 flowchart TB
     DT_SIG["DT_SIGNALS_FAST<br/><i>Dynamic Table</i>"]
@@ -688,13 +654,7 @@ flowchart TB
 
 ---
 
-## 10. Policy Ingestion Pipeline (Enhanced)
-
-**Changes from original:**
-- Added Cortex Search hybrid index as explicit output (Strategy Part 5)
-- Added clause-level chunking metadata specification
-- Added two-layer separation: Cortex Search for regulatory retrieval, POLICY_CLAUSE for structured rule execution
-- Added 8 real regulatory sources (Strategy Part 5)
+## 10. Policy Ingestion Pipeline
 
 ```mermaid
 flowchart TB
@@ -752,9 +712,7 @@ flowchart TB
 
 ---
 
-## 11. Governance Mechanisms (NEW)
-
-**Gap filled:** Original diagrams had a "System Boundary" diagram listing what the copilot doesn't do, but no diagram of the six governance mechanisms the copilot actively enforces.
+## 11. Governance Mechanisms
 
 ```mermaid
 flowchart TB
@@ -795,9 +753,7 @@ flowchart TB
 
 ---
 
-## 12. Testing and Validation Framework (NEW)
-
-**Gap filled:** Original diagrams had zero testing content. This is what makes evaluation results credible.
+## 12. Testing and Validation Framework
 
 ```mermaid
 flowchart TB
@@ -841,9 +797,7 @@ flowchart TB
 
 ---
 
-## 13. MCP and External Loop Closing (NEW)
-
-**Gap filled:** Original diagrams showed notification routing to Slack channels but not the full MCP connector architecture that closes the workflow loop outside Snowflake.
+## 13. MCP and External Loop Closing
 
 ```mermaid
 flowchart TB
@@ -887,8 +841,6 @@ flowchart TB
 
 ## 14. Demo Spine — One Entity, Four Lenses
 
-Unchanged from original — this is the strongest existing diagram.
-
 ```mermaid
 flowchart TB
     ENTITY["Party: Rajesh Kumar<br/><i>Synthetic counterparty<br/>party_id = P-10042</i>"]
@@ -929,13 +881,7 @@ flowchart TB
 
 ---
 
-## 15. Complete Storage Model (Enhanced)
-
-**Changes from original:**
-- Added TYPOLOGY, RULE_DEFINITION, AGENT_ACTION_LOG, REVIEW tables
-- Marked each table's hackathon tier
-- Removed DT_EXPOSURE_PORTFOLIO, DT_PROVISIONING, DT_LCR_COMPUTATION from Tier 1
-- Changed DT_VELOCITY target lag
+## 15. Complete Storage Model
 
 ```mermaid
 flowchart TB
@@ -1008,12 +954,7 @@ flowchart TB
 
 ---
 
-## 16. System Boundary (Enhanced)
-
-**Changes from original:**
-- Added "Complement, Do Not Compete" principle (Deep dive's strongest framing)
-- Added explicit data flow directions
-- Added the "what the copilot does NOT do" list as constraints
+## 16. System Boundary
 
 ```mermaid
 flowchart TB
@@ -1065,9 +1006,7 @@ flowchart TB
 
 ---
 
-## 17. CoCo Lifecycle Evidence Map (NEW)
-
-**Gap filled:** A developer needs to know what CoCo artifacts to produce at each phase to score on "Technical Execution — CoCo evidence across all four lifecycle phases."
+## 17. CoCo Lifecycle Evidence Map
 
 ```mermaid
 flowchart LR
@@ -1075,7 +1014,7 @@ flowchart LR
         P1["CoCo planning transcripts<br/><i>Saved as artifacts</i>"]
         P2["Data exploration outputs<br/><i>cortex search, table-details</i>"]
         P3["Ontology draft<br/><i>Plan Mode for schema design</i>"]
-        P4["This design doc<br/><i>strategy + deep dive</i>"]
+        P4["This design doc<br/><i>Architecture diagrams +<br/>implementation specs</i>"]
     end
 
     subgraph DEV["2. DEVELOPMENT"]
@@ -1106,9 +1045,9 @@ flowchart LR
 
 ---
 
-## 18. Replay Harness Architecture (Simplified)
+## 18. Replay Harness Architecture
 
-**Hackathon approach:** Python script using standard Snowflake Connector `INSERT INTO` in batches with `time.sleep()` to simulate real-time arrival. No Snowpipe Streaming SDK (Java-only, over-engineered for demo). Snowpipe Streaming is a Future Scope item.
+Python script using standard Snowflake Connector `INSERT INTO` in batches with `time.sleep()` to simulate real-time arrival. Snowpipe Streaming is a future scope item.
 
 ```mermaid
 flowchart TB
@@ -1154,7 +1093,7 @@ The following are implementation-level ambiguities that would block or confuse a
 
 ### Gap 1: Transaction Grain Conversion
 
-IBM AMLworld ships **pair-level** (sender → receiver). The schema stores **leg-level** (one row per debit/credit side). Neither document specifies the transformation logic.
+IBM AMLworld ships **pair-level** (sender → receiver). The schema stores **leg-level** (one row per debit/credit side). The transformation logic needs to be specified.
 
 **Decision needed:** During L2 reskin, each AMLworld pair row becomes two leg rows: one debit on the sender account (negative amount), one credit on the receiver account (positive amount), sharing a `txn_pair_id`. The pair-level view for graph queries is `SELECT * FROM TRANSACTION T1 JOIN TRANSACTION T2 ON T1.txn_pair_id = T2.txn_pair_id AND T1.amount < 0 AND T2.amount > 0`.
 
@@ -1164,7 +1103,7 @@ IBM AMLworld ships **pair-level** (sender → receiver). The schema stores **leg
 
 ### Gap 3: CORTEX_SEARCH_BATCH vs. DT_SIGNALS_FAST for Sanctions
 
-The strategy doc recommends `CORTEX_SEARCH_BATCH` for batch sanctions screening. The deep dive puts sanctions screening inside `DT_SIGNALS_FAST`. These are architecturally different:
+The `CORTEX_SEARCH_BATCH` approach is for batch sanctions screening. `DT_SIGNALS_FAST` handles sanctions screening via DT refresh. These are architecturally different:
 - `CORTEX_SEARCH_BATCH` is a one-time batch operation (fuzzy match, handles aliases/transliterations).
 - A DT running sanctions checks on every refresh would call a UDF or join against `DT_SANCTIONS_CONSOLIDATED`.
 
@@ -1190,7 +1129,7 @@ Evidence rows store `(ref_type, ref_id, query_id, as_of_ts)`. But `ref_id` is a 
 
 ### Gap 6: STR XML Generation
 
-Both documents mention generating STR XML conforming to FIU-IND's reporting format. Neither specifies:
+STR XML generation must conform to FIU-IND's reporting format. The following needs to be specified:
 - Where the XML template/schema definition lives.
 - Whether `generate_str_xml()` is a Python UDF, a stored procedure, or an agent tool.
 - How structured fields (deterministic: amounts, dates, account numbers) are separated from narrative fields (LLM: suspicion description).
@@ -1198,8 +1137,6 @@ Both documents mention generating STR XML conforming to FIU-IND's reporting form
 **Decision needed:** `REF_FILING_TEMPLATES.field_definitions` (VARIANT column) stores the FIU-IND XML schema as a JSON spec. `generate_str_xml()` is a Python stored procedure that: (1) queries FINDING + EVIDENCE to populate structured fields via SQL, (2) takes the narrative text from FINDING.narrative as-is, (3) assembles XML using Python's `xml.etree`, (4) validates against the schema, (5) returns the XML string and a validation status. The LLM never touches the XML — it only authored the narrative that gets embedded.
 
 ### Gap 7: Verified Query Inventory
-
-The strategy says "author ~30 verified queries." Neither document lists them or provides a taxonomy. A developer doesn't know what questions to write verified queries for.
 
 **Decision needed:** Minimum verified query set for the demo (20 queries, covering the 6-minute script):
 
@@ -1216,7 +1153,7 @@ The strategy says "author ~30 verified queries." Neither document lists them or 
 
 ### Gap 8: Role Definitions for RLS Demo
 
-Part 8 says "demo the same question from two roles returning different answers." Neither document specifies:
+The demo should show "the same question from two roles returning different answers." The following needs to be specified:
 - What roles exist.
 - What the row access policy filters on.
 - Which tables have RLS applied.
@@ -1231,7 +1168,7 @@ Part 8 says "demo the same question from two roles returning different answers."
 
 ### Gap 10: Cortex Search Service Configuration
 
-Both documents mention Cortex Search for regulatory text but neither specifies:
+Cortex Search is used for regulatory text retrieval, but the following needs to be specified:
 - The search service name and target table.
 - Which column is the search column (clause_text? full parsed markdown?).
 - The embedding model and chunk overlap settings.
@@ -1244,7 +1181,7 @@ Both documents mention Cortex Search for regulatory text but neither specifies:
 
 # PART II — Build Reference
 
-Everything below consolidates the build-ready information from the strategy doc, solution plan, target user analysis, and deep dive into one reference a developer reads sequentially before writing code.
+Everything below consolidates the build-ready information into one reference a developer reads sequentially before writing code.
 
 ---
 
