@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Risk Copilot — Dev Quickstart</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-09-21",
+    "intent": "Simplified developer quickstart for Risk & Compliance Copilot hackathon build",
+    "sections": [
+      { "id": "big-picture", "title": "Big Picture", "dataSources": [], "producerNotes": "Distilled from enhanced-architecture-diagrams.md" },
+      { "id": "build-order", "title": "Build Order", "dataSources": [], "producerNotes": "17 Tier-1 components sequenced" },
+      { "id": "issues", "title": "Issues Found", "dataSources": [], "producerNotes": "Inconsistencies flagged during review" }
+    ]
+  }
+  </script>
+  <script src="/libs/mermaid@10.9.6/mermaid.min.js"></script>
+  <script>
+    if (typeof mermaid === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.6/dist/mermaid.min.js';
+      s.onload = function() { mermaid.initialize({ startOnLoad: true, securityLevel: 'strict', theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default', gantt: { fontSize: 12 } }); };
+      document.head.appendChild(s);
+    }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 960px; width: 100%; margin: 0 auto;
+      padding: clamp(16px, 4vw, 32px);
+      color: light-dark(#1e293b, #e2e8f0);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.6;
+    }
+    h1 { font-size: 2em; margin-bottom: 4px; color: light-dark(#0f172a, #f8fafc); }
+    h2 { font-size: 1.4em; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 2px solid light-dark(#e2e8f0, #334155); color: light-dark(#0f172a, #f1f5f9); }
+    h3 { font-size: 1.1em; margin: 24px 0 8px; color: light-dark(#1e40af, #93c5fd); }
+    p, li { margin-bottom: 8px; }
+    ul, ol { padding-left: 20px; }
+    a { color: light-dark(#2563eb, #60a5fa); }
+    code { background: light-dark(#f1f5f9, #1e293b); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    img, svg { max-width: 100%; height: auto; }
+
+    .subtitle { color: light-dark(#64748b, #94a3b8); font-size: 1.1em; margin-bottom: 24px; }
+    .hero-box { background: light-dark(#eff6ff, #1e293b); border: 1px solid light-dark(#bfdbfe, #334155); border-radius: 12px; padding: 24px; margin: 20px 0 32px; }
+    .hero-box p { margin: 0; font-size: 1.05em; }
+
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 16px 0; }
+    .card { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; padding: 16px; }
+    .card-icon { font-size: 1.6em; margin-bottom: 6px; }
+    .card-title { font-weight: 700; font-size: 0.95em; margin-bottom: 4px; color: light-dark(#0f172a, #f1f5f9); }
+    .card-desc { font-size: 0.85em; color: light-dark(#475569, #94a3b8); }
+
+    .pipeline-step { display: flex; align-items: flex-start; gap: 16px; margin: 12px 0; }
+    .step-num { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9em; color: #fff; }
+    .step-content { flex: 1; }
+    .step-content strong { display: block; margin-bottom: 2px; }
+    .step-content .files { font-size: 0.85em; color: light-dark(#6366f1, #a5b4fc); font-family: monospace; }
+
+    .tier-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 700; text-transform: uppercase; }
+    .tier-1 { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); }
+    .tier-2 { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); }
+    .tier-cut { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); }
+
+    .issue-box { background: light-dark(#fef2f2, #1c0a0a); border-left: 4px solid #ef4444; border-radius: 0 8px 8px 0; padding: 16px; margin: 12px 0; }
+    .issue-box .issue-title { font-weight: 700; color: light-dark(#991b1b, #fca5a5); margin-bottom: 4px; }
+    .issue-box p { margin: 0; font-size: 0.92em; }
+
+    .warn-box { background: light-dark(#fffbeb, #1a1400); border-left: 4px solid #f59e0b; border-radius: 0 8px 8px 0; padding: 16px; margin: 12px 0; }
+    .warn-box .warn-title { font-weight: 700; color: light-dark(#92400e, #fcd34d); margin-bottom: 4px; }
+    .warn-box p { margin: 0; font-size: 0.92em; }
+
+    .note-box { background: light-dark(#eff6ff, #0c1929); border-left: 4px solid #3b82f6; border-radius: 0 8px 8px 0; padding: 16px; margin: 12px 0; }
+    .note-box .note-title { font-weight: 700; color: light-dark(#1e40af, #93c5fd); margin-bottom: 4px; }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 8px 12px; text-align: left; }
+    th { background: light-dark(#f3f4f6, #1e293b); font-weight: 600; }
+    tr:nth-child(even) { background: light-dark(#f8fafc, #0f172a); }
+
+    .mermaid { margin: 16px 0; overflow-x: auto; }
+    .mermaid svg { max-width: 100%; height: auto; }
+
+    .separator { height: 1px; background: light-dark(#e2e8f0, #334155); margin: 40px 0; }
+
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { padding: 6px 0 6px 28px; position: relative; }
+    .checklist li::before { content: ''; position: absolute; left: 0; top: 10px; width: 18px; height: 18px; border: 2px solid light-dark(#94a3b8, #475569); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <h1>Risk & Compliance Copilot</h1>
+  <div class="subtitle">Developer Quickstart — from zero to demo</div>
+
+  <div class="hero-box">
+    <p><strong>The one-sentence pitch:</strong> An AML analyst's copilot that goes from <em>suspicious signal</em> all the way to a <em>regulator-ready STR filing</em> — where every number comes from SQL, never from an LLM.</p>
+  </div>
+
+  <!-- ========== SECTION 1: BIG PICTURE ========== -->
+  <h2 id="big-picture">1. The Big Picture (30 seconds)</h2>
+
+  <p>The whole system is a pipeline with 4 stages. Everything else is plumbing to make these stages work.</p>
+
+  <pre class="mermaid">
+flowchart LR
+    S["SIGNAL\nRule fires on data"]
+    E["EVIDENCE\nImmutable pointers\nto source rows"]
+    F["FINDING\nLLM-composed\nnarrative + citations"]
+    A["ARTIFACT\nSTR filing XML\nready for sign-off"]
+    S --> E --> F --> A
+  </pre>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-icon">1</div>
+      <div class="card-title">Signal</div>
+      <div class="card-desc">Deterministic SQL rules fire on transaction patterns (structuring, income mismatch, sanctions match). No ML. No LLM.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">2</div>
+      <div class="card-title">Evidence</div>
+      <div class="card-desc">Pointers (not copies) to the actual rows — txn IDs, party records, policy clauses. Each carries a Snowflake query_id for reproducibility.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">3</div>
+      <div class="card-title">Finding</div>
+      <div class="card-desc">An LLM composes a narrative citing the evidence. Versioned, never updated. Every claim must resolve to an evidence row.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">4</div>
+      <div class="card-title">Artifact</div>
+      <div class="card-desc">The FIU-IND STR XML file. All numbers from SQL. A human Principal Officer must sign off — auto-filing is legally wrong.</div>
+    </div>
+  </div>
+
+  <div class="note-box">
+    <div class="note-title">The Golden Rule</div>
+    <p>No number in a regulatory filing is ever produced by a language model. Every figure comes from a SQL query. The LLM only selects, sequences, and narrates.</p>
+  </div>
+
+  <!-- ========== SECTION 2: WHAT YOU'RE BUILDING ========== -->
+  <h2 id="what">2. What You're Actually Building</h2>
+
+  <h3>Data Flow (simplified)</h3>
+  <p>Raw data enters on the left, signals come out on the right. There are two speeds: fast (fraud/AML, minutes) and slow (credit risk, daily).</p>
+
+  <pre class="mermaid">
+flowchart LR
+    subgraph RAW["Raw Landing"]
+        R1["RAW_TRANSACTIONS"]
+        R2["RAW_PARTY_CBS\nRAW_PARTY_KYC"]
+        R3["RAW_SANCTIONS"]
+    end
+    subgraph DT["Dynamic Tables"]
+        D1["DT_DIM_PARTY\n1 day"]
+        D2["DT_ENRICHED\n1 min"]
+        D3["DT_VELOCITY\ndownstream"]
+        D4["DT_SANCTIONS\ndownstream"]
+        D5["DT_SIGNALS_FAST\n5 min"]
+    end
+    subgraph OUT["Outputs"]
+        SIG["SIGNAL rows"]
+        CASE["CASE created"]
+    end
+    R1 --> D2
+    R2 --> D1 --> D2
+    D2 --> D3 --> D5
+    R3 --> D4 --> D5
+    D5 -->|"stream + task"| SIG --> CASE
+  </pre>
+
+  <h3>Single Agent, Four Modes</h3>
+  <p>One Cortex Agent handles all four roles via system prompt mode-switching. No multi-agent orchestration needed.</p>
+
+  <pre class="mermaid">
+flowchart LR
+    AGENT["Single Cortex Agent"]
+    SE["MODE: SENTINEL\nTriage + prioritize"]
+    IN["MODE: INVESTIGATOR\nGather evidence"]
+    DR["MODE: DRAFTER\nCompose finding\n+ STR XML"]
+    RE["MODE: REVIEWER\nAdversarial check\nevery claim"]
+    AGENT --> SE --> IN --> DR --> RE
+    RE -->|"REJECT"| DR
+    RE -->|"APPROVE"| HU["Human\nPrincipal Officer\nsigns off"]
+  </pre>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-title">Sentinel Mode</div>
+      <div class="card-desc">Reads new signals, opens cases, sets priority. Mostly deterministic — LLM only for ranking summary.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Investigator Mode</div>
+      <div class="card-desc">Heavy tool use: queries semantic view, searches sanctions, traverses counterparty graph, detects mule rings. Writes EVIDENCE rows. No conclusions.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Drafter Mode</div>
+      <div class="card-desc">Reads evidence bundle, maps to policy clauses, writes FINDING narrative + STR XML. Every number from SQL.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Reviewer Mode (Critic)</div>
+      <div class="card-desc">Re-runs stored SQL via Time Travel, compares result hashes, checks citations resolve, verifies clauses in effect. APPROVE or REJECT with specific defects.</div>
+    </div>
+  </div>
+
+  <!-- ========== SECTION 3: DATA STORY ========== -->
+  <h2 id="data">3. Where the Data Comes From</h2>
+
+  <p>Three layers, three technologies. This is important — don't use an LLM to generate transactions.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>What</th><th>How</th><th>Output</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>L1 — Entities</strong></td>
+          <td>Parties, accounts, relationships</td>
+          <td>Python Faker (<code>hi_IN</code> locale) + custom graph builder. Seeded for reproducibility.</td>
+          <td>~5K parties, ~10K accounts, UBO graph edges</td>
+        </tr>
+        <tr>
+          <td><strong>L2 — Transactions</strong></td>
+          <td>The behavioral ledger</td>
+          <td>IBM AMLworld HI-Small dataset, re-skinned to INR/India. Labels are deterministic ground truth.</td>
+          <td>~5M txns with known laundering patterns</td>
+        </tr>
+        <tr>
+          <td><strong>L3 — Narratives</strong></td>
+          <td>KYC notes, case comments, policies</td>
+          <td>AI_COMPLETE via Cortex. Bulk = small model. Golden docs = frontier model.</td>
+          <td>10K KYC notes, internal AML policy docs</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="warn-box">
+    <div class="warn-title">L2 Re-skin Is Non-Trivial</div>
+    <p>IBM AMLworld is <strong>pair-level</strong> (sender to receiver). Your schema is <strong>leg-level</strong> (one row per debit, one per credit). Each AMLworld row becomes two rows. The <code>reskin_transactions.py</code> script must handle: currency conversion (x83 for INR), channel remapping (ACH to NEFT, Wire to RTGS), and this pair-to-leg split.</p>
+  </div>
+
+  <!-- ========== SECTION 4: BUILD ORDER ========== -->
+  <h2 id="build-order">4. Build Order (17 Steps)</h2>
+
+  <p>This is the critical path. Each step depends on the ones before it. Don't skip ahead.</p>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#2563eb;">1</div>
+    <div class="step-content">
+      <strong>Core DDL — 16 tables across 6 schemas</strong>
+      <span class="files">sql/01_ddl.sql</span>
+      <p>Create all tables from the ER model. Schemas: RAW, CURATED, GOVERNANCE, EVIDENCE_CHAIN, AUDIT, GROUND_TRUTH.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#2563eb;">2</div>
+    <div class="step-content">
+      <strong>L1 Entity Generator</strong>
+      <span class="files">scripts/generate_entities.py</span>
+      <p>Faker with <code>hi_IN</code> locale. ~5K parties with Indian names, PAN/Aadhaar-style IDs, graph edges for relationships.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#2563eb;">3</div>
+    <div class="step-content">
+      <strong>L2 Transaction Reskin</strong>
+      <span class="files">scripts/reskin_transactions.py</span>
+      <p>Read HI-Small, convert to INR, remap channels, split pairs to legs, separate labels to GROUND_TRUTH.LABELS.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#2563eb;">4</div>
+    <div class="step-content">
+      <strong>L3 Narrative Generator</strong>
+      <span class="files">scripts/generate_narratives.sql</span>
+      <p>AI_COMPLETE calls to generate KYC notes and case comments. Inject correlated noise (typos, contradictions with structured records).</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#7c3aed;">5</div>
+    <div class="step-content">
+      <strong>Replay Harness</strong>
+      <span class="files">scripts/replay_harness.py</span>
+      <p>Python script: reads transactions in timestamp order, INSERTs batches, sleeps. <code>--inject structuring_burst</code> flag for live demo.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#059669;">6</div>
+    <div class="step-content">
+      <strong>6 Dynamic Tables</strong>
+      <span class="files">sql/02_dynamic_tables.sql</span>
+      <p>DT_DIM_PARTY (1d), DT_TRANSACTIONS_ENRICHED (1m), DT_TXN_VELOCITY_FEATURES (downstream), DT_SANCTIONS_CONSOLIDATED (downstream), DT_PARTY_RELATIONSHIP (1d), DT_SIGNALS_FAST (5m).</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#059669;">7</div>
+    <div class="step-content">
+      <strong>Stream + Routing Task</strong>
+      <span class="files">sql/03_stream_task.sql</span>
+      <p>SIGNALS_STREAM on DT_SIGNALS_FAST. ROUTE_SIGNALS task creates CASE + SIGNAL rows when stream has data.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#d97706;">8</div>
+    <div class="step-content">
+      <strong>Policy Clause Population</strong>
+      <span class="files">sql/05_policy_ingest.sql</span>
+      <p>AI_PARSE_DOCUMENT + AI_EXTRACT on 8 real regulatory PDFs. Extract clause-level structured data.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#d97706;">9</div>
+    <div class="step-content">
+      <strong>Cortex Search Service</strong>
+      <span class="files">sql/06_search_service.sql</span>
+      <p>Hybrid keyword + semantic search over policy clause chunks. Carries (doc, section, clause, effective_date) metadata.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#dc2626;">10</div>
+    <div class="step-content">
+      <strong>Semantic View + 20 Verified Queries</strong>
+      <span class="files">semantic_views/risk_copilot.yaml</span>
+      <p>Physical tables: all 6 DTs + POLICY_CLAUSE + CASE + SIGNAL + EVIDENCE + FINDING. 20 pre-authored verified queries.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#dc2626;">11</div>
+    <div class="step-content">
+      <strong>Single Cortex Agent (4 modes)</strong>
+      <span class="files">sql/04_agents.sql</span>
+      <p>One agent with Sentinel, Investigator, Drafter, Reviewer modes in the system prompt. Build Reviewer mode FIRST — it's the highest demo-ROI.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#dc2626;">12</div>
+    <div class="step-content">
+      <strong>8 Stored Procedures (Agent Tools)</strong>
+      <span class="files">sql/procedures/*.sql</span>
+      <p>open_case, gather_evidence_bundle, screen_sanctions_batch, traverse_counterparty_graph, traverse_mule_ring, generate_str_xml, validate_filing_schema, escalate_to_principal_officer.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#6366f1;">13</div>
+    <div class="step-content">
+      <strong>RLS + Masking Policies</strong>
+      <span class="files">sql/07_governance.sql</span>
+      <p>Row-level security on PARTY + TRANSACTION (branch-level). Masking on PAN/Aadhaar. Demo: same question, two roles, different answers.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#6366f1;">14</div>
+    <div class="step-content">
+      <strong>Evaluation Suite 1 — Detection F1</strong>
+      <span class="files">tests/test_detection.sql</span>
+      <p>Per-typology Precision/Recall/F1 against GROUND_TRUTH.LABELS. Target: F1 > 0.7 for structuring.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#6366f1;">15</div>
+    <div class="step-content">
+      <strong>Evaluation Suite 2 — Text-to-SQL</strong>
+      <span class="files">tests/golden_questions.sql</span>
+      <p>15-20 golden questions with expected results. Measured on result match, not SQL match. Target: >85%.</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#475569;">16</div>
+    <div class="step-content">
+      <strong>3 Scheduled Automations</strong>
+      <span class="files">automations/</span>
+      <p>Overnight triage (daily 02:00), monthly CTR pre-assembly (1st), weekly regulatory-change check (Sun 22:00).</p>
+    </div>
+  </div>
+
+  <div class="pipeline-step">
+    <div class="step-num" style="background:#475569;">17</div>
+    <div class="step-content">
+      <strong>Streamlit App</strong>
+      <span class="files">app/streamlit_app.py</span>
+      <p>Dashboard + investigation interface. Build LAST. This is the presentation layer, not the core.</p>
+    </div>
+  </div>
+
+  <!-- ========== SECTION 5: KEY TABLES ========== -->
+  <h2 id="tables">5. The Tables That Matter Most</h2>
+
+  <p>16 tables is a lot. Here are the 7 you'll touch constantly:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Table</th><th>Schema</th><th>What It Holds</th><th>Key Columns</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>RAW_TRANSACTIONS</code></td><td>RAW</td><td>Every transaction leg (append-only)</td><td>txn_id, account_id, amount (signed), channel, txn_timestamp</td></tr>
+        <tr><td><code>PARTY</code></td><td>CURATED</td><td>Customer/counterparty profiles</td><td>party_id, risk_rating, pep_flag, declared_annual_income</td></tr>
+        <tr><td><code>SIGNAL</code></td><td>EVIDENCE_CHAIN</td><td>Every detection rule firing</td><td>signal_id, party_id, rule_id, severity, evidence_txn_ids</td></tr>
+        <tr><td><code>CASE</code></td><td>EVIDENCE_CHAIN</td><td>Investigation cases (grouped signals)</td><td>case_id, party_id, case_type, status, sla_deadline</td></tr>
+        <tr><td><code>EVIDENCE</code></td><td>EVIDENCE_CHAIN</td><td>Pointers to source data</td><td>evidence_id, case_id, ref_type, ref_id, as_of_ts</td></tr>
+        <tr><td><code>EVIDENCE_QUERY_LOG</code></td><td>EVIDENCE_CHAIN</td><td>SQL reproducibility log</td><td>query_log_id, evidence_id, sql_text, result_hash, query_id</td></tr>
+        <tr><td><code>FINDING</code></td><td>EVIDENCE_CHAIN</td><td>LLM-composed narratives</td><td>finding_id, case_id, narrative, conclusion, cited_evidence_ids</td></tr>
+        <tr><td><code>POLICY_CLAUSE</code></td><td>GOVERNANCE</td><td>Structured regulatory rules</td><td>clause_id, metric, operator, threshold_lower, effective_from</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ========== SECTION 6: 3 DETECTION RULES ========== -->
+  <h2 id="signals">6. The 5 Detection Rules + 1 Agent Tool</h2>
+
+  <p>Five signals go into DT_SIGNALS_FAST. MULE_RING_CANDIDATE is a separate stored procedure (recursive CTEs can't incrementally refresh in a DT).</p>
+
+  <div class="card-grid">
+    <div class="card" style="border-left: 4px solid #16a34a;">
+      <div class="card-title">STRUCTURING_CROSS_ACCOUNT</div>
+      <div class="card-desc">Sub-threshold cash deposits split across multiple accounts of the same party, totaling near or above the Rs 10L CTR trigger. Look for amounts between Rs 9.4L-9.8L per account per month.</div>
+    </div>
+    <div class="card" style="border-left: 4px solid #16a34a;">
+      <div class="card-title">INCOME_ACTIVITY_MISMATCH</div>
+      <div class="card-desc">30-day inflows exceed N times the party's declared annual income (from KYC). A salaried employee declaring Rs 8L/year receiving Rs 50L in a month.</div>
+    </div>
+    <div class="card" style="border-left: 4px solid #16a34a;">
+      <div class="card-title">SANCTIONS_MATCH_NEW</div>
+      <div class="card-desc">A party matches a sanctions entry added since the last check. Exact join of DT_DIM_PARTY against DT_SANCTIONS_CONSOLIDATED on name.</div>
+    </div>
+    <div class="card" style="border-left: 4px solid #16a34a;">
+      <div class="card-title">RAPID_CREDIT_VELOCITY</div>
+      <div class="card-desc">N+ credits from M+ distinct remitters within D days. Classic mule account indicator — money flows in from many sources quickly.</div>
+    </div>
+    <div class="card" style="border-left: 4px solid #16a34a;">
+      <div class="card-title">SHARED_DEVICE_CLUSTER</div>
+      <div class="card-desc">3+ accounts sharing the same device_fingerprint (from ACCOUNT table) with fund flows between them. Synthetic: ~8% of accounts share a fingerprint.</div>
+    </div>
+    <div class="card" style="border-left: 4px solid #2563eb;">
+      <div class="card-title">MULE_RING_CANDIDATE (agent tool)</div>
+      <div class="card-desc">Depth-3 fund-flow cycle via recursive CTE. Not a DT — called on-demand by the Investigator mode via <code>traverse_mule_ring()</code> stored procedure.</div>
+    </div>
+  </div>
+
+  <!-- ========== SECTION 7: DEMO FLOW ========== -->
+  <h2 id="demo">7. The 6-Minute Demo</h2>
+
+  <p>Anchored to "Priya," an AML analyst at a mid-size NBFC. Monday morning, STR clock ticking.</p>
+
+  <pre class="mermaid">
+gantt
+    title Demo Script (6 minutes)
+    dateFormat X
+    axisFormat %M:%S
+    section Beats
+    Problem statement          :a1, 0, 30
+    Architecture slide         :a2, 30, 30
+    Live stream + chaos inject :a3, 60, 60
+    Investigation walkthrough  :a4, 120, 75
+    STR draft + Reviewer catch :a5, 195, 45
+    Governance demo            :a6, 240, 30
+    Generalisation             :a7, 270, 30
+    Automations                :a8, 300, 30
+    Eval results + close       :a9, 330, 30
+  </pre>
+
+  <div class="note-box">
+    <div class="note-title">The Money Shot (3:15-4:00)</div>
+    <p>Draft an STR with a <strong>planted defect</strong> (e.g., wrong threshold citation). The Reviewer agent catches it, rejects with a specific reason. Regenerate. Passes. This is the single most memorable demo moment.</p>
+  </div>
+
+  <!-- ========== SECTION 8: ISSUES ========== -->
+  <h2 id="issues">8. Open Reminders</h2>
+
+  <div class="warn-box">
+    <div class="warn-title">Velocity Features — DT Feasibility</div>
+    <p>DT_TXN_VELOCITY_FEATURES needs rolling 1h/24h/7d/30d windows. True sliding windows may force full refreshes. Consider tumbling (fixed daily) buckets if performance is an issue during implementation.</p>
+  </div>
+
+  <div class="warn-box">
+    <div class="warn-title">20 Verified Queries Not Yet Written</div>
+    <p>The architecture doc lists query titles and categories (Section 23 / Gap 7) but the actual SQL hasn't been authored. Each query needs to be written, tested against real data, and validated. Budget time for this.</p>
+  </div>
+
+  <!-- ========== SECTION 9: SCOPE ========== -->
+  <h2 id="scope">9. What to Build vs. What to Skip</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Component</th><th>Tier</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>AML spine (signals to STR)</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. This IS the demo.</td></tr>
+        <tr><td>5 detection rules in DT_SIGNALS_FAST</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Includes RAPID_CREDIT_VELOCITY + SHARED_DEVICE_CLUSTER.</td></tr>
+        <tr><td>MULE_RING_CANDIDATE (agent tool)</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build as stored proc. Recursive CTE, not a DT.</td></tr>
+        <tr><td>Single agent (4 modes) + 8 stored procs</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Start with Reviewer mode.</td></tr>
+        <tr><td>Semantic view + verified queries</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Accuracy depends on this.</td></tr>
+        <tr><td>Policy ingestion + Cortex Search</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Real regulatory PDFs.</td></tr>
+        <tr><td>RLS + masking + audit log</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Quick and high demo impact.</td></tr>
+        <tr><td>Eval suites 1 + 2</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Put results on a slide.</td></tr>
+        <tr><td>3 automations</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build. Low effort, high visibility.</td></tr>
+        <tr><td>Streamlit app</td><td><span class="tier-badge tier-1">Tier 1</span></td><td>Must build LAST.</td></tr>
+        <tr><td>Credit risk (DT_EXPOSURES_STAGED)</td><td><span class="tier-badge tier-2">Tier 2</span></td><td>Only if AML works. One working question suffices.</td></tr>
+        <tr><td>FRAUD_BORROWER_OVERLAP signal</td><td><span class="tier-badge tier-2">Tier 2</span></td><td>Cross-silo credit+fraud. Needs DT_EXPOSURES_STAGED.</td></tr>
+        <tr><td>Liquidity / LCR</td><td><span class="tier-badge tier-cut">Cut</span></td><td>Out of AML spine scope. PPT mention only.</td></tr>
+        <tr><td>SCD2 on DIM_PARTY</td><td><span class="tier-badge tier-cut">Cut</span></td><td>PPT "What Production Would Need" slide.</td></tr>
+        <tr><td>Snowpipe Streaming (real SDK)</td><td><span class="tier-badge tier-cut">Cut</span></td><td>INSERT loop achieves same demo effect.</td></tr>
+        <tr><td>Eval suites 3-5</td><td><span class="tier-badge tier-cut">Cut</span></td><td>Mention on slide, don't build.</td></tr>
+        <tr><td>CORTEX_SEARCH_BATCH fuzzy sanctions</td><td><span class="tier-badge tier-cut">Cut</span></td><td>Exact join suffices. Fuzzy matching for production.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ========== SECTION 10: CHECKLIST ========== -->
+  <h2 id="checklist">10. Pre-Submission Checklist</h2>
+
+  <ul class="checklist">
+    <li>Demo ends at a <strong>documented STR filing</strong>, not a dashboard</li>
+    <li>Synthetic fraud rate is in the <strong>0.1-1% band</strong> (not 10%)</li>
+    <li><strong>No label column</strong> in the semantic view (leakage check)</li>
+    <li>All cited regulations are <strong>real</strong> (not hallucinated circular numbers)</li>
+    <li>System <strong>refuses to auto-file</strong> (maker-checker enforced)</li>
+    <li>CoCo evidence visible for <strong>all 4 lifecycle phases</strong></li>
+    <li>System <strong>refuses</strong> at least one out-of-scope question</li>
+    <li>Every number in the STR narrative <strong>traces to a query result</strong></li>
+    <li>The <strong>Reviewer agent</strong> catches at least one planted defect</li>
+    <li>Demo works <strong>offline</strong> (sanctions data pre-loaded, not fetched live)</li>
+  </ul>
+
+  <div class="separator"></div>
+
+  <p style="color: light-dark(#94a3b8, #64748b); font-size: 0.85em;">
+    Generated from <code>enhanced-architecture-diagrams.md</code> and <code>banking-aml-copilot-hackathon-strategy.md</code>. 
+    This is a simplified view — refer to the source docs for full column specs, procedure signatures, and verified query text.
+  </p>
+
+  <script>
+    if (typeof mermaid !== 'undefined') {
+      mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: 'strict',
+        theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+        gantt: { fontSize: 12 }
+      });
+    }
+  </script>
+</body>
+</html>

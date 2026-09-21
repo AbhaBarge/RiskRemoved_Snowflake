@@ -14,7 +14,7 @@
 | 4 | Transformation Pipeline — Two-Speed | Fast lane (seconds-to-minutes) and slow lane (daily batch) dynamic tables |
 | 5 | Cross-Domain Signal Detection | Tier 1 signals to build, Tier 2 stretch goals, on-demand agent tools |
 | 6 | Signal-to-Artifact Pipeline | The evidence chain from detection through attestation |
-| 7 | Multi-Agent Architecture | Four agent roles: Sentinel, Investigator, Drafter, Reviewer |
+| 7 | Single Agent Architecture — Four Modes | One Cortex Agent with Sentinel, Investigator, Drafter, Reviewer modes |
 | 8 | LLM Boundary | Deterministic vs. LLM responsibilities |
 | 9 | Notification and Case Routing | Signal stream to case creation and notification dispatch |
 | 10 | Policy Ingestion Pipeline | Document extraction, human-gated activation, two-layer output |
@@ -47,8 +47,6 @@ erDiagram
         boolean pep_flag
         string kyc_status
         string source_of_funds
-        date effective_from "SCD2 — point-in-time"
-        date effective_to "SCD2 — NULL if current"
         decimal match_confidence "Entity resolution score"
     }
 
@@ -60,6 +58,7 @@ erDiagram
         string status
         decimal current_balance
         decimal credit_limit
+        string device_fingerprint "Synthetic — ~8pct shared across accounts"
     }
 
     TRANSACTION {
@@ -131,8 +130,16 @@ erDiagram
         string case_id FK
         string ref_type "TRANSACTION PARTY SCREENING POLICY_CLAUSE"
         string ref_id "PK in source table"
-        string query_id "Snowflake query ID for reproducibility"
         timestamp as_of_ts "Time Travel target"
+    }
+
+    EVIDENCE_QUERY_LOG {
+        string query_log_id PK
+        string evidence_id FK
+        string sql_text "Original SQL for reproducibility"
+        string result_hash "SHA-256 of result set"
+        string query_id "Snowflake query ID"
+        timestamp executed_at
     }
 
     FINDING {
@@ -227,6 +234,7 @@ erDiagram
     PARTY ||--o{ SIGNAL : "flagged by"
     PARTY ||--o{ CASE : "investigated in"
     CASE ||--o{ EVIDENCE : "supported by"
+    EVIDENCE ||--o{ EVIDENCE_QUERY_LOG : "verified by"
     CASE ||--o{ FINDING : "concludes with"
     FINDING ||--o{ ARTIFACT : "produces"
     FINDING ||--o{ REVIEW : "validated by"
@@ -372,7 +380,7 @@ flowchart TB
         RAW_TXN["RAW_TRANSACTIONS"]
         DT_ENR["DT_TRANSACTIONS_ENRICHED<br/><b>TARGET_LAG = 1 min</b><br/><i>Join account + party context<br/>Flag: is_round_amount,<br/>is_just_below_threshold,<br/>channel type, geo region</i>"]
         DT_VEL["DT_TXN_VELOCITY_FEATURES<br/><b>TARGET_LAG = DOWNSTREAM</b><br/><i>Rolling 1h/24h/7d/30d counts & sums<br/>Distinct counterparty count<br/>Channel entropy<br/>Max single txn as % of 30d avg</i>"]
-        DT_SIG["DT_SIGNALS_FAST<br/><b>TARGET_LAG = 5 min</b><br/><i>3 core signals:<br/>STRUCTURING_CROSS_ACCOUNT<br/>INCOME_ACTIVITY_MISMATCH<br/>SANCTIONS_MATCH_NEW</i>"]
+        DT_SIG["DT_SIGNALS_FAST<br/><b>TARGET_LAG = 5 min</b><br/><i>5 signals:<br/>STRUCTURING_CROSS_ACCOUNT<br/>INCOME_ACTIVITY_MISMATCH<br/>SANCTIONS_MATCH_NEW<br/>RAPID_CREDIT_VELOCITY<br/>SHARED_DEVICE_CLUSTER</i>"]
         RAW_TXN --> DT_ENR --> DT_VEL --> DT_SIG
     end
 
@@ -384,7 +392,7 @@ flowchart TB
     end
 
     subgraph SHARED["SHARED DIMENSIONS"]
-        DT_PARTY["DT_DIM_PARTY<br/><b>TARGET_LAG = 1 day</b><br/><i>Entity resolution<br/>SCD2 effective dating<br/>Match confidence score</i>"]
+        DT_PARTY["DT_DIM_PARTY<br/><b>TARGET_LAG = 1 day</b><br/><i>Current-state only<br/>(SCD2 deferred to production)<br/>Match confidence score</i>"]
         DT_REL["DT_PARTY_RELATIONSHIP<br/><b>TARGET_LAG = 1 day</b><br/><i>5 edge types:<br/>OWNS_ACCOUNT,<br/>BENEFICIAL_OWNER,<br/>SHARED_PHONE,<br/>SHARED_DEVICE,<br/>FUND_FLOW</i>"]
         DT_SANC["DT_SANCTIONS_CONSOLIDATED<br/><b>TARGET_LAG = DOWNSTREAM</b><br/><i>OFAC + OpenSanctions unified<br/>Deduplicated, normalized</i>"]
         POL["POLICY_CLAUSE<br/><i>Effective-dated rules<br/>Human-gated updates</i>"]
@@ -409,7 +417,7 @@ flowchart TB
 
 ## 5. Cross-Domain Signal Detection
 
-Three signals are Tier 1 (build these), two are Tier 2 (stretch), and MULE_RING_CANDIDATE cannot be a DT (recursive CTE not incrementally refreshable) — it must be an on-demand agent tool.
+Five signals are Tier 1 in DT_SIGNALS_FAST. MULE_RING_CANDIDATE is Tier 1 but as an on-demand agent tool (recursive CTE, not incrementally refreshable). Two are Tier 2 (stretch).
 
 ```mermaid
 flowchart TB
@@ -421,6 +429,7 @@ flowchart TB
         KYC_D["KYC Profile<br/><i>Income, occupation,<br/>source of funds</i>"]
         GRAPH["Relationship Graph<br/><i>Shared phone/device,<br/>fund flows, ownership</i>"]
         PEP_D["PEP + Sanctions<br/><i>Watchlist matches,<br/>jurisdiction risk</i>"]
+        DEVICE["Device Fingerprints<br/><i>device_fingerprint on ACCOUNT<br/>~8% shared across accounts</i>"]
     end
 
     subgraph CREDIT_DATA["Credit Data"]
@@ -428,19 +437,20 @@ flowchart TB
         CASES["Open Cases<br/><i>Fraud/AML cases<br/>on same party</i>"]
     end
 
-    subgraph TIER1["TIER 1 — Build These (in DT_SIGNALS_FAST)"]
+    subgraph TIER1["TIER 1 — Build These (5 in DT_SIGNALS_FAST)"]
         S4["STRUCTURING_CROSS_ACCOUNT<br/><i>Sub-threshold txns split<br/>across accounts of same party<br/>vs ₹10L CTR trigger</i>"]
         S1["INCOME_ACTIVITY_MISMATCH<br/><i>30d inflows > Nx declared<br/>annual income</i>"]
-        S7["SANCTIONS_MATCH_NEW<br/><i>Customer matches newly<br/>added sanctions entry<br/>via CORTEX_SEARCH_BATCH</i>"]
+        S7["SANCTIONS_MATCH_NEW<br/><i>Customer matches newly<br/>added sanctions entry<br/>via exact join on DT_SANCTIONS</i>"]
+        S8["RAPID_CREDIT_VELOCITY<br/><i>N+ credits from M+ distinct<br/>remitters within D days<br/>(mule account indicator)</i>"]
+        S9["SHARED_DEVICE_CLUSTER<br/><i>3+ accounts sharing<br/>device_fingerprint with<br/>fund flows between them</i>"]
+    end
+
+    subgraph TIER1_TOOL["TIER 1 — On-Demand Agent Tool (not a DT)"]
+        S3["MULE_RING_CANDIDATE<br/><i>Depth-3 fund-flow cycle<br/>via recursive CTE<br/>Called by Investigator agent<br/>NOT incrementally refreshable</i>"]
     end
 
     subgraph TIER2["TIER 2 — Stretch Goals"]
-        S2["SHARED_ATTRIBUTE_CLUSTER<br/><i>3+ accounts, same phone/device,<br/>with fund flows between them</i>"]
         S6["FRAUD_BORROWER_OVERLAP<br/><i>Borrower with exposure<br/>AND fraud/AML signals</i>"]
-    end
-
-    subgraph ONDEMAND["ON-DEMAND AGENT TOOL (not a DT)"]
-        S3["MULE_RING_CANDIDATE<br/><i>Depth-3 fund-flow cycle<br/>via recursive CTE<br/>NOT incrementally refreshable</i>"]
     end
 
     VELOCITY --> S4
@@ -448,18 +458,22 @@ flowchart TB
     VELOCITY --> S1
     KYC_D --> S1
     PEP_D --> S7
-    GRAPH --> S2
+    VELOCITY --> S8
+    DEVICE --> S9
+    GRAPH --> S9
     GRAPH --> S3
     EXPO --> S6
     CASES --> S6
 
     style TIER1 fill:#dcfce7,stroke:#16a34a,stroke-width:3px
+    style TIER1_TOOL fill:#dbeafe,stroke:#2563eb,stroke-width:3px
     style TIER2 fill:#fef3c7,stroke:#d97706,stroke-width:2px,stroke-dasharray: 5 5
-    style ONDEMAND fill:#fee2e2,stroke:#dc2626,stroke-width:2px,stroke-dasharray: 5 5
     style S4 fill:#16a34a,color:#fff
     style S1 fill:#16a34a,color:#fff
     style S7 fill:#16a34a,color:#fff
-    style S3 fill:#dc2626,color:#fff
+    style S8 fill:#16a34a,color:#fff
+    style S9 fill:#16a34a,color:#fff
+    style S3 fill:#2563eb,color:#fff
 ```
 
 ---
@@ -515,7 +529,9 @@ flowchart LR
 
 ---
 
-## 7. Multi-Agent Architecture
+## 7. Single Agent Architecture — Four Modes
+
+A single Cortex Agent handles all four roles via system prompt mode-switching. This avoids the complexity of multi-agent orchestration while preserving the conceptual separation of concerns. The agent's system prompt defines the current mode based on the task context.
 
 ```mermaid
 flowchart TB
@@ -525,14 +541,14 @@ flowchart TB
         USER["User Query<br/><i>Via CoWork, Streamlit,<br/>or CLI</i>"]
     end
 
-    subgraph AGENTS["Cortex Agents — Four Roles"]
-        SENTINEL["SENTINEL<br/><b>Triage + Prioritise</b><br/><i>Reads new CASE records.<br/>Composes priority narrative.<br/>Mostly deterministic;<br/>LLM for ranking summary only.</i>"]
+    subgraph AGENT["Single Cortex Agent — Four Modes"]
+        SENTINEL["MODE: SENTINEL<br/><b>Triage + Prioritise</b><br/><i>Reads new CASE records.<br/>Composes priority narrative.<br/>Mostly deterministic;<br/>LLM for ranking summary only.</i>"]
 
-        INVESTIGATOR["INVESTIGATOR<br/><b>Gather Evidence</b><br/><i>Tools: semantic view queries,<br/>Cortex Search retrieval,<br/>graph traversal (stored proc),<br/>CORTEX_SEARCH_BATCH screening.<br/>Writes EVIDENCE rows.<br/>NO conclusions — only facts.</i>"]
+        INVESTIGATOR["MODE: INVESTIGATOR<br/><b>Gather Evidence</b><br/><i>Tools: semantic view queries,<br/>Cortex Search retrieval,<br/>graph traversal (stored proc),<br/>sanctions screening.<br/>Writes EVIDENCE rows.<br/>NO conclusions — only facts.</i>"]
 
-        DRAFTER["DRAFTER<br/><b>Compose Finding + Artifact</b><br/><i>Reads EVIDENCE bundle.<br/>Maps to POLICY_CLAUSE.<br/>Writes FINDING narrative.<br/>Generates ARTIFACT (STR XML).<br/>Every number from SQL, not LLM.</i>"]
+        DRAFTER["MODE: DRAFTER<br/><b>Compose Finding + Artifact</b><br/><i>Reads EVIDENCE bundle.<br/>Maps to POLICY_CLAUSE.<br/>Writes FINDING narrative.<br/>Generates ARTIFACT (STR XML).<br/>Every number from SQL, not LLM.</i>"]
 
-        REVIEWER["REVIEWER (Critic)<br/><b>Adversarial Validation</b><br/><i>Recomputes every numeric claim.<br/>Checks every citation resolves.<br/>Verifies clauses are in-effect.<br/>Validates filing schema.<br/>Returns APPROVE or REJECT<br/>with specific defect list.</i>"]
+        REVIEWER["MODE: REVIEWER (Critic)<br/><b>Adversarial Validation</b><br/><i>Recomputes every numeric claim.<br/>Checks every citation resolves.<br/>Verifies clauses are in-effect.<br/>Validates filing schema.<br/>Returns APPROVE or REJECT<br/>with specific defect list.</i>"]
     end
 
     subgraph TOOLS["Registered Custom Tools (Stored Procs)"]
@@ -543,6 +559,7 @@ flowchart TB
         T5["generate_str_xml()"]
         T6["validate_filing_schema()"]
         T7["escalate_to_principal_officer()"]
+        T8["traverse_mule_ring()"]
     end
 
     subgraph OUTPUT["Outputs"]
@@ -563,15 +580,16 @@ flowchart TB
     REVIEWER -->|"REJECT + defects"| DRAFTER
     REVIEWER -->|"APPROVE"| OUTPUT
 
-    INVESTIGATOR --> T2
-    INVESTIGATOR --> T3
-    INVESTIGATOR --> T4
-    DRAFTER --> T5
-    REVIEWER --> T6
-    SENTINEL --> T1
-    DRAFTER --> T7
+    AGENT --> T1
+    AGENT --> T2
+    AGENT --> T3
+    AGENT --> T4
+    AGENT --> T5
+    AGENT --> T6
+    AGENT --> T7
+    AGENT --> T8
 
-    style AGENTS fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+    style AGENT fill:#eff6ff,stroke:#2563eb,stroke-width:2px
     style TOOLS fill:#f0fdf4,stroke:#059669,stroke-width:2px
     style OUTPUT fill:#fef3c7,stroke:#d97706,stroke-width:2px
     style REVIEWER fill:#dc2626,color:#fff
@@ -588,7 +606,7 @@ flowchart LR
     subgraph DETERMINISTIC["DETERMINISTIC<br/><b>SQL / Python / Schema Validators</b><br/><i>Source of truth for all numbers</i>"]
         D1["All amounts, counts, ratios"]
         D2["Threshold comparisons<br/><i>₹10L CTR, 7-day STR clock</i>"]
-        D3["Sanctions name matching scores<br/><i>CORTEX_SEARCH_BATCH</i>"]
+        D3["Sanctions name matching scores<br/><i>Exact join against DT_SANCTIONS</i>"]
         D4["XML schema validation<br/><i>FINGate format compliance</i>"]
         D5["Cumulative mismatch %<br/><i>10/10/20 NBFC limits</i>"]
         D6["Velocity features<br/><i>Rolling window aggregations</i>"]
@@ -896,7 +914,7 @@ flowchart TB
         DTE["DT_TRANSACTIONS_ENRICHED<br/><i>1 min</i>"]
         DTV["DT_TXN_VELOCITY_FEATURES<br/><i>DOWNSTREAM</i>"]
         DTS["DT_SIGNALS_FAST<br/><i>5 min</i>"]
-        DTP["DT_DIM_PARTY<br/><i>1 day, SCD2</i>"]
+        DTP["DT_DIM_PARTY<br/><i>1 day, current-state</i>"]
         DTR["DT_PARTY_RELATIONSHIP<br/><i>1 day</i>"]
         DTSC["DT_SANCTIONS_CONSOLIDATED<br/><i>DOWNSTREAM</i>"]
     end
@@ -1101,13 +1119,9 @@ IBM AMLworld ships **pair-level** (sender → receiver). The schema stores **leg
 
 **MOVED TO FUTURE SCOPE.** For the hackathon, DT_DIM_PARTY is current-state only (no effective_from/effective_to). A simple `CREATE DYNAMIC TABLE ... AS SELECT DISTINCT ... FROM RAW_PARTY_CBS` suffices. SCD2 is a demo talking point on the "What Production Would Need" slide. Evidence queries join on `party_id` without temporal filtering.
 
-### Gap 3: CORTEX_SEARCH_BATCH vs. DT_SIGNALS_FAST for Sanctions
+### Gap 3: Sanctions Screening Approach
 
-The `CORTEX_SEARCH_BATCH` approach is for batch sanctions screening. `DT_SIGNALS_FAST` handles sanctions screening via DT refresh. These are architecturally different:
-- `CORTEX_SEARCH_BATCH` is a one-time batch operation (fuzzy match, handles aliases/transliterations).
-- A DT running sanctions checks on every refresh would call a UDF or join against `DT_SANCTIONS_CONSOLIDATED`.
-
-**Decision needed:** Use both. `DT_SIGNALS_FAST` does an exact/near-exact join against `DT_SANCTIONS_CONSOLIDATED` for new-entry detection (SANCTIONS_MATCH_NEW: flag when a party matches a sanctions entry added since last check). `CORTEX_SEARCH_BATCH` runs as a scheduled daily tool (not in the DT) for comprehensive fuzzy screening of the full party book — results written to a `SCREENING_RESULT` table that feeds into the Investigator agent.
+**RESOLVED: Exact join only.** `DT_SIGNALS_FAST` does an exact/near-exact name join against `DT_SANCTIONS_CONSOLIDATED` for new-entry detection (SANCTIONS_MATCH_NEW: flag when a party matches a sanctions entry added since last check). The daily `CORTEX_SEARCH_BATCH` fuzzy screening approach and the `SCREENING_RESULT` table have been **dropped** to reduce complexity. For the hackathon, exact matching is sufficient. Fuzzy matching (aliases, transliterations) is a "What Production Would Need" slide item.
 
 ### Gap 4: Case Deduplication Logic
 
@@ -1120,12 +1134,9 @@ The ROUTE_SIGNALS task checks "existing case for this party?" but doesn't specif
 
 ### Gap 5: Evidence Pointer Resolution
 
-Evidence rows store `(ref_type, ref_id, query_id, as_of_ts)`. But `ref_id` is a string that could be a `txn_id`, `party_id`, `entry_id`, or `clause_id`. There's no specification of:
-- How the Investigator agent constructs these pointers.
-- How the Drafter agent resolves them back to displayable data.
-- How the Reviewer agent verifies them (re-run the `query_id` at `as_of_ts`?).
+Evidence rows store `(ref_type, ref_id, as_of_ts)` — clean pointers to source data. Query reproducibility is handled by a separate `EVIDENCE_QUERY_LOG` table.
 
-**Decision needed:** The `gather_evidence_bundle()` stored procedure takes a `case_id`, executes pre-defined queries (one per evidence type), captures each Snowflake `QUERY_ID` from `LAST_QUERY_ID()`, and inserts EVIDENCE rows with the actual query IDs. The Reviewer's `validate_finding()` proc takes each `query_id` + `as_of_ts` pair and re-executes using `RESULT_SCAN(query_id)` or re-runs the original SQL with `AT(TIMESTAMP => as_of_ts)`, comparing result hashes.
+**RESOLVED: Separate query log table.** The `gather_evidence_bundle()` stored procedure takes a `case_id`, executes pre-defined queries (one per evidence type), and for each: (1) inserts an EVIDENCE row with the pointer (ref_type, ref_id, as_of_ts), (2) inserts an `EVIDENCE_QUERY_LOG` row with the SQL text, SHA-256 result hash, Snowflake query_id, and execution timestamp. Multiple queries can back a single evidence row. The Reviewer's `validate_finding()` proc queries `EVIDENCE_QUERY_LOG` for a given evidence_id, re-runs each `sql_text` with `AT(TIMESTAMP => as_of_ts)` via Time Travel, and compares result hashes. `RESULT_SCAN(query_id)` is **not used** — it is session-scoped and expires in 24 hours.
 
 ### Gap 6: STR XML Generation
 
@@ -1899,13 +1910,13 @@ One table to rule them all. A developer checks this before starting any componen
 | 3 | L2 transaction reskin (AMLworld) | B1 research + DDL | Currency/channel/amount re-skinning. Labels to GROUND_TRUTH only. |
 | 4 | L3 narrative generator (AI_COMPLETE) | L1 entities + B5 (model availability) | KYC notes, case comments. Bulk: small model. Golden: frontier model. |
 | 5 | Replay harness (INSERT loop) | L2 data | Python script, `INSERT INTO` batches + `sleep()`. `--inject` flag for demo. |
-| 6 | DT pipeline (6 dynamic tables) | RAW tables + DDL | DT_TRANSACTIONS_ENRICHED, DT_TXN_VELOCITY_FEATURES, DT_SIGNALS_FAST, DT_DIM_PARTY (current-state only), DT_PARTY_RELATIONSHIP, DT_SANCTIONS_CONSOLIDATED |
+| 6 | DT pipeline (6 dynamic tables) | RAW tables + DDL | DT_TRANSACTIONS_ENRICHED, DT_TXN_VELOCITY_FEATURES, DT_SIGNALS_FAST (5 signals), DT_DIM_PARTY (current-state only), DT_PARTY_RELATIONSHIP, DT_SANCTIONS_CONSOLIDATED |
 | 7 | SIGNALS_STREAM + ROUTE_SIGNALS task | DT_SIGNALS_FAST | Stream on DT, task creates CASE + SIGNAL rows |
 | 8 | POLICY_CLAUSE population | AI_PARSE_DOCUMENT + AI_EXTRACT (verify in B5) | 8 real regulatory sources, clause-level extraction |
 | 9 | Cortex Search service | POLICY_CLAUSE_CHUNKS (verify in B5) | Hybrid keyword + semantic retrieval for regulatory text |
 | 10 | Semantic view + 20 verified queries | All DTs + POLICY_CLAUSE | See Section 29 pre-Dev guidelines for YAML spec. |
-| 11 | 4 Cortex Agents (Sentinel, Investigator, Drafter, Reviewer) | Semantic view + Cortex Search + B5 (model names) | Build Reviewer first. See Section 29 for agent config spec. |
-| 12 | 7 stored procedures (agent tools) | DDL + DTs | See Section 29 for parameter/return specs. |
+| 11 | Single Cortex Agent (4 modes: Sentinel, Investigator, Drafter, Reviewer) | Semantic view + Cortex Search + B5 (model names) | Build Reviewer mode first. See Section 29 for agent config spec. |
+| 12 | 8 stored procedures (agent tools) | DDL + DTs | 7 original + traverse_mule_ring(). See Section 29. |
 | 13 | RLS + masking policies | Roles (Section 22) | Row access on DT_TRANSACTIONS_ENRICHED + DT_DIM_PARTY. Masking on PAN/Aadhaar. |
 | 14 | Evaluation — Suite 1 (Detection F1) | Ground truth + DT_SIGNALS_FAST | Per-typology Precision/Recall/F1 against GROUND_TRUTH.LABELS |
 | 15 | Evaluation — Suite 2 (Text-to-SQL) | Semantic view + agents | 15-20 golden questions, result-match scoring |
@@ -1918,8 +1929,6 @@ One table to rule them all. A developer checks this before starting any componen
 |---|---|
 | DT_EXPOSURES_STAGED | RAW_EXPOSURES + DT_DIM_PARTY |
 | Credit cross-silo signals (FRAUD_BORROWER_OVERLAP) | DT_EXPOSURES_STAGED + CASE |
-| MULE_RING_CANDIDATE (agent tool, recursive CTE) | DT_PARTY_RELATIONSHIP |
-| SHARED_ATTRIBUTE_CLUSTER signal | DT_PARTY_RELATIONSHIP |
 
 ### Tier 3 — Cut
 
@@ -1944,7 +1953,8 @@ These items appear on the "What Production Would Need" slide only. **Do not impl
 | External Access Integration pipelines (OpenSanctions, OFAC refresh) | Manual upload for hackathon; EAI chain for production |
 | STR Annexures A/B/C (per-individual, per-entity, per-account detail documents) | Main 8-Part form is built; annexures are production completeness |
 | FINGate portal integration | No access to real FINGate; XML generated locally |
-| Agent-as-MCP-Server (expose copilot as callable tool) | Tier 2 stretch, depends on core agents working |
+| Agent-as-MCP-Server (expose copilot as callable tool) | Tier 2 stretch, depends on core agent working |
+| CORTEX_SEARCH_BATCH fuzzy sanctions screening | Exact join suffices for hackathon; fuzzy matching (aliases, transliterations) for production |
 
 ---
 
@@ -1973,25 +1983,26 @@ Generate `CREATE DYNAMIC TABLE ... TARGET_LAG = ... WAREHOUSE = RC_PIPELINE_WH A
 |---|---|---|
 | DT_TRANSACTIONS_ENRICHED | 1 minute | Join RAW_TRANSACTIONS with DT_DIM_PARTY on account→party. Add: is_round_amount, is_just_below_threshold (amount BETWEEN 900000 AND 999999 for INR CTR), channel type, derived branch_region. |
 | DT_TXN_VELOCITY_FEATURES | DOWNSTREAM | Rolling window aggregations: 1h/24h/7d/30d counts and sums per account. Distinct counterparty count. Channel entropy. Max single txn as % of 30d avg. |
-| DT_SIGNALS_FAST | 5 minutes | 3 rules: STRUCTURING_CROSS_ACCOUNT, INCOME_ACTIVITY_MISMATCH, SANCTIONS_MATCH_NEW. Each produces a row in SIGNAL shape. |
+| DT_SIGNALS_FAST | 5 minutes | 5 rules: STRUCTURING_CROSS_ACCOUNT, INCOME_ACTIVITY_MISMATCH, SANCTIONS_MATCH_NEW (exact join against DT_SANCTIONS_CONSOLIDATED), RAPID_CREDIT_VELOCITY, SHARED_DEVICE_CLUSTER (GROUP BY device_fingerprint HAVING COUNT >= 3). Each produces a row in SIGNAL shape. |
 | DT_DIM_PARTY | 1 day | Current-state only (no SCD2). Deduplicated from RAW_PARTY_CBS + RAW_PARTY_KYC. Derive party_type from entity_name pattern. |
 | DT_PARTY_RELATIONSHIP | 1 day | 5 edge types from data: OWNS_ACCOUNT (account→party), FUND_FLOW (counterparty txn pairs), SHARED_PHONE/SHARED_DEVICE/BENEFICIAL_OWNER (from KYC notes or generated attributes). |
 | DT_SANCTIONS_CONSOLIDATED | DOWNSTREAM | UNION of RAW_SANCTIONS_OPENSANCTIONS + any OFAC SDN entries. Deduplicated by name + list source. |
 
 Output: single file `sql/02_dynamic_tables.sql`
 
-### H. Stored Procedure Specs (7 procedures)
+### H. Stored Procedure Specs (8 procedures)
 
 Generate Python stored procedures with these signatures:
 
 | Procedure | Parameters | Returns | Logic Summary |
 |---|---|---|---|
 | `open_case(party_id, signal_ids, case_type)` | VARCHAR, ARRAY, VARCHAR | case_id VARCHAR | INSERT into CASE, link signals, set SLA deadline (7 working days from now) |
-| `gather_evidence_bundle(case_id)` | VARCHAR | evidence_count INT | Execute pre-defined queries per evidence type (txns, party, sanctions, policy), capture QUERY_ID via LAST_QUERY_ID(), INSERT into EVIDENCE |
-| `screen_sanctions_batch(party_ids)` | ARRAY | VARIANT (match results) | Join party names against DT_SANCTIONS_CONSOLIDATED, return matches with scores |
+| `gather_evidence_bundle(case_id)` | VARCHAR | evidence_count INT | Execute pre-defined queries per evidence type (txns, party, sanctions, policy). For each: INSERT EVIDENCE row (pointer) + INSERT EVIDENCE_QUERY_LOG row (sql_text, result_hash, query_id, executed_at) |
+| `screen_sanctions_batch(party_ids)` | ARRAY | VARIANT (match results) | Exact join party names against DT_SANCTIONS_CONSOLIDATED, return matches with scores |
 | `traverse_counterparty_graph(party_id, max_depth)` | VARCHAR, INT | VARIANT (graph) | Recursive CTE on PARTY_RELATIONSHIP up to max_depth hops, return adjacency list |
+| `traverse_mule_ring(party_id, max_depth)` | VARCHAR, INT | VARIANT (cycles) | Recursive CTE on PARTY_RELATIONSHIP (FUND_FLOW edges only) to detect depth-3 fund-flow cycles. Returns cycle paths. This is the MULE_RING_CANDIDATE signal as an on-demand tool. |
 | `generate_str_xml(finding_id)` | VARCHAR | VARIANT (xml_string, validation_status) | Build 8-Part FIU-IND XML per Section 24. All numbers from SQL. Narrative from FINDING.narrative. Validate structure. |
-| `validate_filing_schema(artifact_id)` | VARCHAR | VARIANT (is_valid, defects[]) | Parse ARTIFACT.content XML. Check: all required Parts present, reason codes valid, amounts match evidence, every citation resolves. |
+| `validate_filing_schema(artifact_id)` | VARCHAR | VARIANT (is_valid, defects[]) | Parse ARTIFACT.content XML. Check: all required Parts present, reason codes valid, amounts match evidence, every citation resolves. Query EVIDENCE_QUERY_LOG to re-run stored SQL at as_of_ts via Time Travel and compare result hashes. |
 | `escalate_to_principal_officer(finding_id)` | VARCHAR | status VARCHAR | Update CASE status, prepare Slack notification payload for maker-checker |
 
 Output: individual files in `sql/procedures/`
@@ -2011,10 +2022,11 @@ Output: `semantic_views/risk_copilot.yaml`
 
 ### J. Agent Configuration
 
-Generate Cortex Agent creation SQL for each of the 4 roles. Each agent needs:
-- `CREATE CORTEX AGENT` statement (verify syntax against B5)
-- System prompt defining the role, boundaries, and output format
-- Tool registration (which stored procedures it can call)
+Generate a single Cortex Agent with 4 operational modes defined in the system prompt. The agent:
+- Uses `CREATE CORTEX AGENT` statement (verify syntax against B5)
+- Has a system prompt that defines all four modes (Sentinel, Investigator, Drafter, Reviewer) with clear boundaries and output formats for each
+- Mode selection is driven by the task context in the user/automation prompt (e.g., "You are in REVIEWER mode. Validate finding F-00123.")
+- All 8 stored procedures registered as tools (the agent uses different tools depending on the active mode)
 - Model assignment (from B5 — update Section 22 model names first)
 - Semantic view and Cortex Search service references
 
@@ -2023,7 +2035,7 @@ Output: `sql/04_agents.sql`
 ### K. L1/L2 Generator Scripts
 
 Generate Python scripts for data generation:
-- `scripts/generate_entities.py` — Faker with `hi_IN` locale, seeded RNG, generates PARTY + ACCOUNT + PARTY_RELATIONSHIP CSVs. ~5K parties, ~10K accounts.
+- `scripts/generate_entities.py` — Faker with `hi_IN` locale, seeded RNG, generates PARTY + ACCOUNT + PARTY_RELATIONSHIP CSVs. ~5K parties, ~10K accounts. Includes `device_fingerprint` on ACCOUNT: ~8% of accounts share a fingerprint with 1-2 others (for SHARED_DEVICE_CLUSTER signal).
 - `scripts/reskin_transactions.py` — Reads HI-Small_Trans.csv, applies: currency conversion (×83 for INR), channel remapping (ACH→NEFT, Wire→RTGS, etc.), splits pair-level rows to leg-level (Gap 1), outputs to RAW_TRANSACTIONS-ready CSV. Separates is_laundering labels to GROUND_TRUTH.LABELS.
 - `scripts/parse_patterns.py` — Reads HI-Small_Patterns.txt, extracts typology + transaction blocks, outputs to RAW_LAUNDERING_PATTERNS-ready format.
 

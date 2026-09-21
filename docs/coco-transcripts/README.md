@@ -37,6 +37,7 @@ In each JSON file, look for `tool_use` blocks which show:
 | `02-building-risk-compliance-copilot-e8ccbb47.json` | e8ccbb47 | 2026-09-19 | Building a Risk and Compliance Copilot for Banking | 16 | Current-day banking systems analysis, gap analysis, cross-silo bridge design |
 | `03-data-sources-and-diagrams-c40a0959.json` | c40a0959 | 2026-09-21 | Data Sources, Architecture Diagrams | 38+ | `cortex search marketplace` (7 searches: sanctions, PEP, AML, KYC, fraud, credit risk, adverse media), `cortex search docs` (Snowpipe Streaming, dynamic tables, AI_PARSE_DOCUMENT), subagent delegation for parallel Marketplace research, Mermaid diagram generation, `cortex conversations transcript` for self-export |
 | `04-dbt-lineage-b48f8e68.json` | b48f8e68 | 2026-09-18 | Understanding Upstream Lineage in dbt Models | 50 | `cortex lineage`, dbt model exploration, codebase analysis |
+| `2026-09-21-b1-b6-research-and-architecture-audit.json` | b22040ca | 2026-09-21 | B1–B6 Research, Architecture Audit & Doc Consolidation | 128+ | `sql_execute` (account probing, model testing), `cortex search docs`, `cortex conversations search/transcript`, subagent delegation (Explore + general-purpose), extensive file read/edit/write/delete, PowerShell data analysis (CSV row counts, pattern extraction) |
 
 ## How to read the transcripts
 
