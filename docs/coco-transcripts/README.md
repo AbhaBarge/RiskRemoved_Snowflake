@@ -1,0 +1,65 @@
+# CoCo CLI Raw Transcripts — Evidence of Tool Usage
+
+> **FOR HACKATHON JUDGES ONLY. DO NOT READ DURING DEVELOPMENT.**
+> These files are past research and planning transcripts preserved as CoCo lifecycle evidence (Phase 1: Planning). They contain no build instructions. The single source of truth for development is `docs/enhanced-architecture-diagrams.md`.
+
+> These are raw JSON exports of CoCo CLI (Cortex Code) sessions, exported via
+> `cortex conversations transcript <id> --output json`. They contain every user
+> message, every assistant response, and every tool call (with inputs and outputs)
+> made during the planning and development of the Risk & Compliance Copilot.
+
+## Why these exist
+
+The hackathon judging criteria require evidence that CoCo CLI was used across
+planning, development, execution, and testing. The summary documents in
+`docs/coco-evidence/` are human-readable but do not show the actual tool
+invocations. These raw transcripts do.
+
+## What constitutes proof of CoCo CLI usage
+
+In each JSON file, look for `tool_use` blocks which show:
+- `cortex search docs` — Snowflake documentation research
+- `cortex search marketplace` — Marketplace listing discovery
+- `sql_execute` — SQL execution and validation against Snowflake
+- `cortex search object` — Snowflake catalog object discovery
+- `cortex semantic-views` — Semantic view operations
+- `cortex lineage` — Lineage analysis
+- `bash` tool calls running `cortex` CLI commands
+- `read`, `write`, `edit` — file operations in the repo
+- `task` — subagent delegation for parallel research
+- `glob`, `grep` — codebase search
+
+## Session index
+
+| File | Session ID | Date | Title | Messages | Key CoCo CLI usage demonstrated |
+|---|---|---|---|---|---|
+| `01-building-risk-compliance-copilot-392b3fc1.json` | 392b3fc1 | 2026-09-19 | Building a Risk and Compliance Copilot for Banking | 16 | Domain research, target user analysis, process mapping, `cortex search docs` for Snowflake capabilities |
+| `02-building-risk-compliance-copilot-e8ccbb47.json` | e8ccbb47 | 2026-09-19 | Building a Risk and Compliance Copilot for Banking | 16 | Current-day banking systems analysis, gap analysis, cross-silo bridge design |
+| `03-data-sources-and-diagrams-c40a0959.json` | c40a0959 | 2026-09-21 | Data Sources, Architecture Diagrams | 38+ | `cortex search marketplace` (7 searches: sanctions, PEP, AML, KYC, fraud, credit risk, adverse media), `cortex search docs` (Snowpipe Streaming, dynamic tables, AI_PARSE_DOCUMENT), subagent delegation for parallel Marketplace research, Mermaid diagram generation, `cortex conversations transcript` for self-export |
+| `04-dbt-lineage-b48f8e68.json` | b48f8e68 | 2026-09-18 | Understanding Upstream Lineage in dbt Models | 50 | `cortex lineage`, dbt model exploration, codebase analysis |
+
+## How to read the transcripts
+
+Each JSON file contains an array of message objects. The key fields:
+- `role`: "user" or "assistant"
+- `content`: array of content blocks, each with a `type`:
+  - `"text"` — human-readable text
+  - `"tool_use"` — a CoCo CLI tool invocation (name, input parameters)
+  - `"tool_result"` — the output returned by the tool
+
+To find all tool calls in a transcript:
+```powershell
+# PowerShell — count tool calls per transcript
+Get-Content "01-building-risk-compliance-copilot-392b3fc1.json" | 
+  Select-String '"type":\s*"tool_use"' | 
+  Measure-Object
+```
+
+## Relationship to other evidence
+
+| Evidence type | Location | Shows |
+|---|---|---|
+| Raw transcripts | `docs/coco-transcripts/*.json` | Every tool call, every command, full conversation flow |
+| Human-readable summaries | `docs/coco-evidence/*.md` | Distilled analysis, decisions, and reasoning |
+| Architecture diagrams | `docs/architecture-diagrams.md` | Visual output produced by CoCo CLI sessions |
+| Solution plan | `docs/SOLUTION-PLAN.md` | Master plan document, authored and revised in CoCo CLI |
