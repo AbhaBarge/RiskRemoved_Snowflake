@@ -1,0 +1,274 @@
+# ===========================================================================
+# generation.yml -- synthetic data generation parameters
+# ===========================================================================
+# Every number that shapes the dataset lives here. Changing the seed and
+# re-running must reproduce a byte-identical dataset: that is what makes the
+# evaluation numbers defensible.
+# ===========================================================================
+
+seed: 20260922        # master seed; every sub-generator derives from it
+
+# ---------------------------------------------------------------------------
+# GAP-02 -- subgraph sampling.
+# AMLworld ships 518,581 accounts / ~700K entities. We do NOT generate parties
+# independently and hope they join: we sample a CONNECTED subgraph of the real
+# transaction graph and then enrich the preserved keys. Seeding from the
+# laundering attempts guarantees the illicit typologies survive sampling.
+# ---------------------------------------------------------------------------
+subgraph:
+  seed_source: laundering_patterns   # accounts named in HI-Small_Patterns.txt
+  expansion_hops: 2                  # BFS hops along the transaction graph
+  target_parties: 5000
+  target_accounts: 10000
+  max_transactions: 400000
+  # A leg is kept only if BOTH sides resolve to a sampled account. Guarantees
+  # referential integrity of counterparty_account_id by construction.
+  require_both_legs_resolvable: true
+  # Cap on how much of one high-degree hub's neighbourhood is pulled in, so a
+  # single hub cannot dominate the sample.
+  max_neighbours_per_account: 40
+
+# ---------------------------------------------------------------------------
+# GAP-06 -- FX. A blanket x83 is wrong across 14 currencies. Rates are
+# indicative period rates for the AMLworld window (2022 H2), applied per
+# source currency.
+# ---------------------------------------------------------------------------
+fx:
+  base_currency: INR
+  rates_to_inr:
+    "US Dollar": 82.50
+    "Euro": 86.20
+    "UK Pound": 99.40
+    "Yen": 0.58
+    "Yuan": 11.50
+    "Rupee": 1.00
+    "Australian Dollar": 54.80
+    "Canadian Dollar": 60.90
+    "Swiss Franc": 87.60
+    "Mexican Peso": 4.15
+    "Ruble": 1.05
+    "Saudi Riyal": 22.00
+    "Shekel": 24.10
+    "Brazil Real": 15.60
+  # Share of legs deliberately retained in foreign currency so cross-border
+  # signals have something to bite on.
+  retain_foreign_pct: 5.0
+  rounding_decimals: 2
+
+# ---------------------------------------------------------------------------
+# Channel remapping: AMLworld payment formats -> Indian rails.
+# ---------------------------------------------------------------------------
+channel_map:
+  ACH: NEFT
+  Wire: RTGS
+  Cheque: CHEQUE
+  Cash: CASH
+  "Credit Card": UPI
+  Reinvestment: IMPS
+channel_default: NEFT
+
+# ---------------------------------------------------------------------------
+# GAP-03 -- pair-to-leg conversion.
+# One AMLworld pair row becomes two rows sharing a txn_pair_id: a signed
+# negative debit on the sender and a signed positive credit on the receiver.
+# The pair-level shape used by graph queries is exposed as V_TRANSACTION_PAIRS.
+# ---------------------------------------------------------------------------
+legs:
+  debit_sign: -1
+  credit_sign: 1
+  # AMLworld carries distinct paid/received amounts for FX pairs; each leg
+  # keeps its own side's amount so money conservation holds per currency.
+  use_side_specific_amounts: true
+
+# ---------------------------------------------------------------------------
+# L1 -- entity enrichment. These attributes DRESS the preserved AMLworld keys.
+# Attributes are derived from hash(entity_id), so a rerun is idempotent and a
+# party's identity is stable even if the sample changes size.
+# ---------------------------------------------------------------------------
+entities:
+  faker_locale: hi_IN
+  party_type_from_entity_name:
+    Corporation: LEGAL_PERSON
+    Partnership: LEGAL_PERSON
+    "Sole Proprietorship": LEGAL_PERSON
+    Company: LEGAL_PERSON
+    Individual: INDIVIDUAL
+  party_type_default: INDIVIDUAL
+
+  # Must match roles.branch_analysts keys in conf/base.yml. Drives RLS.
+  branch_regions:
+    - { code: MUMBAI, weight: 0.40 }
+    - { code: DELHI,  weight: 0.35 }
+    - { code: PUNE,   weight: 0.25 }   # no analyst role -> proves RLS excludes
+
+  account_types:
+    - { code: SAVINGS,     weight: 0.45 }
+    - { code: CURRENT,     weight: 0.25 }
+    - { code: LOAN,        weight: 0.12 }
+    - { code: CREDIT_CARD, weight: 0.10 }
+    - { code: FD,          weight: 0.08 }
+
+  pep_pct: 1.5
+  risk_rating_distribution:
+    LOW: 0.70
+    MEDIUM: 0.22
+    HIGH: 0.08
+  kyc_status_distribution:
+    VERIFIED: 0.88
+    PENDING_REVIEW: 0.09
+    EXPIRED: 0.03
+
+  # -------------------------------------------------------------------------
+  # GAP-04 -- declared income MUST correlate with observed legitimate inflow,
+  # or INCOME_ACTIVITY_MISMATCH fires on everybody or nobody. Income is
+  # derived from each party's own legit 12-month inflow, divided by a
+  # plausible coverage ratio, with lognormal noise. The illicit cohort then
+  # deliberately under-declares, which is what the rule is supposed to find.
+  # -------------------------------------------------------------------------
+  income:
+    derive_from: legit_inflow_12m
+    coverage_ratio_mean: 1.15        # declared ~= annual legit inflow / 1.15
+    coverage_ratio_sigma: 0.28
+    noise_lognormal_sigma: 0.22
+    floor_inr: 180000
+    ceiling_inr: 250000000
+    round_to_inr: 10000
+    illicit_cohort_under_declare_factor: 0.35   # declare ~35% of true capacity
+
+  # -------------------------------------------------------------------------
+  # GAP-05 -- shared device fingerprints must be co-located with existing fund
+  # flows, because SHARED_DEVICE_CLUSTER requires shared device AND flow
+  # between the accounts. Random assignment yields zero detections.
+  # -------------------------------------------------------------------------
+  device:
+    shared_fingerprint_pct: 8.0
+    # Fraction of shared-device clusters placed on account groups that already
+    # transact with each other. The remainder are decoys (shared device, no
+    # flow) that the rule must correctly NOT fire on -- these are the
+    # false-positive control.
+    colocate_with_fund_flow_pct: 70.0
+    cluster_size_min: 3
+    cluster_size_max: 5
+
+  relationships:
+    shared_phone_pct: 4.0
+    beneficial_owner_pct: 6.0
+    # FUND_FLOW edges are derived from transactions, not generated.
+    fund_flow_min_txn_count: 2
+
+# ---------------------------------------------------------------------------
+# GAP-06/07 -- typology injection.
+# FX conversion alone cannot create Rs 9.4-9.8L clusters against a Rs 10L
+# trigger: structuring is INJECTED as a separate, explicitly labelled cohort.
+# Bands are expressed as fractions of the CTR threshold resolved from
+# GOVERNANCE.POLICY_CLAUSE (CTR_CASH_THRESHOLD), never as literals.
+# ---------------------------------------------------------------------------
+injection:
+  structuring:
+    enabled: true
+    cohort_parties: 40
+    accounts_per_party_min: 2
+    accounts_per_party_max: 4
+    deposits_per_account_min: 3
+    deposits_per_account_max: 6
+    amount_band_pct_of_ctr: [0.90, 0.985]
+    window_days: 21
+    channel: CASH
+    label: reskin_structuring
+
+  rapid_credit_velocity:
+    enabled: true
+    cohort_parties: 30
+    remitters_min: 7
+    remitters_max: 14
+    credits_min: 11
+    credits_max: 22
+    window_days: 3
+    label: reskin_mule_fan_in
+
+  dormant_reactivation:
+    enabled: true
+    cohort_parties: 20
+    dormancy_days_min: 180
+    burst_txn_count_min: 8
+    label: reskin_dormant_reactivation
+
+# ---------------------------------------------------------------------------
+# GAP-07 -- realism validation. These are ASSERTED, not claimed. `riskcopilot
+# generate` fails if a gate with fail_build: true is violated.
+# The AMLworld base rate is 0.063%; subgraph sampling seeded from laundering
+# accounts raises it, so the band is stated as a range and enforced.
+# ---------------------------------------------------------------------------
+validation:
+  illicit_rate_pct:
+    min: 0.10
+    max: 1.50
+    fail_build: true
+  money_conservation:
+    # Every pair must have exactly one debit leg and one credit leg.
+    max_unpaired_legs: 0
+    fail_build: true
+  referential_integrity:
+    max_orphan_account_refs: 0
+    max_orphan_party_refs: 0
+    fail_build: true
+  benford:
+    # Chi-square of leading-digit distribution against Benford, legit legs only.
+    max_chi_square: 60.0
+    fail_build: false          # reported on the realism slide, not a gate
+  degree_distribution:
+    min_power_law_alpha: 1.5
+    max_power_law_alpha: 3.5
+    fail_build: false
+  label_leakage:
+    # V6: no label column may be reachable from the semantic view.
+    forbidden_columns: [is_laundering, is_illicit, typology_id, injection_method]
+    fail_build: true
+  signal_yield:
+    # Each Tier-1 rule must produce a non-trivial, non-absurd number of
+    # detections, otherwise generation is miscalibrated (this is what catches
+    # GAP-04 and GAP-05 regressions automatically).
+    min_detections_per_rule: 5
+    max_detections_per_rule: 2000
+    fail_build: true
+
+# ---------------------------------------------------------------------------
+# GAP-18 -- the demo hero party must be SELECTED, not assumed. The docs
+# hardcode P-10042 / "Rajesh Kumar"; party ids are generated, so the demo
+# script would be fiction. This step picks a party that provably trips every
+# listed rule and writes the resolved id to conf/generated/demo_entity.yml.
+# ---------------------------------------------------------------------------
+demo_entity:
+  must_trigger_rules:
+    - STRUCTURING_CROSS_ACCOUNT
+    - RAPID_CREDIT_VELOCITY
+    - SHARED_DEVICE_CLUSTER
+  prefer_branch_region: MUMBAI
+  prefer_party_type: INDIVIDUAL
+  fail_if_not_found: true
+
+# ---------------------------------------------------------------------------
+# L3 narratives (AI_COMPLETE). Models resolve from conf/models.yml.
+# ---------------------------------------------------------------------------
+narratives:
+  kyc_notes:
+    count: 10000
+    temperature: 0.9
+    model_key: bulk_narrative
+  case_comments:
+    count: 2000
+    temperature: 0.8
+    model_key: bulk_narrative
+  golden_documents:
+    count: 8
+    temperature: 0.3
+    model_key: golden_narrative
+  # Correlated noise: notes must sometimes CONTRADICT the structured record,
+  # so the agent has to reconcile conflicting evidence rather than paraphrase.
+  noise:
+    typo_pct: 12.0
+    contradiction_pct: 8.0
+    missing_field_pct: 10.0
+    stale_occupation_pct: 6.0
+  # One planted prompt injection, for the adversarial suite.
+  prompt_injection_count: 3

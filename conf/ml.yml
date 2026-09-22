@@ -1,0 +1,164 @@
+# ===========================================================================
+# ml.yml -- Snowflake-native ML
+# ===========================================================================
+# Tier-1 scope is deliberately narrow: the two cheapest high-impact items,
+# both of which are BUILT-IN SQL and need no snowflake-ml-python, no compute
+# pool, and no model training infrastructure. Everything heavier is recorded
+# under future_scope so it can be presented as a considered decision rather
+# than an omission.
+#
+# HARD BOUNDARY, inherited from the LLM boundary rule:
+#   ML output may RANK, PRIORITISE and FLAG FOR REVIEW.
+#   ML output may never be the sole basis of a filing, and never supplies a
+#   number that appears in an artifact. Scores are not evidence.
+# ===========================================================================
+
+enabled: true
+
+tier1:
+
+  # -------------------------------------------------------------------------
+  # 1. Fuzzy sanctions screening -- JAROWINKLER_SIMILARITY / EDITDISTANCE.
+  #
+  # The architecture CUT fuzzy matching as too complex and fell back to exact
+  # joins. It is a single built-in scalar function. Restoring it recovers a
+  # genuine capability (aliases, transliterations -- the normal case for
+  # sanctions screening on Indian names) at near-zero cost.
+  # -------------------------------------------------------------------------
+  fuzzy_sanctions:
+    enabled: true
+    method: JAROWINKLER_SIMILARITY
+    # Thresholds resolve from GOVERNANCE.POLICY_CLAUSE
+    # (SANCTIONS_EXACT_MATCH, SANCTIONS_FUZZY_REVIEW_FLOOR) -- not from here.
+    exact_match_clause_id: SANCTIONS_EXACT_MATCH
+    review_floor_clause_id: SANCTIONS_FUZZY_REVIEW_FLOOR
+    # Blocking key keeps the cross join tractable against ~500K sanctions rows:
+    # candidates must agree on a coarse key before the expensive comparison.
+    blocking:
+      strategy: soundex_first_token_plus_length_bucket
+      max_candidates_per_party: 50
+    normalisation:
+      uppercase: true
+      strip_punctuation: true
+      collapse_whitespace: true
+      # Dropped before comparison so "Kumar Trading Pvt Ltd" matches "Kumar
+      # Trading Private Limited".
+      drop_tokens: [LTD, LIMITED, PVT, PRIVATE, LLP, INC, CORP, CO, AND, THE]
+    outcome:
+      exact: SIGNAL                 # SANCTIONS_MATCH_NEW, severity CRITICAL
+      fuzzy: MANUAL_REVIEW          # review task; never an automatic filing
+
+  # -------------------------------------------------------------------------
+  # 2. Unsupervised velocity anomaly -- SNOWFLAKE.ML.ANOMALY_DETECTION.
+  #
+  # This is the honest answer to "rule-based TMS produce an 80-95% false
+  # positive rate": a per-account behavioural baseline catches deviations that
+  # no fixed threshold expresses. Unsupervised, so it does NOT consume
+  # GROUND_TRUTH.LABELS and cannot leak them.
+  # -------------------------------------------------------------------------
+  velocity_anomaly:
+    enabled: true
+    function: SNOWFLAKE.ML.ANOMALY_DETECTION
+    model_name: RC_VELOCITY_ANOMALY_MODEL
+    # Trains on the daily aggregate, which is incremental-safe (GAP-09).
+    training_source: DT_TXN_DAILY_AGG
+    series_column: account_id
+    timestamp_column: txn_date
+    target_column: credit_amount_inr
+    # Accounts with too little history produce meaningless baselines.
+    min_history_days: 45
+    prediction_interval: 0.99
+    schedule: USING CRON 0 3 * * * Asia/Kolkata
+    outcome:
+      signal_type: VELOCITY_ANOMALY_ML
+      severity: LOW                 # ranks work; never justifies a filing
+      # Recorded so the Sentinel can say "flagged by baseline deviation, not by
+      # a rule" and the Reviewer can reject any artifact that cites it as
+      # primary evidence.
+      admissible_as_primary_evidence: false
+
+# ---------------------------------------------------------------------------
+# Deferred. Each entry states what it would add and why it is not in Tier 1,
+# so the "What Production Would Need" slide is specific rather than hand-wavy.
+# ---------------------------------------------------------------------------
+future_scope:
+
+  feature_store:
+    package: snowflake.ml.feature_store
+    what: >
+      Register the velocity features as Feature Views on ACCOUNT and PARTY
+      entities, with generate_training_set() for point-in-time-correct
+      retrieval.
+    why_it_matters: >
+      The current design would build any training set by joining current
+      feature values to historical labels, which leaks future information and
+      inflates measured performance. A Feature Store is the correct fix, not an
+      optimisation.
+    why_deferred: Not needed while no supervised model is trained in Tier 1.
+
+  triage_classifier:
+    package: SNOWFLAKE.ML.CLASSIFICATION
+    what: >
+      Supervised risk score trained on GROUND_TRUTH.LABELS with velocity and
+      graph features, used ONLY to order the Sentinel's queue.
+    why_it_matters: Directly attacks analyst time-to-first-true-positive.
+    why_deferred: >
+      Requires the Feature Store for point-in-time correctness first;
+      otherwise the reported lift is an artefact of leakage. Also needs a
+      strict train/test split by TIME, not at random, because the graph makes
+      random splits leak.
+    guardrail: Ranking only. Never enters EVIDENCE, FINDING or ARTIFACT.
+
+  top_insights:
+    package: SNOWFLAKE.ML.TOP_INSIGHTS
+    what: Explain which attributes drive week-over-week alert-volume shifts.
+    why_it_matters: Turns the Sentinel summary from a list into an explanation.
+    why_deferred: Needs several weeks of simulated history to be meaningful.
+
+  model_registry:
+    package: snowflake.ml.registry
+    what: Version and log any custom model; surface model_version in lineage.
+    why_it_matters: >
+      AUDIT.AGENT_ACTION_LOG.model_version is only trustworthy if models are
+      registered artefacts rather than ad-hoc SQL calls.
+    why_deferred: No custom model in Tier 1.
+
+  ml_jobs:
+    package: snowflake.ml.jobs
+    what: Run graph-feature extraction (node2vec-style embeddings) on SPCS.
+    why_it_matters: Learned graph embeddings outperform hand-written cycle rules.
+    why_deferred: Needs a compute pool; far beyond hackathon scope.
+
+  embedding_entity_resolution:
+    package: AI_EMBED / VECTOR_COSINE_SIMILARITY
+    what: >
+      Resolve aliases and transliterations via embeddings instead of edit
+      distance, populating PARTY.match_confidence.
+    why_it_matters: >
+      Jaro-Winkler fails on transliteration variants
+      ("Mohammed"/"Muhammad"/"Mohd"), which is the dominant real-world case.
+    why_deferred: >
+      Tier-1 Jaro-Winkler covers the demo; embedding the full OpenSanctions
+      target set is a material cost.
+
+  ai_contradiction_detection:
+    package: AI_CLASSIFY / AI_FILTER
+    what: >
+      Detect KYC narrative notes that contradict the structured record, which
+      generation deliberately injects at 8%.
+    why_it_matters: Reconciling conflicting evidence is squarely an LLM task.
+    why_deferred: Tier 1 surfaces both facts and lets the agent reconcile them.
+
+# ---------------------------------------------------------------------------
+# Preconditions the doctor must confirm before any ML step is deployed. ML
+# functions are edition- and region-gated; a hard failure at demo time is
+# unacceptable, so an unmet precondition disables the feature and says so.
+# ---------------------------------------------------------------------------
+preconditions:
+  require_edition: [ENTERPRISE, BUSINESS_CRITICAL]
+  verify_functions:
+    - JAROWINKLER_SIMILARITY
+    - EDITDISTANCE
+    - SOUNDEX
+    - SNOWFLAKE.ML.ANOMALY_DETECTION
+  on_unavailable: disable_and_report

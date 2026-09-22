@@ -1,0 +1,278 @@
+# ===========================================================================
+# detection.yml -- TIER 3 SEED VALUES for GOVERNANCE.POLICY_CLAUSE
+# ===========================================================================
+# IMPORTANT: this file is a SEED, not the runtime source of truth.
+#
+# Detection SQL never reads these numbers directly. `riskcopilot deploy
+# --stage policy` loads them into GOVERNANCE.POLICY_CLAUSE, and the dynamic
+# tables join to POLICY_CLAUSE to resolve every threshold at refresh time.
+# That is what makes the architecture's "policy-as-data" claim real rather
+# than decorative: changing a threshold is a governed data change with an
+# effective date and an audit trail, not a code deploy.
+#
+# `provenance` must cite a real regulation or an internal document. A clause
+# with no provenance fails the deploy-time validation gate -- this is how we
+# guarantee the demo never cites a hallucinated circular number.
+# ===========================================================================
+
+currency:
+  code: INR
+  symbol: "\u20b9"
+  # Presentation helpers only -- never used in detection arithmetic.
+  lakh: 100000
+  crore: 10000000
+
+clauses:
+
+  # -------------------------------------------------------------------------
+  # Cash Transaction Report trigger. The anchor threshold for the whole
+  # structuring story.
+  # -------------------------------------------------------------------------
+  - clause_id: CTR_CASH_THRESHOLD
+    metric: cash_txn_amount_inr
+    operator: ">="
+    threshold_lower: 1000000          # Rs 10,00,000 (10 lakh)
+    threshold_upper: null
+    action_required: FILE_CTR
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: PML (Maintenance of Records) Rules, 2005
+      section_heading: Rule 3(1)(A) - cash transactions
+      source_page: null
+    notes: >
+      All cash transactions of the value of more than ten lakh rupees, or its
+      equivalent in foreign currency. Anchors STRUCTURING_CROSS_ACCOUNT.
+
+  # -------------------------------------------------------------------------
+  # Structuring band -- deposits deliberately parked below the CTR trigger.
+  # Band is expressed as a fraction of CTR_CASH_THRESHOLD so the two can never
+  # drift apart when the statutory threshold changes.
+  # -------------------------------------------------------------------------
+  - clause_id: STRUCTURING_BAND
+    metric: cash_txn_amount_ratio_to_ctr
+    operator: BETWEEN
+    threshold_lower: 0.90             # >= 90% of the CTR threshold
+    threshold_upper: 0.999            # but strictly below it
+    action_required: RAISE_SIGNAL
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-04 Structuring below reporting threshold
+      source_page: null
+    notes: >
+      Derived control, not a statutory threshold. Rs 9.0L-9.99L against a
+      Rs 10L trigger.
+
+  - clause_id: STRUCTURING_MIN_ACCOUNTS
+    metric: distinct_accounts_in_window
+    operator: ">="
+    threshold_lower: 2
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-04 Structuring below reporting threshold
+      source_page: null
+
+  - clause_id: STRUCTURING_WINDOW_DAYS
+    metric: observation_window_days
+    operator: "<="
+    threshold_lower: 30
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-04 Structuring below reporting threshold
+      source_page: null
+
+  # -------------------------------------------------------------------------
+  # Income vs activity. GAP-04: only meaningful because generation correlates
+  # declared income with observed legitimate inflow.
+  # -------------------------------------------------------------------------
+  - clause_id: INCOME_MISMATCH_MULTIPLE
+    metric: inflow_30d_to_declared_annual_income_ratio
+    operator: ">="
+    threshold_lower: 3.0
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: RBI Master Direction - Know Your Customer, 2016
+      section_heading: Ongoing monitoring - consistency with declared profile
+      source_page: null
+    notes: >
+      RBI requires monitoring for consistency with the customer's declared
+      profile; the 3x multiple is the institution's calibration of that duty.
+
+  - clause_id: INCOME_MISMATCH_MIN_INFLOW
+    metric: inflow_30d_amount_inr
+    operator: ">="
+    threshold_lower: 500000
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-07 Income inconsistency - noise floor
+      source_page: null
+    notes: Suppresses ratio blow-ups on very low declared incomes.
+
+  # -------------------------------------------------------------------------
+  # Mule-account velocity.
+  # -------------------------------------------------------------------------
+  - clause_id: RAPID_CREDIT_MIN_COUNT
+    metric: credit_count_in_window
+    operator: ">="
+    threshold_lower: 10
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-11 Rapid credit velocity (mule indicator)
+      source_page: null
+
+  - clause_id: RAPID_CREDIT_MIN_REMITTERS
+    metric: distinct_remitters_in_window
+    operator: ">="
+    threshold_lower: 6
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-11 Rapid credit velocity (mule indicator)
+      source_page: null
+
+  - clause_id: RAPID_CREDIT_WINDOW_DAYS
+    metric: observation_window_days
+    operator: "<="
+    threshold_lower: 3
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-11 Rapid credit velocity (mule indicator)
+      source_page: null
+
+  # -------------------------------------------------------------------------
+  # Shared-device clustering. GAP-05: generation must co-locate shared
+  # fingerprints with existing fund flows or this rule returns zero rows.
+  # -------------------------------------------------------------------------
+  - clause_id: SHARED_DEVICE_MIN_ACCOUNTS
+    metric: accounts_sharing_device_fingerprint
+    operator: ">="
+    threshold_lower: 3
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - Transaction Monitoring Rulebook
+      section_heading: TM-15 Device sharing across unrelated customers
+      source_page: null
+
+  # -------------------------------------------------------------------------
+  # Sanctions screening. Exact match is authoritative; the fuzzy band is
+  # review-only and must never by itself justify a filing.
+  # -------------------------------------------------------------------------
+  - clause_id: SANCTIONS_EXACT_MATCH
+    metric: normalised_name_equality
+    operator: "="
+    threshold_lower: 1
+    threshold_upper: null
+    action_required: BLOCK_AND_ESCALATE
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: RBI Master Direction - Know Your Customer, 2016
+      section_heading: Obligations under UAPA / designated lists
+      source_page: null
+
+  - clause_id: SANCTIONS_FUZZY_REVIEW_FLOOR
+    metric: jarowinkler_similarity_pct
+    operator: ">="
+    threshold_lower: 92
+    threshold_upper: 99
+    action_required: MANUAL_REVIEW
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: Internal - AML Policy
+      section_heading: Name screening - probable match handling
+      source_page: null
+    notes: >
+      Implemented with the built-in JAROWINKLER_SIMILARITY function. Produces
+      a review task, never an automatic filing.
+
+  # -------------------------------------------------------------------------
+  # Mule-ring graph traversal (on-demand agent tool, not a dynamic table).
+  # -------------------------------------------------------------------------
+  - clause_id: MULE_RING_MAX_DEPTH
+    metric: fund_flow_cycle_depth
+    operator: "<="
+    threshold_lower: 3
+    threshold_upper: null
+    action_required: RAISE_SIGNAL
+    effective_from: "2016-02-25"
+    provenance:
+      source_document: FATF - Money Laundering Typologies (layering)
+      section_heading: Circular fund flows
+      source_page: null
+
+  # -------------------------------------------------------------------------
+  # Filing lifecycle. Drives CASE.sla_deadline.
+  # -------------------------------------------------------------------------
+  - clause_id: STR_FILING_SLA_DAYS
+    metric: working_days_to_file_str
+    operator: "<="
+    threshold_lower: 7
+    threshold_upper: null
+    action_required: FILE_STR
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: PML (Maintenance of Records) Rules, 2005
+      section_heading: Rule 8 - furnishing of information
+      source_page: null
+    notes: >
+      Suspicious transaction reports not later than seven working days from
+      the date of establishing suspicion.
+
+  - clause_id: PRINCIPAL_OFFICER_ATTESTATION_REQUIRED
+    metric: human_attestation_required
+    operator: "="
+    threshold_lower: 1
+    threshold_upper: null
+    action_required: BLOCK_AUTO_FILING
+    effective_from: "2005-07-01"
+    provenance:
+      source_document: PML (Maintenance of Records) Rules, 2005
+      section_heading: Rule 7 - Principal Officer obligations
+      source_page: null
+    notes: >
+      The Principal Officer bears the filing obligation. Autonomous filing is
+      legally invalid, not merely imprudent. Enforced in code, not in prose.
+
+# ---------------------------------------------------------------------------
+# Severity mapping: rule -> signal severity. Drives ROUTE_SIGNALS case
+# creation and the Sentinel triage ordering.
+# ---------------------------------------------------------------------------
+severity:
+  SANCTIONS_MATCH_NEW: CRITICAL
+  MULE_RING_CANDIDATE: HIGH
+  STRUCTURING_CROSS_ACCOUNT: HIGH
+  SHARED_DEVICE_CLUSTER: MEDIUM
+  RAPID_CREDIT_VELOCITY: MEDIUM
+  INCOME_ACTIVITY_MISMATCH: MEDIUM
+  VELOCITY_ANOMALY_ML: LOW
+
+routing:
+  # GAP-11: "existing case" definition, needed for idempotent case dedup.
+  open_case_statuses: [OPEN, INVESTIGATING, DRAFTED]
+  # A case is created only at or above this severity; below it the signal is
+  # logged without a case.
+  min_severity_for_case: MEDIUM
+  severity_order: [LOW, MEDIUM, HIGH, CRITICAL]
+  # Two or more distinct rule families on one party escalate to CROSS_DOMAIN,
+  # which is the cross-silo narrative.
+  cross_domain_min_distinct_rules: 2

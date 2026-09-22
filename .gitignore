@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Secrets and local credentials  --  NEVER commit these
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+connections.toml
+*.p8
+*.pem
+*.key
+secrets/
+.secrets/
+
+# ---------------------------------------------------------------------------
+# Large source datasets (fetched, not committed -- see data/MANIFEST.yml)
+# ---------------------------------------------------------------------------
+data/Kaggle/*.csv
+data/Kaggle/*.txt
+data/*.csv
+data/*.json
+data/*.parquet
+data/*.zip
+data/*.xml
+!data/MANIFEST.yml
+
+# Generated / derived data products
+build/
+generated/
+data/generated/
+data/staging/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+.venv/
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Tooling / editors / OS
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Snowflake CLI local state
+.snowflake/
+logs/
+*.log
+
+# Cortex Code session artefacts (plans are intentionally kept)
+.cortex/cache/

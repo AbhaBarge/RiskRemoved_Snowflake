@@ -1,0 +1,145 @@
+# ===========================================================================
+# data/MANIFEST.yml -- source dataset registry
+# ===========================================================================
+# The payload files are NOT committed (see .gitignore): ~950 MB total, and two
+# of them carry licences that require attribution rather than redistribution.
+# This manifest is the contract: `riskcopilot doctor --data` verifies that
+# every required file is present and that its SHA-256 matches, before any
+# generation or load step is allowed to run.
+#
+# Verify manually:
+#   Get-FileHash data\Kaggle\HI-Small_Trans.csv -Algorithm SHA256
+# ===========================================================================
+
+manifest_version: 1
+verified_on: "2026-09-22"
+
+datasets:
+
+  # -------------------------------------------------------------------------
+  # L2 behavioural ledger. The transaction spine of the whole build.
+  # -------------------------------------------------------------------------
+  amlworld_transactions:
+    path: data/Kaggle/HI-Small_Trans.csv
+    required: true
+    bytes: 475664283
+    sha256: b19d39f515523373f991b689c07e11e7b0b95c17a2c27a87d91584ae16c5b040
+    rows: 5078345
+    source: IBM AMLworld (HI-Small) via Kaggle
+    licence: CDLA-Sharing-1.0
+    url: https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
+    loads_to: RAW.RAW_AMLWORLD_TRANS
+    notes: >
+      Pair-level grain (one row = one sender->receiver transfer). Columns 3 and
+      5 share the header "Account"; COPY INTO must use positional references
+      $1..$11. Column 11 (Is Laundering) is ground truth and is routed to
+      GROUND_TRUTH, never into RAW.RAW_TRANSACTIONS.
+
+  amlworld_accounts:
+    path: data/Kaggle/HI-Small_accounts.csv
+    required: true
+    bytes: 34053187
+    sha256: 786808526e33cfc441212dd6fccda7edfc24172149bed59c6ef59b186836b014
+    rows: 518581
+    source: IBM AMLworld (HI-Small) via Kaggle
+    licence: CDLA-Sharing-1.0
+    loads_to: RAW.RAW_AMLWORLD_ACCOUNTS
+    notes: >
+      account_number -> entity_id mapping. The referential backbone: L1
+      enrichment preserves these keys rather than minting new ones (GAP-02).
+
+  amlworld_patterns:
+    path: data/Kaggle/HI-Small_Patterns.txt
+    required: true
+    bytes: 323844
+    sha256: 2c546b5ce6009e73851f0139af053cf845f08bf92f3bc82fe1eb937dec2ef39b
+    laundering_attempts: 370
+    illicit_transactions: 3209
+    source: IBM AMLworld (HI-Small) via Kaggle
+    licence: CDLA-Sharing-1.0
+    loads_to: GROUND_TRUTH.RAW_LAUNDERING_PATTERNS
+    notes: >
+      Not CSV. BEGIN/END LAUNDERING ATTEMPT blocks with a typology label.
+      Parsed by risk_copilot.generation.patterns; supplies both the typology
+      ground truth and the subgraph seed accounts.
+
+  # -------------------------------------------------------------------------
+  # Sanctions / PEP reference data.
+  # -------------------------------------------------------------------------
+  opensanctions_targets:
+    path: data/targets.simple.csv
+    required: true
+    bytes: 73360399
+    sha256: 35e5a2ecf2d760a61d44543ab075e3d4db0b9d85aac5a16c19a7e0d3ce277e2d
+    source: OpenSanctions consolidated sanctioned entities
+    licence: CC-BY-NC-4.0 (non-commercial; attribution required)
+    url: https://data.opensanctions.org/datasets/latest/default/targets.simple.csv
+    loads_to: RAW.RAW_SANCTIONS_OPENSANCTIONS
+    notes: >
+      Flat, one row per target, semicolon-delimited multi-value fields.
+      Preferred over the FtM JSON for the Tier-1 build.
+
+  opensanctions_entities_ftm:
+    path: data/entities.ftm.json
+    required: false
+    bytes: 365206495
+    sha256: 6fa0e95d3bbab249af1fb435002aadd021582efc6fe877bf6a3a97ae7e19a751
+    source: OpenSanctions Follow-the-Money entity graph (NDJSON)
+    licence: CC-BY-NC-4.0
+    loads_to: null
+    notes: >
+      NOT loaded in Tier 1. Retained for the Future Scope alias/relationship
+      graph work; targets.simple.csv is sufficient for exact + Jaro-Winkler
+      screening.
+
+  # -------------------------------------------------------------------------
+  # Regulatory reference documents (small, committed).
+  # -------------------------------------------------------------------------
+  fiu_str_form_sba:
+    path: data/FIU-IND_STR_Banking_Company_SBA.md
+    required: true
+    committed: true
+    source: FIU-IND STR form for banking companies (SBA01-SBA04)
+    loads_to: GOVERNANCE.REF_FILING_TEMPLATES
+    notes: >
+      FIU-IND publishes a FORM, not a public XML schema (GAP-17). The
+      8-Part structure here is transcribed into a JSON-Schema spec that
+      validate_filing_schema() enforces. We validate against our own spec and
+      say so; we do not claim FINGate conformance.
+
+  ofac_sdn_schema_ref:
+    path: data/ofac-sdn-schema.md
+    required: false
+    committed: true
+    source: OFAC SDN XML structure reference
+    notes: XMLGET/FLATTEN path reference. Live SDN fetch is Future Scope.
+
+  sba_pdf:
+    path: data/SBA.pdf
+    required: false
+    committed: true
+    source: FIU-IND SBA form (original PDF)
+    loads_to: "@POLICY_DOCS stage"
+
+# ---------------------------------------------------------------------------
+# Regulatory PDFs for the policy-ingestion pipeline. Not yet acquired; the
+# deploy step degrades to the synthesised internal policy set if absent, and
+# records which sources were unavailable so the demo never over-claims.
+# ---------------------------------------------------------------------------
+policy_documents_expected:
+  - id: RBI_MD_KYC
+    title: RBI Master Direction - Know Your Customer Direction, 2016
+    required: true
+    acquired: false
+  - id: PMLA_RULES_2005
+    title: PML (Maintenance of Records) Rules, 2005
+    required: true
+    acquired: false
+  - id: FIU_REPORTING_GUIDE
+    title: FIU-IND Reporting Format Guide
+    required: false
+    acquired: false
+  - id: FATF_40_RECS
+    title: FATF 40 Recommendations
+    required: false
+    acquired: false

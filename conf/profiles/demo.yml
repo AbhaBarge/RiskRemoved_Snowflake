@@ -1,0 +1,38 @@
+# ===========================================================================
+# conf/profiles/demo.yml -- demo / presentation overlay
+# ===========================================================================
+# The environment the 6-minute demo runs against. Deep-merged over
+# conf/base.yml. Activate with:  riskcopilot --profile demo <command>
+# ===========================================================================
+
+profile: demo
+
+project:
+  object_suffix: ""          # canonical, unsuffixed object names
+
+# Full freshness: the "inject a structuring burst, watch a case appear"
+# beat depends on these lags.
+dynamic_tables:
+  transactions_enriched: { target_lag: 1 minute }
+  signals_fast:          { target_lag: 5 minutes }
+  signals_aggregate:     { target_lag: 60 minutes }
+
+streams_tasks:
+  route_signals_schedule: 1 minute
+
+retention:
+  landing_days: 14
+  evidence_days: 14
+
+warehouses:
+  pipeline:
+    size: SMALL
+  demo:
+    size: SMALL
+
+# The demo must not depend on the network at showtime: sanctions data is
+# pre-loaded, so live HTTP fetches stay off.
+external_overrides:
+  http_sources:
+    opensanctions: { enabled: false }
+    ofac_sdn:      { enabled: false }

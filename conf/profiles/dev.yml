@@ -1,0 +1,57 @@
+# ===========================================================================
+# conf/profiles/dev.yml -- development overlay
+# ===========================================================================
+# Deep-merged over conf/base.yml. Only differences belong here.
+# Activate with:  riskcopilot --profile dev <command>   or  RC_PROFILE=dev
+# ===========================================================================
+
+profile: dev
+
+project:
+  # Every object gets a _DEV suffix so a dev deploy can never overwrite the
+  # demo objects in the same account.
+  object_suffix: _DEV
+
+# Slower lags: dev does not need minute-level freshness and every refresh
+# costs credits.
+dynamic_tables:
+  transactions_enriched: { target_lag: 60 minutes }
+  signals_fast:          { target_lag: 60 minutes }
+  signals_aggregate:     { target_lag: 24 hours }
+
+streams_tasks:
+  route_signals_schedule: 60 minutes
+
+retention:
+  landing_days: 3
+  evidence_days: 3
+
+warehouses:
+  pipeline:
+    size: XSMALL
+  demo:
+    size: XSMALL
+
+# Small sample for a fast build/test loop. Validation gates still run, so
+# calibration bugs surface here rather than at demo time.
+generation_overrides:
+  subgraph:
+    target_parties: 500
+    target_accounts: 1000
+    max_transactions: 40000
+  narratives:
+    kyc_notes:
+      count: 200
+    case_comments:
+      count: 50
+    golden_documents:
+      count: 2
+  validation:
+    signal_yield:
+      min_detections_per_rule: 1
+
+ml_overrides:
+  tier1:
+    velocity_anomaly:
+      # 40K transactions over a small window cannot support a 45-day baseline.
+      enabled: false

@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Risk Copilot — Architecture</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-09-21",
+    "intent": "Visual architecture reference for Risk & Compliance Copilot — all 18 diagrams + design decisions",
+    "sections": [
+      { "id": "diagrams", "title": "Architecture Diagrams", "dataSources": [], "producerNotes": "18 Mermaid diagrams from enhanced-architecture-diagrams.md" },
+      { "id": "gaps", "title": "Design Decisions", "dataSources": [], "producerNotes": "Resolved gaps and implementation specs" }
+    ]
+  }
+  </script>
+  <script src="/libs/mermaid@10.9.6/mermaid.min.js"></script>
+  <script>
+    if (typeof mermaid === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.6/dist/mermaid.min.js';
+      s.onload = function() {
+        mermaid.initialize({ startOnLoad: true, securityLevel: 'strict',
+          theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+          er: { useMaxWidth: true }, flowchart: { useMaxWidth: true }, gantt: { fontSize: 12 }
+        });
+      };
+      document.head.appendChild(s);
+    }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 1060px; width: 100%; margin: 0 auto;
+      padding: clamp(12px, 3vw, 32px);
+      color: light-dark(#1e293b, #e2e8f0);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.55; font-size: 15px;
+    }
+    h1 { font-size: 1.8em; margin-bottom: 2px; color: light-dark(#0f172a, #f8fafc); }
+    .subtitle { color: light-dark(#64748b, #94a3b8); margin-bottom: 20px; }
+    h2 { font-size: 1.25em; margin: 0; color: light-dark(#0f172a, #f1f5f9); }
+    h3 { font-size: 1.05em; margin: 18px 0 6px; color: light-dark(#1e40af, #93c5fd); }
+    p, li { margin-bottom: 6px; }
+    ul, ol { padding-left: 20px; }
+    a { color: light-dark(#2563eb, #60a5fa); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: light-dark(#f1f5f9, #1e293b); padding: 1px 5px; border-radius: 3px; font-size: 0.88em; }
+    strong { color: light-dark(#0f172a, #f1f5f9); }
+    img, svg { max-width: 100%; height: auto; }
+
+    /* NAV */
+    .nav { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; padding: 14px 18px; margin: 16px 0 28px; }
+    .nav-title { font-weight: 700; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; color: light-dark(#64748b, #94a3b8); margin-bottom: 8px; }
+    .nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 16px; }
+    .nav-grid a { display: block; padding: 3px 0; font-size: 0.88em; }
+    .nav-grid .num { display: inline-block; width: 22px; text-align: right; margin-right: 6px; color: light-dark(#94a3b8, #64748b); font-weight: 600; }
+
+    /* DIAGRAM SECTIONS */
+    details { margin: 12px 0; border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; overflow: hidden; }
+    details[open] { border-color: light-dark(#bfdbfe, #1e40af); }
+    summary { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 12px;
+      background: light-dark(#f8fafc, #1e293b); user-select: none; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: '+'; font-weight: 700; font-size: 1.1em; color: light-dark(#2563eb, #60a5fa); width: 18px; text-align: center; flex-shrink: 0; transition: transform 0.15s; }
+    details[open] > summary::before { content: '\2212'; }
+    summary:hover { background: light-dark(#eff6ff, #0f172a); }
+    .diagram-num { background: light-dark(#2563eb, #1e40af); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 0.8em; font-weight: 700; flex-shrink: 0; }
+    .section-body { padding: 16px 18px; }
+    .section-body p { margin-bottom: 8px; }
+    .mermaid { margin: 12px 0; overflow-x: auto; }
+
+    /* TABLES */
+    .table-wrap { overflow-x: auto; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.88em; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 6px 10px; text-align: left; }
+    th { background: light-dark(#f3f4f6, #1e293b); font-weight: 600; }
+
+    /* CALLOUT BOXES */
+    .decision { background: light-dark(#f0fdf4, #0a2010); border-left: 4px solid #16a34a; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .decision strong { color: light-dark(#166534, #86efac); }
+    .future { background: light-dark(#fef3c7, #1a1400); border-left: 4px solid #d97706; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .future strong { color: light-dark(#92400e, #fcd34d); }
+
+    /* TIER BADGES */
+    .t1 { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .t2 { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .cut { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<h1>Risk & Compliance Copilot</h1>
+<div class="subtitle">Architecture Reference — 18 diagrams, all design decisions</div>
+
+<!-- NAV -->
+<div class="nav">
+  <div class="nav-title">Diagrams</div>
+  <div class="nav-grid">
+    <a href="#d1"><span class="num">1</span> Entity Relationship Model</a>
+    <a href="#d2"><span class="num">2</span> Data Generation — Three Layers</a>
+    <a href="#d3"><span class="num">3</span> Data Ingestion Architecture</a>
+    <a href="#d4"><span class="num">4</span> Transformation Pipeline</a>
+    <a href="#d5"><span class="num">5</span> Cross-Domain Signal Detection</a>
+    <a href="#d6"><span class="num">6</span> Signal-to-Artifact Pipeline</a>
+    <a href="#d7"><span class="num">7</span> Single Agent — Four Modes</a>
+    <a href="#d8"><span class="num">8</span> LLM Boundary</a>
+    <a href="#d9"><span class="num">9</span> Notification &amp; Case Routing</a>
+    <a href="#d10"><span class="num">10</span> Policy Ingestion Pipeline</a>
+    <a href="#d11"><span class="num">11</span> Governance Mechanisms</a>
+    <a href="#d12"><span class="num">12</span> Testing &amp; Validation</a>
+    <a href="#d13"><span class="num">13</span> MCP &amp; External Loop Closing</a>
+    <a href="#d14"><span class="num">14</span> Demo Spine — One Entity</a>
+    <a href="#d15"><span class="num">15</span> Complete Storage Model</a>
+    <a href="#d16"><span class="num">16</span> System Boundary</a>
+    <a href="#d17"><span class="num">17</span> CoCo Lifecycle Evidence Map</a>
+    <a href="#d18"><span class="num">18</span> Replay Harness Architecture</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">Sections</div>
+  <div class="nav-grid">
+    <a href="#gaps">Design Decisions (Gaps 1-9)</a>
+  </div>
+</div>
+
+<!-- ===== DIAGRAM 1 ===== -->
+<details id="d1" open>
+  <summary><span class="diagram-num">1</span><h2>Entity Relationship Model</h2></summary>
+  <div class="section-body">
+    <p>Physical table is leg-level grain; pair-level exposed as a view. 17 entities across 6 schemas.</p>
+    <pre class="mermaid">
+erDiagram
+    PARTY {
+        string party_id PK
+        string full_name
+        string risk_rating
+        boolean pep_flag
+        decimal declared_annual_income
+        decimal match_confidence
+    }
+    ACCOUNT {
+        string account_id PK
+        string party_id FK
+        string account_type
+        string status
+        decimal current_balance
+        string device_fingerprint
+    }
+    TRANSACTION {
+        string txn_id PK
+        string account_id FK
+        decimal amount
+        string currency
+        string channel
+        timestamp txn_timestamp
+    }
+    PARTY_RELATIONSHIP {
+        string relationship_id PK
+        string party_a_id FK
+        string party_b_id FK
+        string relationship_type
+        decimal total_flow_amount
+    }
+    TYPOLOGY {
+        string typology_id PK
+        string name
+        string fatf_reference
+        string detection_approach
+    }
+    RULE_DEFINITION {
+        string rule_id PK
+        string typology_id FK
+        string clause_id FK
+        string rule_sql_hash
+        boolean is_active
+    }
+    SIGNAL {
+        string signal_id PK
+        string party_id FK
+        string rule_id FK
+        string severity
+        timestamp fired_at
+    }
+    CASE {
+        string case_id PK
+        string party_id FK
+        string case_type
+        string status
+        timestamp sla_deadline
+    }
+    EVIDENCE {
+        string evidence_id PK
+        string case_id FK
+        string ref_type
+        string ref_id
+        timestamp as_of_ts
+    }
+    EVIDENCE_QUERY_LOG {
+        string query_log_id PK
+        string evidence_id FK
+        string sql_text
+        string result_hash
+        string query_id
+    }
+    FINDING {
+        string finding_id PK
+        string case_id FK
+        string narrative
+        string conclusion
+        variant cited_evidence_ids
+    }
+    POLICY_CLAUSE {
+        string clause_id PK
+        string clause_text
+        string metric
+        string operator
+        decimal threshold_lower
+        date effective_from
+    }
+    ARTIFACT {
+        string artifact_id PK
+        string finding_id FK
+        string artifact_type
+        string status
+        string content_hash
+    }
+    ATTESTATION {
+        string attestation_id PK
+        string artifact_id FK
+        string attestor
+        timestamp attested_at
+    }
+    REVIEW {
+        string review_id PK
+        string finding_id FK
+        string decision
+        variant defects_found
+    }
+    AGENT_ACTION_LOG {
+        string log_id PK
+        string sql_text
+        string sql_hash
+        string model_version
+        int tokens_used
+    }
+    SANCTIONS_ENTRY {
+        string entry_id PK
+        string entity_name
+        variant aliases
+        string list_source
+    }
+    PARTY ||--o{ ACCOUNT : "owns"
+    PARTY ||--o{ PARTY_RELATIONSHIP : "connected-to"
+    ACCOUNT ||--o{ TRANSACTION : "debits-credits"
+    PARTY ||--o{ SIGNAL : "flagged-by"
+    PARTY ||--o{ CASE : "investigated-in"
+    CASE ||--o{ EVIDENCE : "supported-by"
+    EVIDENCE ||--o{ EVIDENCE_QUERY_LOG : "verified-by"
+    CASE ||--o{ FINDING : "concludes-with"
+    FINDING ||--o{ ARTIFACT : "produces"
+    FINDING ||--o{ REVIEW : "validated-by"
+    ARTIFACT ||--o{ ATTESTATION : "signed-off-by"
+    POLICY_CLAUSE ||--o{ RULE_DEFINITION : "implements"
+    TYPOLOGY ||--o{ RULE_DEFINITION : "detects"
+    RULE_DEFINITION ||--o{ SIGNAL : "fires-as"
+    SANCTIONS_ENTRY ||--o{ SIGNAL : "match-triggers"
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 2 ===== -->
+<details id="d2">
+  <summary><span class="diagram-num">2</span><h2>Data Generation — Three-Layer Model</h2></summary>
+  <div class="section-body">
+    <p>Three layers, three technologies. L1 = deterministic Python (entities). L2 = IBM AMLworld reskinned (transactions). L3 = AI_COMPLETE (narratives).</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph L1["L1 — Entity Skeleton"]
+        FAKER["Faker hi_IN + Graph Builder"] --> OUT1["~5K Parties"] & OUT2["~10K Accounts\n+device_fingerprint"] & OUT3["UBO Graph"]
+    end
+    subgraph L2["L2 — Behavioural Ledger"]
+        SEED["IBM AMLworld HI-Small\n5M txns, 5.1K laundering"] --> RESKIN["Re-skin to INR\nUPI/NEFT/RTGS/CASH"] --> INJECT["Typology Injection\nLabels are deterministic"] --> LEDGER["Transaction Ledger"]
+    end
+    subgraph L3["L3 — Narratives"]
+        BULK["Bulk: 10K KYC notes\nSmall model"] & GOLDEN["Golden: AML policy\nFrontier model"] & NOISE["Noise: Typos,\ncontradictions"] --> CORPUS["Unstructured Corpus"]
+    end
+    subgraph V["Realism Checks"]
+        V1["Benford's Law"] & V2["Degree Dist."] & V3["Seasonality"] & V4["0.1-1% illicit"] & V5["Money Conservation"] & V6["No Label Leakage"]
+    end
+    L1 --> L2 --> V
+    L1 --> L3
+    style L1 fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style L2 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style L3 fill:#fce7f3,stroke:#db2777,stroke-width:2px
+    style V fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    style INJECT fill:#dc2626,color:#fff
+    style V6 fill:#dc2626,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 3 ===== -->
+<details id="d3">
+  <summary><span class="diagram-num">3</span><h2>Data Ingestion Architecture</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    subgraph SYNTH["Synthetic Sources"]
+        REPLAY["Replay Harness\nINSERT loop + chaos inject"]
+        ENTITY["Entity Generator\nL1 output"]
+        NARR["Narrative Generator\nL3 output"]
+    end
+    subgraph EXT["External Reference"]
+        OSANC["OpenSanctions"] & OFAC["OFAC SDN"] & RBI["RBI Circulars\nPDF"]
+    end
+    subgraph ING["Ingestion"]
+        BATCH["Batch COPY INTO"]
+        HTTP["HTTP GET via EAI"]
+        DOCAI["AI_PARSE_DOCUMENT\n+ AI_EXTRACT"]
+    end
+    subgraph LAND["Landing Tables"]
+        RT["RAW_TRANSACTIONS"] & RP["RAW_PARTY_*"] & RS["RAW_SANCTIONS_*"] & RPO["RAW_POLICY_CLAUSES"]
+    end
+    CS["Cortex Search Service\nHybrid keyword + semantic"]
+    REPLAY --> RT
+    ENTITY --> BATCH --> RP
+    NARR --> BATCH
+    OSANC & OFAC --> HTTP --> RS
+    RBI --> DOCAI --> RPO --> CS
+    style REPLAY fill:#d97706,color:#fff
+    style DOCAI fill:#dc2626,color:#fff
+    style CS fill:#7c3aed,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 4 ===== -->
+<details id="d4">
+  <summary><span class="diagram-num">4</span><h2>Transformation Pipeline — Two-Speed</h2></summary>
+  <div class="section-body">
+    <p>Fast lane: seconds-to-minutes (fraud/AML). Slow lane: daily batch (credit risk, Tier 2).</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph FAST["FAST LANE — Tier 1"]
+        RT["RAW_TRANSACTIONS"] --> ENR["DT_ENRICHED\n1 min"] --> VEL["DT_VELOCITY\nDOWNSTREAM"] --> SIG["DT_SIGNALS_FAST\n5 min\n5 rules"]
+    end
+    subgraph SLOW["SLOW LANE — Tier 2"]
+        RE["RAW_EXPOSURES"] --> STG["DT_EXPOSURES_STAGED\n1 day"]
+    end
+    subgraph DIM["Shared Dimensions"]
+        PARTY["DT_DIM_PARTY\n1 day, current-state"]
+        REL["DT_PARTY_RELATIONSHIP\n1 day"]
+        SANC["DT_SANCTIONS\nDOWNSTREAM"]
+        POL["POLICY_CLAUSE"]
+    end
+    PARTY --> ENR & STG
+    REL & SANC & POL --> SIG
+    POL --> STG
+    style FAST fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+    style SLOW fill:#fef2f2,stroke:#dc2626,stroke-width:2px,stroke-dasharray: 5 5
+    style DIM fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    style SIG fill:#2563eb,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 5 ===== -->
+<details id="d5">
+  <summary><span class="diagram-num">5</span><h2>Cross-Domain Signal Detection</h2></summary>
+  <div class="section-body">
+    <p>5 signals in DT_SIGNALS_FAST. MULE_RING_CANDIDATE is a Tier 1 on-demand agent tool (recursive CTE). FRAUD_BORROWER_OVERLAP is Tier 2.</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph DATA["Input Data"]
+        VEL["Velocity Features"] & KYC["KYC Profile"] & GRAPH["Relationship Graph"] & PEP["Sanctions Lists"] & DEV["Device Fingerprints"]
+    end
+    subgraph T1["TIER 1 — 5 in DT_SIGNALS_FAST"]
+        S1["STRUCTURING_CROSS_ACCOUNT\nSub-threshold splits vs 10L CTR"]
+        S2["INCOME_ACTIVITY_MISMATCH\n30d inflows vs declared income"]
+        S3["SANCTIONS_MATCH_NEW\nExact join on DT_SANCTIONS"]
+        S4["RAPID_CREDIT_VELOCITY\nN+ credits, M+ remitters, D days"]
+        S5["SHARED_DEVICE_CLUSTER\n3+ accounts, same fingerprint"]
+    end
+    subgraph T1T["TIER 1 — Agent Tool"]
+        S6["MULE_RING_CANDIDATE\nRecursive CTE, depth-3 cycle\nNot a DT"]
+    end
+    subgraph T2["TIER 2"]
+        S7["FRAUD_BORROWER_OVERLAP"]
+    end
+    VEL --> S1 & S2 & S4
+    KYC --> S1 & S2
+    PEP --> S3
+    DEV & GRAPH --> S5
+    GRAPH --> S6
+    style T1 fill:#dcfce7,stroke:#16a34a,stroke-width:3px
+    style T1T fill:#dbeafe,stroke:#2563eb,stroke-width:3px
+    style T2 fill:#fef3c7,stroke:#d97706,stroke-width:2px,stroke-dasharray: 5 5
+    style S6 fill:#2563eb,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 6 ===== -->
+<details id="d6">
+  <summary><span class="diagram-num">6</span><h2>Signal-to-Artifact Pipeline</h2></summary>
+  <div class="section-body">
+    <p>The evidence chain: 7 stages from detection through human attestation.</p>
+    <pre class="mermaid">
+flowchart LR
+    S["1. SIGNAL\nRule fires"] --> C["2. CASE\nGroup signals\nSLA clock"] --> E["3. EVIDENCE\nPointers + query log\nTime Travel"] --> F["4. FINDING\nLLM narrative\n+ citations"] --> A["5. ARTIFACT\nSTR XML\nSHA-256 hash"] --> R["6. REVIEW\nAdversarial check\nAPPROVE/REJECT"]
+    R -->|"REJECT"| A
+    R -->|"APPROVE"| AT["7. ATTEST\nHuman sign-off\nPrincipal Officer"]
+    style S fill:#dbeafe,stroke:#2563eb
+    style E fill:#d1fae5,stroke:#059669
+    style A fill:#fce7f3,stroke:#db2777
+    style R fill:#fee2e2,stroke:#dc2626
+    style AT fill:#f0fdf4,stroke:#16a34a
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 7 ===== -->
+<details id="d7">
+  <summary><span class="diagram-num">7</span><h2>Single Agent Architecture — Four Modes</h2></summary>
+  <div class="section-body">
+    <p>One Cortex Agent, four operational modes via system prompt. No multi-agent orchestration.</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph TRIG["Triggers"]
+        STREAM["SIGNALS_STREAM\n+ ROUTE_SIGNALS"] & SCHED["Scheduled\nAutomations"] & USER["User Query"]
+    end
+    subgraph AGENT["Single Cortex Agent"]
+        SE["SENTINEL\nTriage + prioritize"]
+        IN["INVESTIGATOR\nGather evidence"]
+        DR["DRAFTER\nCompose finding + STR"]
+        RE["REVIEWER\nAdversarial validation"]
+    end
+    subgraph TOOLS["8 Stored Procedures"]
+        T1["open_case"] & T2["gather_evidence_bundle"] & T3["screen_sanctions_batch"] & T4["traverse_counterparty_graph"] & T5["traverse_mule_ring"] & T6["generate_str_xml"] & T7["validate_filing_schema"] & T8["escalate_to_principal_officer"]
+    end
+    STREAM --> SE
+    SCHED --> SE
+    USER --> IN
+    SE --> IN --> DR --> RE
+    RE -->|"REJECT"| DR
+    RE -->|"APPROVE"| OUT["CASE + FINDING\n+ ARTIFACT + REVIEW\n+ AGENT_ACTION_LOG"]
+    AGENT --> TOOLS
+    style AGENT fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+    style TOOLS fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    style RE fill:#dc2626,color:#fff
+    style SE fill:#2563eb,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 8 ===== -->
+<details id="d8">
+  <summary><span class="diagram-num">8</span><h2>LLM Boundary</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart LR
+    subgraph DET["DETERMINISTIC — SQL / Python"]
+        D1["Amounts, counts, ratios"]
+        D2["Threshold comparisons"]
+        D3["Sanctions exact join"]
+        D4["XML schema validation"]
+        D5["Velocity features"]
+        D6["Rule firing decisions"]
+        D7["Content hashing SHA-256"]
+    end
+    subgraph LLM["LLM — Cortex Agent"]
+        L1["Question understanding"]
+        L2["Evidence materiality selection"]
+        L3["Narrative composition"]
+        L4["Explaining rules in plain language"]
+        L5["Suggesting next steps"]
+        L6["Reconciling conflicting evidence"]
+    end
+    subgraph RULE["THE RULE"]
+        R["No number in a filing\nis ever produced by\na language model."]
+    end
+    style DET fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style LLM fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style RULE fill:#fef2f2,stroke:#dc2626,stroke-width:3px
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 9 ===== -->
+<details id="d9">
+  <summary><span class="diagram-num">9</span><h2>Notification &amp; Case Routing</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    DT["DT_SIGNALS_FAST"] --> STR["SIGNALS_STREAM"] --> TASK["ROUTE_SIGNALS Task"]
+    TASK --> CHK{"Existing case\nfor party?"}
+    CHK -->|"Yes"| ATT["Attach to case"]
+    CHK -->|"No + high severity"| CRE["Create new case"]
+    CHK -->|"No + low"| LOG["Log only"]
+    ATT & CRE --> N["Notification Routing"]
+    subgraph N["Notifications"]
+        N1["Slack #fraud-ops"] & N2["Compliance Queue"] & N3["CRO Dashboard"] & N4["Immediate: Sanctions"]
+    end
+    style DT fill:#2563eb,color:#fff
+    style STR fill:#7c3aed,color:#fff
+    style TASK fill:#059669,color:#fff
+    style N4 fill:#dc2626,color:#fff
+    </pre>
+    <div class="decision"><strong>Case dedup:</strong> "Existing" = CASE with status IN (OPEN, INVESTIGATING, DRAFTED) for same party_id. Different signal types merge into one case with case_type = CROSS_DOMAIN.</div>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 10 ===== -->
+<details id="d10">
+  <summary><span class="diagram-num">10</span><h2>Policy Ingestion Pipeline</h2></summary>
+  <div class="section-body">
+    <p>8 real regulatory PDFs + 4 synthesized internal docs. Two-layer output: Cortex Search (retrieval) + POLICY_CLAUSE table (execution).</p>
+    <pre class="mermaid">
+flowchart TB
+    PDF["PDFs on @POLICY_DOCS stage"] --> PARSE["AI_PARSE_DOCUMENT\nLAYOUT mode"] --> EXTRACT["AI_EXTRACT\nclause_text, metric,\nthreshold, effective_date"] --> STAGE["RAW_POLICY_CLAUSES"]
+    STAGE --> DIFF["DIFF_AND_PROPOSE"] --> QUEUE["Review Queue"] --> HUMAN["Human Review"]
+    HUMAN -->|"Approved"| PC["POLICY_CLAUSE Table\nExecution Layer"]
+    HUMAN -->|"Rejected"| DISC["Discarded"]
+    STAGE --> CS["Cortex Search Service\nRetrieval Layer\nHybrid keyword + semantic"]
+    style PARSE fill:#dc2626,color:#fff
+    style EXTRACT fill:#dc2626,color:#fff
+    style HUMAN fill:#f59e0b,color:#fff
+    style CS fill:#7c3aed,color:#fff
+    style PC fill:#059669,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 11 ===== -->
+<details id="d11">
+  <summary><span class="diagram-num">11</span><h2>Governance Mechanisms</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    subgraph G1["1. RLS + Masking"]
+        A["Branch-level row access\nSame question, two roles,\ndifferent answers"]
+    end
+    subgraph G2["2. Audit Trail"]
+        B["AGENT_ACTION_LOG\nEvery tool call, SQL hash,\nmodel version — append-only"]
+    end
+    subgraph G3["3. Reproducibility"]
+        C["EVIDENCE_QUERY_LOG\nRe-run SQL via Time Travel\nCompare result hashes"]
+    end
+    subgraph G4["4. Refusal"]
+        D["No data in scope\nAmbiguous entity\nOut-of-scope question\nStale data"]
+    end
+    subgraph G5["5. Maker-Checker"]
+        E["DRAFT - REVIEWED -\nAPPROVED - FILED\nPrincipal Officer signs"]
+    end
+    subgraph G6["6. Data Quality"]
+        F["DMFs on every DT\nNull rates, freshness,\nreferential integrity"]
+    end
+    style G1 fill:#dbeafe,stroke:#2563eb
+    style G2 fill:#fef3c7,stroke:#d97706
+    style G3 fill:#d1fae5,stroke:#059669
+    style G4 fill:#fee2e2,stroke:#dc2626
+    style G5 fill:#fce7f3,stroke:#db2777
+    style G6 fill:#f3e8ff,stroke:#7c3aed
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 12 ===== -->
+<details id="d12">
+  <summary><span class="diagram-num">12</span><h2>Testing &amp; Validation Framework</h2></summary>
+  <div class="section-body">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Suite</th><th>What</th><th>Metric</th><th>Target</th><th>Tier</th></tr></thead>
+        <tbody>
+          <tr><td>1. Detection Quality</td><td>Per-typology against ground truth</td><td>Precision, Recall, F1</td><td>F1 > 0.7</td><td><span class="t1">BUILD</span></td></tr>
+          <tr><td>2. Text-to-SQL</td><td>15-20 golden questions</td><td>Result match (not SQL match)</td><td>> 85%</td><td><span class="t1">BUILD</span></td></tr>
+          <tr><td>3. Groundedness</td><td>Citation resolves to EVIDENCE row</td><td>LLM-as-Judge + deterministic</td><td>100%</td><td><span class="cut">FUTURE</span></td></tr>
+          <tr><td>4. Adversarial</td><td>Prompt injection, near-threshold, refusal</td><td>Correct behavior count</td><td>6/6</td><td><span class="cut">FUTURE</span></td></tr>
+          <tr><td>5. Pipeline Health</td><td>DMFs on every DT</td><td>Null rates, freshness, RI</td><td>7/7 healthy</td><td><span class="cut">FUTURE</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 13 ===== -->
+<details id="d13">
+  <summary><span class="diagram-num">13</span><h2>MCP &amp; External Loop Closing</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    AGENT["Cortex Agent"] --> JIRA["Jira\nCase to ticket"] & SLACK["Slack\nMaker-checker approval"] & GDRIVE["Google Drive\nFiling storage"]
+    subgraph AUTO["3 Scheduled Automations"]
+        A1["Overnight Triage\n02:00 daily"] --> JIRA
+        A2["Monthly CTR\n1st of month"] --> SLACK
+        A3["Weekly Reg-Check\nSun 22:00"] --> JIRA
+    end
+    style AGENT fill:#2563eb,color:#fff
+    style AUTO fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 14 ===== -->
+<details id="d14">
+  <summary><span class="diagram-num">14</span><h2>Demo Spine — One Entity, Four Lenses</h2></summary>
+  <div class="section-body">
+    <p>Party <strong>Rajesh Kumar (P-10042)</strong> traced through fraud, AML, and credit.</p>
+    <pre class="mermaid">
+flowchart TB
+    E["Rajesh Kumar\nP-10042"]
+    subgraph FRAUD["Lens 1: FRAUD"]
+        F1["RAPID_CREDIT_VELOCITY\n12 credits, 8 remitters, Rs 47L / 3 days"]
+        F2["SHARED_DEVICE_CLUSTER\n3 accounts share fingerprint"]
+        F3["MULE_RING_CANDIDATE\nDepth-3 fund-flow cycle"]
+        F1 --> F2 --> F3
+    end
+    subgraph AML["Lens 2: AML"]
+        A1["Case opened"] --> A2["Graph traces ring\n4 accounts, Rs 1.2Cr"] --> A3["STR drafted\nevery number traced"] --> A4["Principal Officer attests"]
+    end
+    subgraph CREDIT["Lens 3: CREDIT (Tier 2)"]
+        C1["Rs 15L loan, 42 DPD = SMA-1"] --> C2["Fraud triggers review\nStage 2"] --> C3["ECL: 12mo to Lifetime"]
+    end
+    E --> FRAUD --> AML --> CREDIT
+    E --> CREDIT
+    style E fill:#1e293b,color:#fff,stroke-width:3px
+    style FRAUD fill:#fef2f2,stroke:#dc2626,stroke-width:2px
+    style AML fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style CREDIT fill:#eff6ff,stroke:#2563eb,stroke-width:2px,stroke-dasharray: 5 5
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 15 ===== -->
+<details id="d15">
+  <summary><span class="diagram-num">15</span><h2>Complete Storage Model</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    subgraph IMM["Immutable Landing"]
+        RT["RAW_TRANSACTIONS"] & RE["RAW_EXPOSURES\nTier 2"] & RS["RAW_SANCTIONS_*"] & RP["RAW_PARTY_*"]
+    end
+    subgraph DT1["Dynamic Tables — Tier 1"]
+        DTE["DT_ENRICHED\n1 min"] & DTV["DT_VELOCITY"] & DTS["DT_SIGNALS_FAST\n5 min"] & DTP["DT_DIM_PARTY\n1 day"] & DTR["DT_RELATIONSHIP\n1 day"] & DTSC["DT_SANCTIONS"]
+    end
+    subgraph GOV["Governed State"]
+        PC["POLICY_CLAUSE"] & TY["TYPOLOGY"] & RD["RULE_DEFINITION"]
+    end
+    subgraph EVC["Evidence Chain"]
+        SIG["SIGNAL"] --> CAS["CASE"] --> EVI["EVIDENCE"] --> FIN["FINDING"] --> REV["REVIEW"] -->|"approved"| ART["ARTIFACT"] --> ATT["ATTESTATION"]
+    end
+    AUD["AGENT_ACTION_LOG"]
+    RT --> DTE --> DTV --> DTS
+    RP --> DTP --> DTE
+    RS --> DTSC --> DTS
+    TY --> RD --> DTS
+    PC --> DTS
+    DTS -.-> SIG
+    style IMM fill:#faf5ff,stroke:#7c3aed
+    style DT1 fill:#eff6ff,stroke:#2563eb
+    style GOV fill:#f0fdf4,stroke:#059669
+    style EVC fill:#fef3c7,stroke:#d97706
+    style AUD fill:#dc2626,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 16 ===== -->
+<details id="d16">
+  <summary><span class="diagram-num">16</span><h2>System Boundary</h2></summary>
+  <div class="section-body">
+    <p><strong>Design principle: complement, do not compete.</strong> The CBS is the system of record. The TMS is the detection engine. The copilot bridges them.</p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph KEPT["Existing Systems"]
+        CBS["Core Banking\nTxns, accounts, GL"] & TMS["Transaction Monitor\nBlock/allow alerts"] & LMS["Loan Mgmt\nExposures, DPD"] & KYC["KYC Platform\nProfiles, PEP flags"]
+    end
+    subgraph NEW["Risk Copilot — NEW"]
+        B["Cross-Silo Bridge"] & C["Evidence Chain"] & P["Policy-as-Data"] & A["Audit-Ready Outputs"]
+    end
+    CBS & TMS & LMS & KYC --> NEW
+    style KEPT fill:#f5f5f5,stroke:#6b7280
+    style NEW fill:#eff6ff,stroke:#2563eb,stroke-width:3px
+    style B fill:#2563eb,color:#fff
+    </pre>
+    <p><strong>Does NOT:</strong> process transactions, make block/allow decisions, manage loans, onboard customers, auto-activate regulatory changes, file STRs autonomously, or ingest real customer data.</p>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 17 ===== -->
+<details id="d17">
+  <summary><span class="diagram-num">17</span><h2>CoCo Lifecycle Evidence Map</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart LR
+    subgraph P["1. PLANNING"]
+        P1["CoCo transcripts"] & P2["Data exploration"] & P3["Ontology draft"] & P4["This design doc"]
+    end
+    subgraph D["2. DEVELOPMENT"]
+        D1["Git history:\nDDL, semantic views,\nagent config, procs"] & D2["Model routing log"]
+    end
+    subgraph E["3. EXECUTION"]
+        E1["3 automations\nwith run history"] & E2["Inspectable\nCortex threads"] & E3["Cross-surface\nCLI + Desktop + CoWork"]
+    end
+    subgraph T["4. TESTING"]
+        T1["Eval runs\nin Snowsight"] & T2["Golden-question\nresults"] & T3["Adversarial\npass/fail"]
+    end
+    P --> D --> E --> T
+    style P fill:#dbeafe,stroke:#2563eb
+    style D fill:#d1fae5,stroke:#059669
+    style E fill:#fef3c7,stroke:#d97706
+    style T fill:#fee2e2,stroke:#dc2626
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DIAGRAM 18 ===== -->
+<details id="d18">
+  <summary><span class="diagram-num">18</span><h2>Replay Harness Architecture</h2></summary>
+  <div class="section-body">
+    <p>Python script: <code>INSERT INTO</code> in batches with <code>time.sleep()</code>. Snowpipe Streaming is future scope.</p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph PRE["Pre-Generated"]
+        L1["L1: Entities\nCSV/Parquet"] & L2["L2: Txns\nsorted by timestamp"] & L3["L3: Narratives"]
+    end
+    subgraph HARNESS["Replay Harness"]
+        LOOP["INSERT loop\nbatch + sleep"] & CHAOS["--inject\nstructuring_burst\n15 deposits of 9.5L"]
+    end
+    subgraph PIPE["Live Pipeline"]
+        RAW["RAW_TXN"] --> DTE["DT_ENRICHED\n1 min"] --> DTV["DT_VELOCITY"] --> DTS["DT_SIGNALS\n5 min"] --> STR["STREAM"] --> TASK["ROUTE_SIGNALS"] --> CASE["New CASE\n~6 min from inject"]
+    end
+    L2 --> LOOP --> RAW
+    CHAOS --> RAW
+    L1 -->|"pre-loaded"| DIM["DIM tables"]
+    L3 -->|"pre-loaded"| CS["Cortex Search"]
+    style HARNESS fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style CHAOS fill:#dc2626,color:#fff
+    style CASE fill:#059669,color:#fff
+    </pre>
+  </div>
+</details>
+
+<!-- ===== DESIGN DECISIONS ===== -->
+<details id="gaps" open>
+  <summary><span class="diagram-num" style="background:light-dark(#16a34a,#14532d);">D</span><h2>Design Decisions (Gaps 1-9)</h2></summary>
+  <div class="section-body">
+
+    <h3>Gap 1: Transaction Grain Conversion</h3>
+    <div class="decision"><strong>Decided:</strong> Each AMLworld pair row becomes two leg rows: one debit (negative amount), one credit (positive amount), sharing a <code>txn_pair_id</code>. Pair-level view for graph queries via self-join.</div>
+
+    <h3>Gap 2: SCD2 on DIM_PARTY</h3>
+    <div class="future"><strong>Future scope.</strong> DT_DIM_PARTY is current-state only. No effective_from/effective_to. Columns removed from DDL. SCD2 is a "What Production Would Need" slide item.</div>
+
+    <h3>Gap 3: Sanctions Screening</h3>
+    <div class="decision"><strong>Decided: Exact join only.</strong> DT_SIGNALS_FAST does exact/near-exact name join against DT_SANCTIONS_CONSOLIDATED. CORTEX_SEARCH_BATCH fuzzy screening and SCREENING_RESULT table dropped. Fuzzy matching is future scope.</div>
+
+    <h3>Gap 4: Case Deduplication</h3>
+    <div class="decision"><strong>Decided:</strong> "Existing" = CASE with status IN (OPEN, INVESTIGATING, DRAFTED) for same <code>party_id</code>. Multiple signals in same refresh attach to same case. Different signal types merge into <code>case_type = 'CROSS_DOMAIN'</code>.</div>
+
+    <h3>Gap 5: Evidence Pointer Resolution</h3>
+    <div class="decision"><strong>Decided: Separate query log table.</strong> EVIDENCE stays clean (ref_type, ref_id, as_of_ts). <code>EVIDENCE_QUERY_LOG</code> stores sql_text, result_hash, query_id, executed_at — linked via FK. Reviewer re-runs SQL with <code>AT(TIMESTAMP => as_of_ts)</code> and compares hashes. RESULT_SCAN not used.</div>
+
+    <h3>Gap 6: STR XML Generation</h3>
+    <div class="decision"><strong>Decided:</strong> <code>generate_str_xml()</code> is a Python stored procedure. Reads FINDING + EVIDENCE for structured fields via SQL. Takes narrative from FINDING.narrative as-is. Assembles with <code>xml.etree</code>. Validates against schema. LLM never touches XML.</div>
+
+    <h3>Gap 7: Verified Query Inventory</h3>
+    <div class="decision"><strong>Decided:</strong> 20 verified queries across 8 categories: transaction lookup (1-3), velocity (4-6), threshold (7-9), network (10-12), sanctions (13-15), cross-silo (16-17), case status (18-19), refusal (20). SQL not yet written.</div>
+
+    <h3>Gap 8: RLS Roles</h3>
+    <div class="decision"><strong>Decided:</strong> Two roles: <code>BRANCH_ANALYST_MUMBAI</code> (branch_region = MUMBAI only) and <code>COMPLIANCE_OFFICER</code> (sees all). RLS on DT_TRANSACTIONS_ENRICHED + DT_DIM_PARTY. Masking on PAN/Aadhaar fields.</div>
+
+    <h3>Gap 9: Replay Harness</h3>
+    <div class="decision"><strong>Decided: Simplified.</strong> Python script using <code>snowflake-connector-python</code>, <code>INSERT INTO</code> batches, <code>time.sleep()</code>. <code>--inject structuring_burst</code> flag. No Snowpipe Streaming SDK.</div>
+
+  </div>
+</details>
+
+<p style="color: light-dark(#94a3b8, #64748b); font-size: 0.82em; margin-top: 32px; padding-top: 16px; border-top: 1px solid light-dark(#e2e8f0, #334155);">
+  Generated from <code>enhanced-architecture-diagrams.md</code>. Diagrams are simplified from the source for rendering clarity — refer to the markdown for full column-level ER detail.
+</p>
+
+<script>
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({
+      startOnLoad: true, securityLevel: 'strict',
+      theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+      er: { useMaxWidth: true }, flowchart: { useMaxWidth: true }, gantt: { fontSize: 12 }
+    });
+  }
+</script>
+</body>
+</html>

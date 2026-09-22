@@ -1,0 +1,68 @@
+# ===========================================================================
+# models.yml -- Cortex model assignment
+# ===========================================================================
+# WARNING: model availability is REGION-DEPENDENT and the names in the
+# architecture doc (claude-3.5-sonnet, llama3.1-70b) are stale. Nothing here
+# is trusted until `riskcopilot doctor --models` has confirmed each alias
+# against the live account. The doctor writes its findings to
+# conf/generated/model_availability.yml and the deployer refuses to register an
+# agent whose model has not been confirmed.
+#
+# Never reference a model literal in SQL or Python -- resolve through a key.
+# ===========================================================================
+
+# Fallback chain per logical role, first available wins.
+roles:
+  # Triage ranking summary. Cheap and mostly deterministic work.
+  sentinel:
+    candidates: [llama3.1-8b, mistral-7b, llama3.1-70b]
+    max_tokens: 1024
+    temperature: 0.1
+
+  # Evidence gathering. Needs the strongest tool-use behaviour.
+  investigator:
+    candidates: [claude-4-sonnet, claude-3-7-sonnet, claude-3-5-sonnet, mistral-large2]
+    max_tokens: 4096
+    temperature: 0.0
+
+  # STR narrative composition. Quality matters; numbers still come from SQL.
+  drafter:
+    candidates: [claude-4-sonnet, claude-3-7-sonnet, claude-3-5-sonnet, mistral-large2]
+    max_tokens: 4096
+    temperature: 0.2
+
+  # Adversarial validation. Executes a checklist; cheaper is fine and a
+  # DIFFERENT model family from the drafter is deliberate -- a critic sharing
+  # the drafter's blind spots is not a critic.
+  reviewer:
+    candidates: [llama3.1-70b, mistral-large2, claude-3-5-sonnet]
+    max_tokens: 2048
+    temperature: 0.0
+
+  # L3 bulk narrative generation (10K KYC notes). Volume play.
+  bulk_narrative:
+    candidates: [llama3.1-8b, mistral-7b]
+    max_tokens: 512
+    temperature: 0.9
+
+  # L3 golden documents (internal AML policy, exemplar STRs). Hand-reviewed.
+  golden_narrative:
+    candidates: [claude-4-sonnet, claude-3-5-sonnet, mistral-large2]
+    max_tokens: 8192
+    temperature: 0.3
+
+# Prompt versioning. Recorded in AUDIT.AGENT_ACTION_LOG alongside the resolved
+# model, so any finding can be traced to the exact prompt that produced it.
+prompt_version: v1
+
+embedding:
+  # Cortex Search picks its own embedding model; pinned here only so the choice
+  # is recorded as a decision rather than a default.
+  search_model: snowflake-arctic-embed-l-v2.0
+
+limits:
+  # Hard ceiling per agent turn, enforced before invocation. Prevents a runaway
+  # automation from burning credits unattended.
+  max_tokens_per_turn: 16000
+  max_tool_calls_per_turn: 12
+  request_timeout_secs: 120

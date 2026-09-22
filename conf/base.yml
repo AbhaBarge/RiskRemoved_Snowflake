@@ -1,0 +1,113 @@
+# ===========================================================================
+# base.yml -- TOPOLOGY (tier 2 of the three-tier config model)
+# ===========================================================================
+# Tier 1  Credentials      -> ~/.snowflake/connections.toml + Snowflake SECRETs
+# Tier 2  Topology         -> THIS FILE (+ conf/profiles/<env>.yml overlay)
+# Tier 3  Business rules   -> GOVERNANCE.POLICY_CLAUSE at runtime,
+#                             seeded from conf/detection.yml
+#
+# No .sql file may contain a literal database, schema, warehouse or role name.
+# Every SQL file is a Jinja template rendered by risk_copilot.pipeline.deploy
+# using the values below. This is what makes DEV / DEMO separation possible and
+# keeps the repo free of environment-specific identifiers.
+# ===========================================================================
+
+project:
+  name: risk_copilot
+  # Suffix appended to every object name, driven by the active profile.
+  # Empty in demo, "_DEV" in dev -- lets both live in one account safely.
+  object_suffix: ""
+
+database:
+  name: RISK_COPILOT
+
+schemas:
+  raw: RAW                      # immutable landing, append-only
+  curated: CURATED              # dynamic tables + dimensions
+  governance: GOVERNANCE        # POLICY_CLAUSE, TYPOLOGY, RULE_DEFINITION, REF_*
+  evidence: EVIDENCE_CHAIN      # SIGNAL .. ATTESTATION
+  audit: AUDIT                  # AGENT_ACTION_LOG
+  ground_truth: GROUND_TRUTH    # labels + eval sets. NEVER in the semantic view.
+  ml: ML                        # feature/scoring artefacts kept out of CURATED
+
+warehouses:
+  dev:
+    name: RC_DEV_WH
+    size: XSMALL
+    auto_suspend_secs: 60
+    purpose: Development, DDL, ad-hoc queries
+  pipeline:
+    name: RC_PIPELINE_WH
+    size: SMALL
+    auto_suspend_secs: 60
+    purpose: Dynamic table refresh and scheduled tasks
+  demo:
+    name: RC_DEMO_WH
+    size: SMALL
+    auto_suspend_secs: 120
+    purpose: Demo queries and agent execution
+
+roles:
+  admin: RC_ADMIN                       # owns all objects
+  service: RC_SERVICE_ROLE              # agents + automations
+  compliance_officer: COMPLIANCE_OFFICER # sees all data, may attest artifacts
+  # Branch analysts drive the row-access-policy demo: same question, two roles,
+  # two answers. Keys must match branch_region values in conf/generation.yml.
+  branch_analysts:
+    MUMBAI: BRANCH_ANALYST_MUMBAI
+    DELHI: BRANCH_ANALYST_DELHI
+
+stages:
+  data: DATA_STAGE               # source datasets (AMLworld, OpenSanctions)
+  policy_docs: POLICY_DOCS       # regulatory PDFs for AI_PARSE_DOCUMENT
+  generated: GENERATED_STAGE     # L1/L2/L3 generator output
+  scripts: SCRIPTS_STAGE         # Python stored-procedure payloads
+
+# ---------------------------------------------------------------------------
+# Time Travel retention.
+# GAP-12 fix: the Reviewer's re-verification needs as_of_ts to still be
+# reachable. Default retention (1 day) silently expires evidence. Landing
+# tables are append-only so a longer window is cheap. Correctness does NOT
+# depend on this -- EVIDENCE_QUERY_LOG.result_snapshot is the source of truth;
+# Time Travel is the demonstrable provenance layer on top.
+# ---------------------------------------------------------------------------
+retention:
+  landing_days: 14
+  evidence_days: 14
+  default_days: 1
+
+# ---------------------------------------------------------------------------
+# Dynamic table target lags.
+# GAP-09/10 fix: velocity is decomposed into an incremental-safe daily
+# aggregate plus a narrow 1h table, instead of one full-refresh rolling-window
+# table. See conf/profiles/*.yml to override per environment.
+# ---------------------------------------------------------------------------
+dynamic_tables:
+  dim_party:              { name: DT_DIM_PARTY,              target_lag: 1 day }
+  transactions_enriched:  { name: DT_TRANSACTIONS_ENRICHED,  target_lag: 1 minute }
+  txn_daily_agg:          { name: DT_TXN_DAILY_AGG,          target_lag: DOWNSTREAM }
+  txn_velocity_1h:        { name: DT_TXN_VELOCITY_1H,        target_lag: DOWNSTREAM }
+  party_relationship:     { name: DT_PARTY_RELATIONSHIP,     target_lag: 1 day }
+  sanctions_consolidated: { name: DT_SANCTIONS_CONSOLIDATED, target_lag: DOWNSTREAM }
+  # Row-level, incremental-safe rules only.
+  signals_fast:           { name: DT_SIGNALS_FAST,           target_lag: 5 minutes }
+  # Aggregate + graph rules that cannot refresh incrementally.
+  signals_aggregate:      { name: DT_SIGNALS_AGGREGATE,      target_lag: 60 minutes }
+
+views:
+  # Non-materialised rolling windows summed from DT_TXN_DAILY_AGG buckets.
+  txn_velocity_features: V_TXN_VELOCITY_FEATURES
+  # Pair-level transaction view over the leg-level physical table (GAP-03).
+  transaction_pairs: V_TRANSACTION_PAIRS
+
+streams_tasks:
+  signals_stream: SIGNALS_STREAM
+  route_signals_task: ROUTE_SIGNALS
+  route_signals_schedule: 1 minute
+
+cortex:
+  search_service: REGULATORY_SEARCH_SVC
+  search_source_table: POLICY_CLAUSE_CHUNKS
+  search_target_lag: 1 hour
+  semantic_view: SV_RISK_COPILOT
+  agent: RISK_COPILOT_AGENT

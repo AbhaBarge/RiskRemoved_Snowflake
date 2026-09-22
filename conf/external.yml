@@ -1,0 +1,96 @@
+# ===========================================================================
+# external.yml -- external systems and secret REFERENCES
+# ===========================================================================
+# This file contains NO secret values. It contains the NAMES of secrets, which
+# are resolved at runtime from, in order of precedence:
+#   1. a Snowflake SECRET object   (for anything called from inside Snowflake:
+#                                   external access integrations, procedures)
+#   2. the `cortex secret` store   (for anything called from the local CLI)
+#   3. an environment variable     (developer escape hatch only)
+#
+# If a referenced secret is missing, the feature is DISABLED with a clear
+# message. It never falls back to a hardcoded value and never silently
+# simulates the call.
+# ===========================================================================
+
+snowflake:
+  # The connection name in ~/.snowflake/connections.toml. Overridden per
+  # profile and by RC_SNOWFLAKE_CONNECTION.
+  connection_name: ASHWINRAVI004
+  # Key-pair is the required auth method for anything unattended (automations,
+  # CI). Interactive/SSO is fine for local development only.
+  preferred_authenticator: SNOWFLAKE_JWT
+  private_key_secret: rc_snowflake_private_key
+  private_key_path_env: RC_SNOWFLAKE_PRIVATE_KEY_PATH
+
+# ---------------------------------------------------------------------------
+# Outbound MCP connectors (Diagram 13). All default to disabled: the demo must
+# work offline, so no live call is ever on the critical path.
+# ---------------------------------------------------------------------------
+mcp:
+  jira:
+    enabled: false
+    base_url_env: RC_JIRA_BASE_URL
+    project_key_env: RC_JIRA_PROJECT_KEY
+    api_token_secret: rc_jira_api_token
+    user_email_env: RC_JIRA_USER_EMAIL
+    purpose: Case -> ticket with the evidence pack attached.
+
+  slack:
+    enabled: false
+    bot_token_secret: rc_slack_bot_token
+    channels:
+      fraud_ops_env: RC_SLACK_CHANNEL_FRAUD_OPS
+      compliance_env: RC_SLACK_CHANNEL_COMPLIANCE
+      principal_officer_env: RC_SLACK_CHANNEL_PRINCIPAL_OFFICER
+    purpose: Maker-checker approval routed to the Principal Officer.
+
+# ---------------------------------------------------------------------------
+# HTTP sources behind an External Access Integration. Disabled for the demo:
+# sanctions data is pre-loaded from data/targets.simple.csv so the build has no
+# network dependency at showtime (pre-submission checklist item).
+# ---------------------------------------------------------------------------
+http_sources:
+  opensanctions:
+    enabled: false
+    url: https://data.opensanctions.org/datasets/latest/default/targets.simple.csv
+    integration_name: RC_OPENSANCTIONS_EAI
+    network_rule_name: RC_OPENSANCTIONS_NETWORK_RULE
+    allowed_hosts: ["data.opensanctions.org"]
+    refresh_schedule: USING CRON 0 3 * * * Asia/Kolkata
+
+  ofac_sdn:
+    enabled: false
+    url: https://www.treasury.gov/ofac/downloads/sdn.xml
+    integration_name: RC_OFAC_EAI
+    network_rule_name: RC_OFAC_NETWORK_RULE
+    allowed_hosts: ["www.treasury.gov", "sanctionslistservice.ofac.treas.gov"]
+    refresh_schedule: USING CRON 0 4 * * * Asia/Kolkata
+
+# ---------------------------------------------------------------------------
+# Scheduled automations (Diagram 13). Schedules are config, not literals in
+# CREATE TASK statements.
+# ---------------------------------------------------------------------------
+notifications:
+  integration_name: RC_NOTIFICATION_INT
+  # Email recipients must be verified Snowflake users; left empty so deploy
+  # does not fail on an unverified address.
+  email_recipients: []
+
+automations:
+  timezone: Asia/Kolkata
+  overnight_triage:
+    enabled: true
+    schedule: USING CRON 0 2 * * * Asia/Kolkata
+    mode: SENTINEL
+    sinks: [jira]
+  monthly_ctr_preassembly:
+    enabled: true
+    schedule: USING CRON 0 6 1 * * Asia/Kolkata
+    mode: DRAFTER
+    sinks: [slack]
+  weekly_regulatory_change_check:
+    enabled: true
+    schedule: USING CRON 0 22 * * 0 Asia/Kolkata
+    mode: INVESTIGATOR
+    sinks: [jira]
