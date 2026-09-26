@@ -6,6 +6,11 @@
 
 ## Diagrams Index
 
+> **Start with [BUILD STATUS](#build-status--read-this-before-the-diagrams).**
+> The diagrams are the design intent; that section is what is actually built,
+> what the trial + Standard-edition account blocks, and which diagram claims are
+> now superseded.
+
 | # | Diagram | Description |
 |---|---|---|
 | 1 | Entity Relationship Model | TYPOLOGY, AGENT_ACTION_LOG, SCD2 on PARTY, leg-vs-pair grain decision |
@@ -26,6 +31,344 @@
 | 16 | System Boundary | Complement-not-compete design principle and system constraints |
 | 17 | CoCo Lifecycle Evidence Map | Planning, Development, Execution, Testing phases |
 | 18 | Replay Harness Architecture | How synthetic data enters the live pipeline |
+
+---
+
+# BUILD STATUS — read this before the diagrams
+
+**Last updated:** 2026-09-23
+
+The 18 diagrams below remain the **design intent**. This section is the **build
+truth**, and where the two disagree, this section wins. Diagram-level
+corrections are listed in §S4.
+
+---
+
+## S1. What is built and verified
+
+| Phase | Scope | State |
+|---|---|---|
+| 0 | Repo scaffold, three-tier config, CLI, `doctor`, idempotent SQL deployer | **Done** |
+| 1 | Bootstrap + full DDL — 28 tables across 7 schemas | **Done, deployed** |
+| 2 | Data synthesis — subgraph sampling, ID maps, reskin, injection, labels, validation gates | Next |
+| 3 | Load, dynamic tables, streams/tasks, replay harness | Pending |
+| 4 | Policy ingestion, Cortex Search, semantic view, agent, 8 procedures | **Blocked** — see §S2 |
+| 5 | Governance, ML, eval suites, automations, Streamlit | **Partly blocked** — see §S3 |
+
+Verified: `mypy --strict` clean, `ruff` clean, 105 unit tests passing, all SQL
+templates rendering for both profiles, `deploy --stage bootstrap` idempotent
+across two consecutive runs (24 + 105 statements), key-pair auth working
+unattended with no interactive prompt.
+
+### Repository facts a developer needs
+
+```
+conf/            three-tier config (see below). Nothing hardcoded anywhere.
+src/risk_copilot/
+  config.py      layered loader, fail-fast validation, sql_context contract
+  session.py     connections.toml + key-pair, bootstrap role fallback
+  ids.py         deterministic identity derivation (Gap 11 below)
+  hashing.py     canonical result hashing (Gap 15 below)
+  doctor.py      preflight: config, datasets, connection, capabilities, models
+  cli.py         single entry point -- doctor | config | deploy | generate | load | replay | eval
+  pipeline/      SQL deployer + offline template lint
+sql/             Jinja templates, 12 ordered stages -- see sql/README.md
+tests/unit/      105 offline tests
+data/MANIFEST.yml  dataset registry with SHA-256; payloads gitignored
+```
+
+**Config is three tiers, and the boundaries are enforced, not conventional:**
+
+| Tier | What | Where | Enforcement |
+|---|---|---|---|
+| 1 | Credentials | `~/.snowflake/connections.toml`, `cortex secret`, Snowflake `SECRET` | Never in repo; `conf/` holds secret *names* only |
+| 2 | Topology (db, schema, warehouse, role, target lag) | `conf/base.yml` + `conf/profiles/{dev,demo}.yml` | `Deployer.render()` **rejects** any `.sql` containing a literal object name |
+| 3 | Business thresholds (Rs 10L CTR, 3x income, `COUNT>=3`) | `GOVERNANCE.POLICY_CLAUSE` at runtime, seeded from `conf/detection.yml` | Detection SQL joins `V_POLICY_CLAUSE_CURRENT`; `doctor` fails any clause lacking provenance |
+
+Two profiles coexist in one account: `dev` suffixes every object `_DEV` and
+relaxes lags; `demo` uses canonical names and full freshness.
+
+---
+
+## S2. Account constraints — the dominant planning fact
+
+**Evidence:** `conf/generated/capabilities.ASHWINRAVI004.yml` — 98 probes,
+30 available. That file wins over any prose claim in this repository, including
+this section. `riskcopilot doctor` reads it and auto-disables what is absent.
+
+Account: ZC14131, **STANDARD edition, trial**, AWS_AP_SOUTHEAST_7.
+
+### Three assumptions that were wrong — do not reintroduce them
+
+An earlier revision of this section asserted that all Cortex AI was unavailable,
+that `SNOWFLAKE.ML` required Enterprise, and that Search/Agent/Analyst were all
+blocked because `AI_COMPLETE` was. The probe sweep disproved all three:
+
+| Claimed | Actual |
+|---|---|
+| All Cortex AI unavailable | **Cortex Analyst works** — NL→SQL over semantic views via REST, HTTP 200, real SQL, served by `claude-sonnet-4-6`. `AI_AGG` and `AI_SUMMARIZE_AGG` work. Text-to-SQL eval (Suite 2) is scorable **now**, not deferred. |
+| `SNOWFLAKE.ML` requires Enterprise | **False.** Anomaly detection, Forecast, Model Registry and Feature Store all work on Standard trial. |
+| Search/Agent/Analyst blocked because `AI_COMPLETE` is | **Unsound inference.** They are gated independently, and that reasoning is what hid Analyst. Never generalise gating from one probe. |
+
+### Works — build against these for real
+
+| Area | Confirmed available |
+|---|---|
+| Critical path | Dynamic tables (+ refresh confirmed), **`STREAM ON DYNAMIC TABLE`**, tasks (warehouse + serverless), `EXECUTE TASK`, `MERGE` with unique constraint, recursive CTE, **Python stored procedures (no Anaconda blocker)**, SQL procedures, Streamlit, network rules |
+| Cortex | **Cortex Analyst NL→SQL via REST**, semantic view objects + `SEMANTIC_VIEW()` querying, `AI_AGG`, `AI_SUMMARIZE_AGG`, `CREATE AGENT` (object only), `EXECUTE_AI_EVALUATION` (resolves), threads REST |
+| ML | `SNOWFLAKE.ML.ANOMALY_DETECTION`, `FORECAST`, Model Registry, Feature Store |
+| Other | `JAROWINKLER_SIMILARITY` / `EDITDISTANCE` / `SOUNDEX`, `CREATE TAG`, email notifications to verified addresses |
+
+The whole pipeline critical path works. `STREAM ON DYNAMIC TABLE` in particular
+was the single biggest unverified dependency — the entire `ROUTE_SIGNALS` design
+rests on it.
+
+### Blocked — trial gate (399258 / 399504 / 509009)
+
+| Blocked | Diagram | Consequence |
+|---|---|---|
+| **All per-row Cortex inference** — `AI_COMPLETE` (28 models), `SNOWFLAKE.CORTEX.COMPLETE`, 3 REST surfaces. Four independent paths confirmed. | 2 (L3) | Narrative generation. This is now the **only** genuinely blocked piece of the copilot. |
+| `AI_CLASSIFY` / `FILTER` / `SENTIMENT` / `EXTRACT` / `PARSE_DOCUMENT` / `TRANSLATE` / `TRANSCRIBE` / `COUNT_TOKENS` / `EMBED` / `SIMILARITY`, plus all legacy equivalents | 3, 10 | Policy ingestion by extraction; KYC-note contradiction detection |
+| Cortex Search — `EMBED_TEXT_768/1024` blocked; an explicit `EMBEDDING_MODEL` does not route around it | 3, 10 | `REGULATORY_SEARCH_SVC` |
+| Agent **invocation** — 399504 on all 5 paths (SQL ×2, REST ×3). Object creation succeeds. | 7, 13 | Agent-driven orchestration; see §S3 |
+| External Access Integration — 509009 | 13 | Kills the Jira / Slack / MCP outbound loop |
+
+### Blocked — Standard edition (000002 Unsupported feature)
+
+| Blocked | Diagram | Consequence |
+|---|---|---|
+| Row access policies, masking, tag-based masking, aggregation and projection policies | 11 (G1) | The "same question, two roles, two answers" beat |
+| Data Metric Functions | 11 (G6), 12 (Suite 5) | Pipeline-health gates, freshness qualification |
+| Time Travel > 1 day | 6, 11 (G3) | `demo.yml`'s `landing_days: 14` **will fail a deploy** |
+
+### Blocked — regional, not edition or trial
+
+`SNOWFLAKE.ML.CLASSIFICATION` and `TOP_INSIGHTS` are not served in
+AWS_AP_SOUTHEAST_7. **Converting the trial will not fix these** — they need a
+different region. `AI_ESTIMATE_QUERY_COST` is parameter-disabled and
+`ALTER ACCOUNT` was refused even as ACCOUNTADMIN.
+
+### Genuinely uncertain
+
+Two findings are inference rather than fact: the 403/003001 → trial
+classification (Snowflake's message never says "trial"), and whether
+`ENABLE_AI_COST_ESTIMATE` is switchable on this account at all.
+
+### One design decision that survived the constraint
+
+Gap 15 below replaced Time-Travel-based re-verification with a materialised
+`EVIDENCE_QUERY_LOG.result_snapshot`. Because correctness never depended on
+Time Travel, the Reviewer's recompute-and-compare still works under a 1-day
+retention cap. Diagram 6's "RE-VERIFIABLE via Time Travel" annotation is
+therefore aspirational; the snapshot is the mechanism.
+
+---
+
+## S3. Revised tier map
+
+**Strategy:** build everything the evidence says works, for real. Narrative
+generation is the only genuinely blocked piece of the copilot, so almost nothing
+needs stubbing. Nothing waits on billing.
+
+### Tier 1-S — buildable now on trial + Standard
+
+| Component | Notes |
+|---|---|
+| L1 + L2 generation, subgraph sampling, ID maps | Pure Python |
+| Typology injection + leg-level labels + eval grain | Pure Python |
+| Realism validation gates | Pure Python; asserted, not claimed |
+| Load + COPY INTO | Positional load for the duplicate-header CSV |
+| All 8 dynamic tables + velocity views | Confirmed, including refresh |
+| `SIGNALS_STREAM` + `ROUTE_SIGNALS` | `STREAM ON DYNAMIC TABLE` confirmed |
+| 5 row-level + aggregate signal rules | Thresholds from `POLICY_CLAUSE` |
+| Fuzzy sanctions screening | `JAROWINKLER_SIMILARITY` confirmed |
+| All 8 stored procedures | Python + SQL procedures confirmed; no Anaconda blocker |
+| `POLICY_CLAUSE` seeding from `conf/detection.yml` | 15 hand-authored clauses with provenance, bypassing `AI_EXTRACT` |
+| Semantic view object + `SEMANTIC_VIEW()` querying | Confirmed |
+| **NL→SQL over the semantic view** | **Cortex Analyst REST — confirmed working** |
+| **Triage summarisation** | **`AI_AGG` / `AI_SUMMARIZE_AGG` — confirmed** |
+| **`SNOWFLAKE.ML.ANOMALY_DETECTION` velocity baselines** | **Confirmed on Standard trial.** `conf/ml.yml:preconditions.require_edition` is WRONG and currently disables this working feature — fix it. |
+| **Feature Store + Model Registry** | **Confirmed.** Point-in-time-correct feature retrieval is available now, not Future Scope. |
+| Detection F1 eval suite (Suite 1) | Needs only labels + signals |
+| **Text-to-SQL eval (Suite 2)** | **Scorable now** — Analyst works. Score on result hash via `risk_copilot.hashing`. |
+| Replay harness + `--inject` | Plain `INSERT` batches |
+| Streamlit app | Reads tables directly |
+| `AGENT_ACTION_LOG` schema + write path | Populated by the orchestrator, agent or not |
+| `CREATE AGENT` object | Deploys today; invocation is what is gated. See below. |
+
+### Tier 1-E — genuinely deferred
+
+| Component | Fallback on Standard trial |
+|---|---|
+| Agent **invocation** (399504) | Orchestrate from Python over Analyst REST + the stored procedures. See "Why the agent is still a build step". |
+| Per-row Cortex inference (`AI_COMPLETE`) | Template-based narrative for `FINDING.narrative`. Every number was always from SQL, so only the prose changes. |
+| L3 narratives | Template generator with the same noise / contradiction rates |
+| Cortex Search | `ILIKE` / `JAROWINKLER_SIMILARITY` over `POLICY_CLAUSE_CHUNKS`, behind the same function signature |
+| Policy ingestion via `AI_PARSE_DOCUMENT` | Seed from `conf/detection.yml`; keep `RAW_POLICY_CLAUSES` + `POLICY_CHANGE_PROPOSALS` so the human gate stays demonstrable |
+| Row access + masking policies | Authored, deploy-gated on capability; equivalent filtering proven via a parameterised view so the two-roles beat still works |
+| DMFs | Equivalent checks as SQL assertions written to `AUDIT.DATA_QUALITY_LOG` |
+| MCP / Jira / Slack (EAI 509009) | Automations run as Snowflake tasks writing to tables; outbound delivery is out |
+| `ML.CLASSIFICATION`, `TOP_INSIGHTS` | **Regional, not trial.** Converting will not fix these. Stays Future Scope. |
+
+### Correction to Diagram 7 — two agent modes, not four
+
+Diagram 7 puts all four roles in one agent. Two of them should never have been
+agent modes, and separating them makes the design both more honest and more
+buildable today:
+
+| Role | Correct form | Why |
+|---|---|---|
+| **Reviewer** | **Stored procedure** the orchestrator calls | Its entire value is determinism — numeric recompute against `EVIDENCE_QUERY_LOG`, citation resolution, clause-effective-date checks. Wrapping that in an LLM planner injects nondeterminism into the one component that must not have any. As a procedure it also **works on this account today**, which means the demo's money-shot beat is buildable now. |
+| **Sentinel** | SQL view + one `AI_AGG` call | Mostly deterministic ranking plus a summary sentence. An agent turn is slower, costlier and adds nothing. |
+| **Investigator** | Agent mode | Genuinely needs multi-step planning and tool selection |
+| **Drafter** | Agent mode | Genuinely needs planning; narrative is templated until `AI_COMPLETE` is available |
+
+General rule: an agent is slower, costlier and nondeterministic. For any fixed
+question it is strictly worse than calling Analyst or plain SQL directly, so
+**deterministic paths must bypass it entirely.**
+
+### Why the agent is still a build step
+
+Cortex Analyst is *one tool* — NL→SQL over one semantic view. It will not call
+your stored procedures, will not chain steps, and will not choose between the
+semantic view and a graph traversal. That decision layer is the work, and it is
+exactly what an agent replaces:
+
+| Hand-rolled | Agent provides |
+|---|---|
+| Intent routing — which tool answers this? | Tool selection across the registered set |
+| The plan loop — query, traverse graph, screen sanctions, re-query | Server-side multi-step planning |
+| Conversation state across turns | Threads (REST — confirmed working here) |
+| A hosted process to run the loop in | Runs inside Snowflake; a Task can invoke it |
+| Tool-call audit logging | Tool-use traces in the response |
+| Nothing | RBAC, ownership, lineage (`GET_LINEAGE` supports `CORTEX_AGENT`), MCP exposure, CoWork surface |
+
+Two consequences matter most here. First, **the three scheduled automations are
+only clean via an agent** — a Task can invoke one server-side, whereas a
+hand-rolled orchestrator needs a hosted process that, with EAI blocked, cannot
+call out anyway. Second, the cross-surface demo beat (CoWork, MCP) comes free
+from the object and is otherwise unavailable.
+
+**The rule that makes the switch cheap: keep tool logic in Snowflake stored
+procedures, not in Python.**
+
+- *Now:* a Python planner calls the 8 procedures + Analyst REST
+- *Later:* register the same 8 procedures as agent tools; the agent becomes the
+  planner; the Python shrinks to a thin invoke
+- *Unchanged either way:* the procedures, semantic view, evidence chain,
+  `AGENT_ACTION_LOG`
+
+If tool logic lives in Python it gets thrown away on migration. That is the
+whole reason the 8 tools are stored procedures. `CREATE AGENT` stays a build step
+because the object deploys today, it forces tool boundaries to be agent-shaped,
+and it lights up unchanged on a non-trial account.
+
+### Known latent bugs
+
+1. `conf/profiles/demo.yml` sets `retention.landing_days` / `evidence_days` to
+   14. `CREATE SCHEMA` applies these, so **a demo-profile deploy against this
+   account will fail.** Cap at 1, or have `config.py` clamp retention using the
+   capabilities evidence.
+2. `conf/ml.yml:preconditions.require_edition: [ENTERPRISE, BUSINESS_CRITICAL]`
+   is contradicted by the probe sweep and **currently disables a working
+   feature.** Re-enable `tier1.velocity_anomaly`; move `CLASSIFICATION` and
+   `TOP_INSIGHTS` to `future_scope` with "not served in this region" as the
+   reason.
+
+---
+
+## S4. Diagram corrections
+
+| Diagram | Stated | Correction |
+|---|---|---|
+| 2 | L2 is an "Agent-Based Simulator"; L3 via `AI_COMPLETE` | L2 is deterministic subgraph sampling + reskin + injection — no simulation. L3 is template-based until Cortex is available. |
+| 2 | "5.1K labelled laundering txns" | Actual: 3,209 illicit of 5,078,345 = **0.063%**, which is *below* the stated 0.1% band, not within it. Subgraph sampling raises it; `conf/generation.yml` asserts a 0.10–1.50% band. |
+| 3 | Snowpipe Streaming, Marketplace PEP share, live HTTP sanctions fetch | All cut. Replay harness uses batched `INSERT`; sanctions pre-loaded from `data/targets.simple.csv`; the demo has no network dependency. |
+| 4 | `DT_TXN_VELOCITY_FEATURES` as a dynamic table with rolling windows | **Not incrementally refreshable.** Decomposed into `DT_TXN_DAILY_AGG` (incremental-safe) + `V_TXN_VELOCITY_FEATURES` (summing view) + `DT_TXN_VELOCITY_1H`. |
+| 4 | One `DT_SIGNALS_FAST` holding 5 rules | Split into `DT_SIGNALS_FAST` (row-level, incremental) and `DT_SIGNALS_AGGREGATE` (aggregate/graph, 60 min). One non-incremental rule would degrade the whole table to full refresh every 5 minutes. |
+| 4, 15 | `RAW_TRANSACTIONS` shown as the sole landing table | Three tables: `RAW_AMLWORLD_TRANS` (verbatim, pair-level, labelled) → `RAW_TRANSACTIONS` (leg-level, INR, **no label**) + `GROUND_TRUTH.TXN_LABELS`. |
+| 5 | Sanctions matching is "exact join only" | Fuzzy matching restored via `JAROWINKLER_SIMILARITY` — one built-in function, not the complexity the original assessment assumed. Exact match raises a signal; the fuzzy band raises a review task. |
+| 6, 11 | Evidence "RE-VERIFIABLE via Time Travel" | `EVIDENCE_QUERY_LOG.result_snapshot` + versioned canonical hashing is the mechanism. Time Travel is demonstrable provenance only. |
+| 7 | Single Cortex Agent, 4 modes | **Two** agent modes, not four. Reviewer becomes a stored procedure (determinism is its whole value); Sentinel becomes a SQL view + one `AI_AGG` call. Only Investigator and Drafter need planning. Agent *invocation* is trial-gated (399504) but the object deploys — orchestrate from Python over Analyst REST + the procedures meanwhile. See §S3. |
+| 8 | "Sanctions name matching scores: exact join" under DETERMINISTIC | Still deterministic, but now `JAROWINKLER_SIMILARITY`. The exact/fuzzy split matters: exact raises a signal, fuzzy raises a review task and may never alone justify a filing. |
+| 11 | RLS, masking, DMFs | All Standard-blocked (000002 Unsupported feature). Authored but deploy-gated; equivalent filtering proven via a parameterised view. |
+| 12 | 5 test suites | Suite 1 (detection F1) **and Suite 2 (text-to-SQL)** are buildable now — Analyst works, so score on result hash. The deterministic half of Suite 3 (citation resolution) also works. Suite 4 needs `AI_COMPLETE`; Suite 5 needs DMFs. |
+| 13 | Jira / Slack / Drive via MCP, agent-as-MCP-server | External Access Integration is trial-gated (509009). Automations run as Snowflake tasks writing to tables; outbound delivery and MCP exposure are out until the account is converted. |
+| 14 | Hero party `P-10042 / Rajesh Kumar` | Party ids are **generated**, so this is fiction. A selection step picks a party that provably trips every listed rule and pins it to `conf/generated/demo_entity.yml`. |
+| 15 | "16 tables" | Actual count is **28** once staging, ID maps, chunks, templates, proposals, watermark and eval tables are included. |
+| 18 | Snowpipe Streaming as future scope | Correct, and now also: replay inserts to `RAW_TRANSACTIONS` directly, and `ingested_at` is distinct from `txn_timestamp` so replay does not corrupt the event clock. |
+
+---
+
+## S5. Gaps resolved during implementation
+
+Gaps 1–10 in the "Fatal Gaps" section below are superseded where they conflict
+with this list. Numbering here is independent.
+
+| # | Problem | Resolution |
+|---|---|---|
+| 1 | Two contradictory `RAW_TRANSACTIONS` definitions (pair-level AMLworld-shaped vs leg-level signed INR), with `is_laundering` in the table that feeds the semantic view | Three-table split (§S4). The label never enters `CURATED`. |
+| 2 | **L1 generated Faker parties with fresh ids while transactions referenced AMLworld hex accounts.** Every downstream join would return nothing — no income (kills `INCOME_ACTIVITY_MISMATCH`), no device (kills `SHARED_DEVICE_CLUSTER`), no region (kills RLS). | AMLworld keys are authoritative. `RAW.ID_MAP_PARTY` / `ID_MAP_ACCOUNT` derive surrogate ids deterministically from source keys via `risk_copilot.ids`; Faker only *dresses* preserved keys. Referential integrity holds by construction. |
+| 3 | Sampling strategy undefined; 5.08M transactions is unaffordable for a demo | Seed from the 370 laundering attempts' accounts, BFS 2 hops, cut to ~5K entities / ~10K accounts / ~400K legs. A leg is kept only if **both** sides resolve, so `counterparty_account_id` is never an orphan. |
+| 4 | `declared_annual_income` assigned at random makes the income rule fire on everyone or nobody | Derived from each party's observed **legitimate** 12-month inflow with a coverage ratio and lognormal noise; the illicit cohort deliberately under-declares at 35%. |
+| 5 | `device_fingerprint` at "~8% random" yields **zero** `SHARED_DEVICE_CLUSTER` hits, because the rule needs a shared device **and** a fund flow between the accounts | 70% of shared-device clusters are placed on account groups that already transact; the remaining 30% are decoys the rule must correctly *not* fire on — a built-in false-positive control. |
+| 6 | "x83 for INR" across 14 currencies is wrong, and FX conversion cannot create Rs 9.4–9.8L clusters against a Rs 10L trigger | Per-currency rate table; structuring is a **separate labelled injection cohort** with amounts drawn as a fraction of the CTR threshold resolved from `POLICY_CLAUSE`. |
+| 7 | Illicit rate claimed "within the 0.1% band" at 0.063% | Band asserted as a build gate (0.10–1.50%), not claimed in prose. |
+| 8 | Labels are transaction-grain; signals fire at party/account-window grain. "F1 > 0.7" had no denominator | `GROUND_TRUTH.EVAL_GRAIN_PARTY_MONTH` declares **party-month** as the evaluation grain, carrying `expected_rule_ids` per typology so per-rule recall needs no hand-written mapping. |
+| 9 | Patterns file identifies illicit rows only by `(timestamp, from_acct, to_acct, amount)` — not unique — and one pair becomes two legs | Leg-level labels with `match_confidence`; below 1.0 means the source tuple was ambiguous, so uncertainty shows up in the metrics instead of inflating them. |
+| 10 | Rolling-window velocity forces full refresh; one non-incremental rule degrades the whole signals table | Velocity decomposed; signals split fast/aggregate (§S4). Channel entropy defined as `-SUM(p*LN(p))` over channel shares — named four times in the original docs, never defined. |
+| 11 | **A dynamic table recomputes its full result set every refresh, so the stream + task inserts duplicate `SIGNAL` and `CASE` rows forever.** The original design had no idempotency story. | Deterministic `signal_business_key` = `rule_id\|party_id\|window_bucket[\|account_id]` with a unique constraint; the router `MERGE`s. Keyed on the observation window, not wall-clock time, so it is stable across refreshes. |
+| 12 | `SANCTIONS_MATCH_NEW` means "added since last check" — not expressible without persisted state | `RAW.SANCTIONS_SCREENING_WATERMARK`, single-row. |
+| 13 | Surrogate ids at 7/8 digits | **Found by test:** 7 digits produced 3 collisions in 5,000 entities and would produce ~24,500 across AMLworld's ~700K — silently merging distinct parties. Widened to 12; a regression test asserts the collision headroom. |
+| 14 | RLS covered 2 dynamic tables; cases and findings were unprotected, and owner's-rights procedures **bypass RLS entirely** | `CASE_RECORD.branch_region` denormalised so policies can filter cases. Procedure rights are an explicit decision, not a default. |
+| 15 | Reviewer re-verification via Time Travel cannot work: `AT(TIMESTAMP=>)` binds per table reference, retention defaults to 1 day, and dynamic tables are not freely time-travellable. SHA-256 canonicalisation was never defined, so hashes would differ on row order, numeric formatting or null representation. | `EVIDENCE_QUERY_LOG.result_snapshot` + `risk_copilot.hashing`: versioned canonical form, row-order-insensitive, fixed decimal scale, reserved null sentinel, length-prefixed fields. |
+| 16 | FIU-IND assumed to publish an XML schema | It publishes a **form**. Our JSON-Schema transcription lives in `REF_FILING_TEMPLATES` with `schema_authority = INTERNAL_TRANSCRIPTION`. No FINGate conformance is claimed. |
+| 17 | Demo hero party hardcoded but ids generated | Selection step + pinned config (§S4). |
+| 18 | No config layer; thresholds, FX rates, warehouse names and endpoints hardcoded across the docs | Three-tier config with enforcement (§S1). |
+| 19 | 30 SQL files, no runner, no ordering, no idempotency | 12 ordered stages, Jinja-templated, `CREATE OR ALTER`/`IF NOT EXISTS` throughout, offline lint, canonical stage ordering regardless of flag order. |
+| 20 | ML absent from the design | Tier 1: `JAROWINKLER_SIMILARITY` fuzzy screening (the original docs *cut* this as too complex — it is one built-in function). Future Scope documented with rationale in `conf/ml.yml`. **Hard boundary:** ML may rank and flag for review, never supply a number in an artifact — enforced by `RULE_DEFINITION.admissible_as_primary_evidence`. |
+
+### Bugs found and fixed in the scaffold itself
+
+| Fault | Consequence |
+|---|---|
+| `authenticator = externalbrowser` on an account with no SAML configured | Snowflake reports error 390190 naming the "SAML Identity Provider account parameter", which reads as an account fault but is local misconfiguration. Resolved with key-pair (`SNOWFLAKE_JWT`). |
+| Role/database/warehouse pinned into the connect string | Rejected with 390189 **before** the tolerant context fallback could run — a chicken-and-egg deadlock making `deploy --stage bootstrap` unreachable. Fallback now drops them only on 390189/390201, never on a credential failure. |
+| Statement splitter split on every `;` | A semicolon inside a string literal (`COMMENT = 'Append-only; never updated in place.'`) tore statements in half, failing mid-file after earlier statements had already applied. Replaced with a character scanner respecting quotes, `''` escapes, `--`, `/* */` and `$$`. |
+| Adjacent string literals across lines in `COMMENT` clauses | Snowflake does not concatenate them as C does — 60 syntax errors. Fixed and now blocked by a lint rule. |
+| `CURRENT_EDITION()` | Not a Snowflake function. Edition now read from `ORGANIZATION_USAGE.ACCOUNTS` with a `SHOW ORGANIZATION ACCOUNTS` fallback. |
+| `GRANT ROLE ... TO USER IDENTIFIER(CURRENT_USER())` | Invalid syntax; replaced with dynamic SQL. |
+
+---
+
+## S6. Build order (solo, thin-slice)
+
+Build one vertical slice end-to-end before broadening, so a working demo exists
+early and everything after it is upside rather than risk.
+
+1. Generation: subgraph + ID maps + legs + **one** structuring cohort + labels
+2. Load
+3. Dynamic tables: `dim_party`, `enriched`, `daily_agg`, velocity view, `signals_fast` with **only** `STRUCTURING_CROSS_ACCOUNT`
+4. `SIGNALS_STREAM` + `ROUTE_SIGNALS` + `open_case` → a case appears
+5. `gather_evidence_bundle` → `EVIDENCE` + `EVIDENCE_QUERY_LOG` with snapshots
+6. `generate_str_xml` + `validate_filing_schema` + the **Reviewer procedure**
+7. `ATTESTATION` — the human gate
+
+Step 6 is the demo's money shot (the Reviewer catching a planted defect). Because
+the Reviewer is a stored procedure rather than an agent mode (§S3), it needs no
+Cortex at all and **runs on this account today**. It belongs in the first slice.
+
+Then broaden, in demo-value order:
+
+- remaining 5 signal rules → fuzzy sanctions (`JAROWINKLER_SIMILARITY`)
+- semantic view + Cortex Analyst REST → the NL question-answering beat
+- Suite 1 (detection F1) and Suite 2 (text-to-SQL, scored on result hash)
+- `POLICY_CLAUSE` seeding + the human-gated proposal queue
+- replay harness + `--inject structuring_burst`
+- `SNOWFLAKE.ML.ANOMALY_DETECTION` velocity baselines (works — fix `conf/ml.yml`)
+- Streamlit
+- `CREATE AGENT` object + Investigator/Drafter modes, inert until converted
+- governance policies, authored and deploy-gated
 
 ---
 
@@ -530,6 +873,15 @@ flowchart LR
 ---
 
 ## 7. Single Agent Architecture — Four Modes
+
+> **SUPERSEDED — see §S3 "Correction to Diagram 7".** Two of these four should
+> not be agent modes. **Reviewer** is a stored procedure (determinism is its
+> entire value; an LLM planner would undermine it, and as a procedure it runs on
+> the current account today). **Sentinel** is a SQL view plus one `AI_AGG` call.
+> Only **Investigator** and **Drafter** need agent-style planning. Agent
+> *invocation* is trial-gated (399504) though the object deploys, so meanwhile
+> the orchestration runs from Python over Cortex Analyst REST plus these same
+> stored procedures — which is why the 8 tools are procedures and not Python.
 
 A single Cortex Agent handles all four roles via system prompt mode-switching. This avoids the complexity of multi-agent orchestration while preserving the conceptual separation of concerns. The agent's system prompt defines the current mode based on the task context.
 

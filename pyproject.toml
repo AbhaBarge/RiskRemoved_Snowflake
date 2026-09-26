@@ -95,6 +95,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "N802"]
+# The capability probe exists to execute literal DDL and record what the account
+# says. Every identifier it interpolates is a module-level constant -- there is no
+# external input to inject -- so S608 reports only the fact that the file builds
+# SQL strings, which is its entire purpose.
+"scripts/probe_capabilities.py" = ["S608"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -103,7 +108,9 @@ quote-style = "double"
 # Types
 # ---------------------------------------------------------------------------
 [tool.mypy]
-python_version = "3.11"
+# python_version is deliberately unset so mypy follows the running interpreter.
+# Pinning it to 3.11 makes the bundled numpy stubs (which use 3.12 `type`
+# statements) fail to parse on a 3.12 environment.
 packages = ["risk_copilot"]
 mypy_path = "src"
 strict = true

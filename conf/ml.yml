@@ -56,6 +56,11 @@ tier1:
   # no fixed threshold expresses. Unsupervised, so it does NOT consume
   # GROUND_TRUTH.LABELS and cannot leak them.
   # -------------------------------------------------------------------------
+  # CAPABILITY: confirmed available on this STANDARD trial account.
+  # conf/generated/capabilities.<conn>.yml records
+  # SNOWFLAKE.ML.ANOMALY_DETECTION available: true. An earlier revision of
+  # preconditions.require_edition asserted Enterprise and thereby disabled a
+  # working feature -- see the note on require_edition below.
   velocity_anomaly:
     enabled: true
     function: SNOWFLAKE.ML.ANOMALY_DETECTION
@@ -66,6 +71,15 @@ tier1:
     timestamp_column: txn_date
     target_column: credit_amount_inr
     # Accounts with too little history produce meaningless baselines.
+    #
+    # UNRESOLVED, and deliberately left as a visible contradiction rather than
+    # quietly lowered: the AMLworld HI-Small source spans 2022-09-01 to
+    # 2022-09-18 -- 18 days, measured, not 12 months. No profile can satisfy a
+    # 45-day baseline from this data, so this feature is capability-available
+    # but data-starved. Resolving it means one of: lower the baseline to fit 18
+    # days and say so, synthesise pre-window history, or keep 45 and report the
+    # signal as not-yet-trainable. It must not be decided by silently editing
+    # this number.
     min_history_days: 45
     prediction_interval: 0.99
     schedule: USING CRON 0 3 * * * Asia/Kolkata
@@ -94,7 +108,11 @@ future_scope:
       feature values to historical labels, which leaks future information and
       inflates measured performance. A Feature Store is the correct fix, not an
       optimisation.
-    why_deferred: Not needed while no supervised model is trained in Tier 1.
+    why_deferred: >
+      SCOPE, NOT CAPABILITY. ML_FEATURE_STORE probes available: true on this
+      account, so this is deferred only because Tier 1 trains no supervised
+      model and therefore has no leakage to mitigate. Do not record it as
+      blocked.
 
   triage_classifier:
     package: SNOWFLAKE.ML.CLASSIFICATION
@@ -103,17 +121,25 @@ future_scope:
       graph features, used ONLY to order the Sentinel's queue.
     why_it_matters: Directly attacks analyst time-to-first-true-positive.
     why_deferred: >
-      Requires the Feature Store for point-in-time correctness first;
-      otherwise the reported lift is an artefact of leakage. Also needs a
-      strict train/test split by TIME, not at random, because the graph makes
-      random splits leak.
+      NOT SERVED IN THIS REGION. Probed on AWS_AP_SOUTHEAST_7 and recorded as
+      unavailable with failure_class a_absent, error 398208 -- the object does
+      not exist in this region. This is not an edition or trial gate, so
+      converting the trial will not fix it; it needs a different region.
+      Independently of availability, it would also require the Feature Store
+      for point-in-time correctness, or the reported lift is an artefact of
+      leakage, plus a train/test split by TIME rather than at random, because
+      the graph makes random splits leak.
     guardrail: Ranking only. Never enters EVIDENCE, FINDING or ARTIFACT.
 
   top_insights:
     package: SNOWFLAKE.ML.TOP_INSIGHTS
     what: Explain which attributes drive week-over-week alert-volume shifts.
     why_it_matters: Turns the Sentinel summary from a list into an explanation.
-    why_deferred: Needs several weeks of simulated history to be meaningful.
+    why_deferred: >
+      NOT SERVED IN THIS REGION. Probed on AWS_AP_SOUTHEAST_7 and recorded as
+      unavailable with failure_class a_absent, error 002143. Regional, not
+      edition or trial: converting the account will not fix it. Would in any
+      case need several weeks of history, and the source data spans 18 days.
 
   model_registry:
     package: snowflake.ml.registry
@@ -121,7 +147,9 @@ future_scope:
     why_it_matters: >
       AUDIT.AGENT_ACTION_LOG.model_version is only trustworthy if models are
       registered artefacts rather than ad-hoc SQL calls.
-    why_deferred: No custom model in Tier 1.
+    why_deferred: >
+      SCOPE, NOT CAPABILITY. ML_MODEL_REGISTRY probes available: true on this
+      account. Deferred because Tier 1 registers no custom model.
 
   ml_jobs:
     package: snowflake.ml.jobs
@@ -155,7 +183,22 @@ future_scope:
 # unacceptable, so an unmet precondition disables the feature and says so.
 # ---------------------------------------------------------------------------
 preconditions:
-  require_edition: [ENTERPRISE, BUSINESS_CRITICAL]
+  # Empty by design, and this is a correction rather than an omission.
+  #
+  # This key previously read [ENTERPRISE, BUSINESS_CRITICAL], which made the
+  # doctor warn on a STANDARD account and disabled tier1.velocity_anomaly. The
+  # probe sweep disproves the premise: on this STANDARD trial account
+  # SNOWFLAKE.ML.ANOMALY_DETECTION, SNOWFLAKE.ML.FORECAST, ML_MODEL_REGISTRY
+  # and ML_FEATURE_STORE all record available: true. Edition is the wrong gate
+  # for these functions.
+  #
+  # Availability is therefore decided per function by recorded evidence
+  # (verify_functions below, plus risk_copilot.capabilities against
+  # conf/generated/capabilities.<connection>.yml), never inferred from the
+  # edition string. The two ML functions that genuinely are unavailable here --
+  # CLASSIFICATION and TOP_INSIGHTS -- are blocked REGIONALLY (a_absent), which
+  # an edition precondition would have mis-attributed anyway.
+  require_edition: []
   verify_functions:
     - JAROWINKLER_SIMILARITY
     - EDITDISTANCE

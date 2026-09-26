@@ -1,53 +1,91 @@
 # ===========================================================================
 # models.yml -- Cortex model assignment
 # ===========================================================================
-# WARNING: model availability is REGION-DEPENDENT and the names in the
-# architecture doc (claude-3.5-sonnet, llama3.1-70b) are stale. Nothing here
-# is trusted until `riskcopilot doctor --models` has confirmed each alias
-# against the live account. The doctor writes its findings to
-# conf/generated/model_availability.yml and the deployer refuses to register an
-# agent whose model has not been confirmed.
+# SCOPE. These are model-name strings for Snowflake SQL functions, e.g.
+#   AI_COMPLETE('<name>', '<prompt>')
+# They are NOT the Cortex Code CLI session models (Claude Opus 5, GPT 5.4, ...)
+# that drive the coding agent. Different namespace, different naming convention,
+# different availability. Do not copy names between the two.
+#
+# ---------------------------------------------------------------------------
+# PROBED 2026-09-23 against connection ASHWINRAVI004.
+# RESULT: ZERO of the 28 candidate models are available on that account.
+# ---------------------------------------------------------------------------
+# Every AI_COMPLETE call, for every model including snowflake-arctic, returns
+#   399258 -- "AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM is not available
+#   for trial accounts."
+# SHOW CORTEX BASE MODELS returns zero rows. This is NOT a model-name problem
+# and NOT a region problem: CORTEX_ENABLED_CROSS_REGION is already ANY_REGION
+# and CORTEX_MODELS_ALLOWLIST is already ALL. It is the trial gate, and no
+# change to this file can work around it.
+#
+# Per-model evidence, with the exact statement and error code, is in
+#   conf/generated/capabilities.ASHWINRAVI004.yml   (group: cortex_models)
+#
+# The lists below are therefore the CURRENT DOCUMENTED ROSTER, newest first,
+# ordered ready for the first account where Cortex is not gated. They are
+# candidates, not assertions. Names were taken from
+#   https://docs.snowflake.com/en/user-guide/snowflake-cortex/aisql-regional-availability
+# and each was probed; none responded here.
+#
+# The resolution mechanism, not this file, remains the source of truth:
+#   1. `riskcopilot doctor --models` probes each candidate with a real
+#      AI_COMPLETE call and keeps the first that responds. It now skips any
+#      candidate already recorded unavailable in the capabilities file, so the
+#      real answer is not buried under 28 identical errors.
+#   2. It writes the outcome to conf/generated/model_availability.yml. That file
+#      is absent on this account because nothing was confirmed -- an empty file
+#      would imply a resolution that never happened.
+#   3. The deployer REFUSES to register an agent whose model was never confirmed.
 #
 # Never reference a model literal in SQL or Python -- resolve through a key.
 # ===========================================================================
 
-# Fallback chain per logical role, first available wins.
+# Ordered probe candidates per logical role. First confirmed-available wins.
 roles:
-  # Triage ranking summary. Cheap and mostly deterministic work.
+  # Triage ranking summary. Cheap and mostly deterministic work, and HIGH VOLUME,
+  # so the list is small-and-fast first. llama3.2-3b and mistral-7b are probed
+  # but are not in the documented AI_COMPLETE roster for every region.
   sentinel:
-    candidates: [llama3.1-8b, mistral-7b, llama3.1-70b]
+    candidates: [claude-haiku-4-5, openai-gpt-5.4-nano, openai-gpt-5-mini, llama3.1-8b, mistral-7b]
     max_tokens: 1024
     temperature: 0.1
 
   # Evidence gathering. Needs the strongest tool-use behaviour.
   investigator:
-    candidates: [claude-4-sonnet, claude-3-7-sonnet, claude-3-5-sonnet, mistral-large2]
+    candidates: [claude-sonnet-5, claude-sonnet-4-6, claude-opus-5, openai-gpt-5.1, llama3.3-70b]
     max_tokens: 4096
     temperature: 0.0
 
   # STR narrative composition. Quality matters; numbers still come from SQL.
+  # Anthropic-led, which fixes the reviewer's family below.
   drafter:
-    candidates: [claude-4-sonnet, claude-3-7-sonnet, claude-3-5-sonnet, mistral-large2]
+    candidates: [claude-opus-5, claude-sonnet-5, claude-sonnet-4-6, claude-opus-4-8]
     max_tokens: 4096
     temperature: 0.2
 
-  # Adversarial validation. Executes a checklist; cheaper is fine and a
+  # Adversarial validation. Executes a checklist; cheaper is fine, and a
   # DIFFERENT model family from the drafter is deliberate -- a critic sharing
   # the drafter's blind spots is not a critic.
+  #
+  # CONSTRAINT PRESERVED: `drafter` is entirely Anthropic, so every candidate
+  # here is deliberately non-Anthropic (OpenAI, Meta, Mistral). Do not add a
+  # claude-* name to this list without moving the drafter off Anthropic first.
   reviewer:
-    candidates: [llama3.1-70b, mistral-large2, claude-3-5-sonnet]
+    candidates: [openai-gpt-5.1, openai-gpt-5, llama3.3-70b, llama3.1-70b, mistral-large2]
     max_tokens: 2048
     temperature: 0.0
 
-  # L3 bulk narrative generation (10K KYC notes). Volume play.
+  # L3 bulk narrative generation (10K KYC notes). Volume play -- cheapest first.
   bulk_narrative:
-    candidates: [llama3.1-8b, mistral-7b]
+    candidates: [claude-haiku-4-5, openai-gpt-5.4-nano, openai-gpt-5-nano, llama3.1-8b, mistral-7b]
     max_tokens: 512
     temperature: 0.9
 
-  # L3 golden documents (internal AML policy, exemplar STRs). Hand-reviewed.
+  # L3 golden documents (internal AML policy, exemplar STRs). Hand-reviewed, low
+  # volume, so the most capable model is the right trade.
   golden_narrative:
-    candidates: [claude-4-sonnet, claude-3-5-sonnet, mistral-large2]
+    candidates: [claude-opus-5, claude-opus-4-8, claude-sonnet-5, openai-gpt-5.1]
     max_tokens: 8192
     temperature: 0.3
 
@@ -58,11 +96,18 @@ prompt_version: v1
 embedding:
   # Cortex Search picks its own embedding model; pinned here only so the choice
   # is recorded as a decision rather than a default.
+  #
+  # PROBED: unavailable on ASHWINRAVI004. CREATE CORTEX SEARCH SERVICE fails at
+  # EMBED_TEXT_768 with 399258, and AI_EMBED fails at _AI_EMBED_WITH_PROMPT_1024.
   search_model: snowflake-arctic-embed-l-v2.0
 
 limits:
   # Hard ceiling per agent turn, enforced before invocation. Prevents a runaway
   # automation from burning credits unattended.
+  #
+  # NOTE: AI_COUNT_TOKENS is itself trial-gated (399258), so on a trial account
+  # these ceilings cannot be enforced by measuring -- only by truncating input.
   max_tokens_per_turn: 16000
   max_tool_calls_per_turn: 12
   request_timeout_secs: 120
+

@@ -1,0 +1,47 @@
+# Fast, offline checks only. Anything needing a Snowflake connection belongs in
+# CI, not in a commit hook.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # The source datasets are ~950 MB and are declared in data/MANIFEST.yml
+      # rather than committed. This is the backstop against `git add -f`.
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Renders every SQL template for both profiles. Catches literal object
+      # names, adjacent string literals and undefined template variables before
+      # they reach a deploy -- all three are silent at render time and expensive
+      # at execution time.
+      - id: sql-template-lint
+        name: Lint SQL templates (both profiles)
+        entry: python -m risk_copilot.pipeline.lint
+        language: system
+        pass_filenames: false
+        files: '^(sql/|conf/|src/risk_copilot/config\.py)'
+
+      - id: pytest-unit
+        name: Unit tests
+        entry: python -m pytest -q -m unit
+        language: system
+        pass_filenames: false
+        files: '^(src/|tests/|conf/|sql/)'

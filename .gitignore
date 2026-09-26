@@ -28,6 +28,12 @@ build/
 generated/
 data/generated/
 data/staging/
+# EXCEPT conf/generated/: the `generated/` rule above also matched it, so the
+# capabilities evidence that doctor, feature gating and the retention clamp all
+# read was never committed -- a fresh clone silently had no evidence at all.
+# It holds probe outcomes, the pinned demo entity and resolved models: build
+# inputs, not build output. No credentials are written there.
+!conf/generated/
 
 # ---------------------------------------------------------------------------
 # Python

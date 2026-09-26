@@ -254,6 +254,58 @@ clauses:
       legally invalid, not merely imprudent. Enforced in code, not in prose.
 
 # ---------------------------------------------------------------------------
+# Typology catalogue -- seed for GOVERNANCE.TYPOLOGY.
+#
+# Field names match the TYPOLOGY table, plus two generation-side fields:
+#   injection_label    -- TXN_LABELS.injection_method for injected cohorts
+#   expected_rule_ids  -- copied into EVAL_GRAIN_PARTY_MONTH so per-rule recall
+#                         needs no hand-written mapping in the eval code.
+#
+# expected_rule_ids is deliberately EMPTY for every AMLworld graph typology.
+# Which rule should catch a FAN-OUT or a STACK is an empirical claim, assigned
+# when those rules exist and their recall has been measured -- not asserted
+# here in advance. amlworld_pattern values are the exact labels in
+# HI-Small_Patterns.txt (8 measured; 3 carry no ":" detail suffix).
+# References are left null rather than cited from memory.
+# ---------------------------------------------------------------------------
+typologies:
+  - typology_id: TYP_STRUCTURING
+    name: structuring
+    description: Cash deposits split across accounts to stay below the CTR trigger.
+    detection_approach: rules
+    amlworld_pattern: null
+    injection_label: reskin_structuring
+    expected_rule_ids: [STRUCTURING_CROSS_ACCOUNT]
+    fatf_reference: null
+    rbi_reference: PML (Maintenance of Records) Rules, 2005 - Rule 3(1)(A)
+  - typology_id: TYP_MULE_FAN_IN
+    name: mule_fan_in
+    description: Many remitters credit one account in a short window.
+    detection_approach: rules
+    amlworld_pattern: null
+    injection_label: reskin_mule_fan_in
+    expected_rule_ids: [RAPID_CREDIT_VELOCITY]
+    fatf_reference: null
+    rbi_reference: null
+  - typology_id: TYP_DORMANT_REACTIVATION
+    name: dormant_reactivation
+    description: A long-dormant account abruptly resumes high activity.
+    detection_approach: rules
+    amlworld_pattern: null
+    injection_label: reskin_dormant_reactivation
+    expected_rule_ids: []
+    fatf_reference: null
+    rbi_reference: null
+  - { typology_id: TYP_AML_FAN_OUT,        name: fan_out,        amlworld_pattern: FAN-OUT,        detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: One account disperses funds to many. }
+  - { typology_id: TYP_AML_FAN_IN,         name: fan_in,         amlworld_pattern: FAN-IN,         detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Many accounts concentrate funds into one. }
+  - { typology_id: TYP_AML_CYCLE,          name: cycle,          amlworld_pattern: CYCLE,          detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Funds return to the originating account through a chain. }
+  - { typology_id: TYP_AML_GATHER_SCATTER, name: gather_scatter, amlworld_pattern: GATHER-SCATTER, detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Fan-in to an intermediary followed by fan-out. }
+  - { typology_id: TYP_AML_SCATTER_GATHER, name: scatter_gather, amlworld_pattern: SCATTER-GATHER, detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Fan-out through intermediaries that reconverge. }
+  - { typology_id: TYP_AML_BIPARTITE,      name: bipartite,      amlworld_pattern: BIPARTITE,      detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Flows between two disjoint account sets. }
+  - { typology_id: TYP_AML_STACK,          name: stack,          amlworld_pattern: STACK,          detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Layered bipartite hops. }
+  - { typology_id: TYP_AML_RANDOM,         name: random_walk,    amlworld_pattern: RANDOM,         detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Funds moved along a random path of hops. }
+
+# ---------------------------------------------------------------------------
 # Severity mapping: rule -> signal severity. Drives ROUTE_SIGNALS case
 # creation and the Sentinel triage ordering.
 # ---------------------------------------------------------------------------

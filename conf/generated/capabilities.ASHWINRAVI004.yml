@@ -1,0 +1,835 @@
+schema_version: 1
+probed_at: '2026-09-23T14:37:45+00:00'
+connection: ASHWINRAVI004
+profile: dev
+probe_database_dropped: true
+account:
+  account_locator: ZC14131
+  organization: HTQQLHX
+  region: AWS_AP_SOUTHEAST_7
+  user: ASHWINRAVI004
+  snowflake_version: 10.34.101
+  available_roles: '[ "ACCOUNTADMIN", "BRANCH_ANALYST_DELHI_DEV", "BRANCH_ANALYST_MUMBAI_DEV", "COMPLIANCE_OFFICER_DEV",
+    "ORGADMIN", "PUBLIC", "RC_ADMIN_DEV", "RC_SERVICE_ROLE_DEV", "SECURITYADMIN", "SNOWFLAKE_LEARNING_ROLE",
+    "SYSADMIN", "USERADMIN" ]'
+  edition: STANDARD
+  account_name: GI22223
+  created_on: '2026-09-19 08:26:31.287000-07:00'
+  edition_source: SNOWFLAKE.ORGANIZATION_USAGE.ACCOUNTS
+  holds_orgadmin: true
+  param_cortex_enabled_cross_region: ANY_REGION
+  param_cortex_models_allowlist: ALL
+  param_data_retention_time_in_days: '1'
+  remaining_balance:
+    currency: USD
+    free_usage_balance: 398.08
+    capacity_balance: 0.0
+    on_demand_consumption_balance: 0.0
+    date: '2026-09-23'
+  probe_role: ACCOUNTADMIN
+failure_classes:
+  a_absent: object or function does not exist in this account/region
+  b_edition: requires Enterprise Edition or higher
+  c_trial: blocked because the account is a trial
+  d_privilege: missing grant; fixable without changing accounts
+  e_precondition: unmet precondition (Anaconda terms, data, warehouse)
+  f_unclassified: recorded verbatim; not classified
+probes:
+  JAROWINKLER_SIMILARITY:
+    group: string_metrics
+    available: true
+    why_it_matters: Fuzzy sanctions screening (ml.yml tier1.fuzzy_sanctions)
+    statement: SELECT JAROWINKLER_SIMILARITY('kumar', 'kumaar')
+  EDITDISTANCE:
+    group: string_metrics
+    available: true
+    why_it_matters: Fuzzy sanctions screening, alternative metric
+    statement: SELECT EDITDISTANCE('kumar', 'kumaar')
+  SOUNDEX:
+    group: string_metrics
+    available: true
+    why_it_matters: Blocking key that keeps the sanctions cross join tractable
+    statement: SELECT SOUNDEX('kumar')
+  AI_COMPLETE:claude-opus-5:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-opus-5 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-opus-5', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a0002388e: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-opus-4-8:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-opus-4-8 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-opus-4-8', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a00023892: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-sonnet-5:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-sonnet-5 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-sonnet-5', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251ca: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-sonnet-4-6:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-sonnet-4-6 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-sonnet-4-6', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251ce: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-sonnet-4-5:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-sonnet-4-5 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-sonnet-4-5', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a0002389a: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-haiku-4-5:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-haiku-4-5 (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-haiku-4-5', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251d2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-4-sonnet:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-4-sonnet (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-4-sonnet', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a0002389e: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:claude-3-7-sonnet:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model claude-3-7-sonnet (anthropic family)
+    statement: SELECT AI_COMPLETE('claude-3-7-sonnet', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251d6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-5.4-mini:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-5.4-mini (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-5.4-mini', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251da: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-5.1:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-5.1 (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-5.1', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238a2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-5:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-5 (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-5', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251de: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-5-mini:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-5-mini (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-5-mini', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251e2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-5-nano:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-5-nano (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-5-nano', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251e6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:openai-gpt-4.1:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model openai-gpt-4.1 (openai family)
+    statement: SELECT AI_COMPLETE('openai-gpt-4.1', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251ea: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:gemini-3.1-pro:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model gemini-3.1-pro (google family)
+    statement: SELECT AI_COMPLETE('gemini-3.1-pro', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238a6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama4-maverick:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama4-maverick (meta family)
+    statement: SELECT AI_COMPLETE('llama4-maverick', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251ee: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama3.3-70b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama3.3-70b (meta family)
+    statement: SELECT AI_COMPLETE('llama3.3-70b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238aa: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama3.1-405b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama3.1-405b (meta family)
+    statement: SELECT AI_COMPLETE('llama3.1-405b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238ae: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama3.1-70b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama3.1-70b (meta family)
+    statement: SELECT AI_COMPLETE('llama3.1-70b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251f2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama3.1-8b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama3.1-8b (meta family)
+    statement: SELECT AI_COMPLETE('llama3.1-8b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238b2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:llama3.2-3b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model llama3.2-3b (meta family)
+    statement: SELECT AI_COMPLETE('llama3.2-3b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238b6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:mistral-large3:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model mistral-large3 (mistral family)
+    statement: SELECT AI_COMPLETE('mistral-large3', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251f6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:mistral-large2:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model mistral-large2 (mistral family)
+    statement: SELECT AI_COMPLETE('mistral-large2', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238ba: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:mixtral-8x7b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model mixtral-8x7b (mistral family)
+    statement: SELECT AI_COMPLETE('mixtral-8x7b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238be: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:mistral-7b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model mistral-7b (mistral family)
+    statement: SELECT AI_COMPLETE('mistral-7b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251fa: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:qwen3-32b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model qwen3-32b (qwen family)
+    statement: SELECT AI_COMPLETE('qwen3-32b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238c2: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:snowflake-arctic:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model snowflake-arctic (snowflake family)
+    statement: SELECT AI_COMPLETE('snowflake-arctic', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238c6: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  AI_COMPLETE:snowflake-llama-3.3-70b:
+    group: cortex_models
+    available: false
+    why_it_matters: Cortex model snowflake-llama-3.3-70b (snowflake family)
+    statement: SELECT AI_COMPLETE('snowflake-llama-3.3-70b', 'Reply with the single word ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a000251fe: 399258 (0A000): AI function _COMPLETE_WITH_PROMPT_HISTORY_LLM
+      is not available for trial accounts.'
+  SNOWFLAKE.CORTEX.COMPLETE:
+    group: cortex_functions
+    available: false
+    why_it_matters: Older namespace; may be gated separately from AI_COMPLETE
+    statement: SELECT SNOWFLAKE.CORTEX.COMPLETE('llama3.1-8b', 'ok')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a00025202: 399258 (0A000): AI function COMPLETE is not
+      available for trial accounts.'
+  AI_COUNT_TOKENS:
+    group: cortex_functions
+    available: false
+    why_it_matters: Token budgeting before an agent turn (models.yml:limits)
+    statement: SELECT AI_COUNT_TOKENS('llama3.1-8b', 'count these tokens')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238ca: 399258 (0A000): AI function _AI_COUNT_TOKENS_WITH_PROMPT
+      is not available for trial accounts.'
+  AI_SENTIMENT:
+    group: cortex_functions
+    available: false
+    why_it_matters: Case-comment tone; not on the critical path
+    statement: SELECT AI_SENTIMENT('the customer was uncooperative')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a00025206: 399258 (0A000): AI function _AI_SENTIMENT is
+      not available for trial accounts.'
+  AI_CLASSIFY:
+    group: cortex_functions
+    available: false
+    why_it_matters: KYC narrative contradiction detection (ml.yml future_scope)
+    statement: SELECT AI_CLASSIFY('wire to a shell company', ['suspicious', 'benign'])
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-0224-0002-411a0002520a: 399258 (0A000): AI function AI_CLASSIFY is not
+      available for trial accounts.'
+  AI_FILTER:
+    group: cortex_functions
+    available: false
+    why_it_matters: Narrative-vs-record contradiction filter
+    statement: SELECT AI_FILTER('is 2 greater than 1?')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743ca-000e-01f3-0002-411a000238ce: 399258 (0A000): AI function _AI_FILTER_WITH_PROMPT
+      is not available for trial accounts.'
+  AI_AGG:
+    group: cortex_functions
+    available: true
+    why_it_matters: Cross-row narrative summarisation for an evidence bundle
+    statement: SELECT AI_AGG(txt, 'summarise') FROM (SELECT 'alpha' AS txt UNION ALL SELECT 'beta')
+  AI_SIMILARITY:
+    group: cortex_functions
+    available: false
+    why_it_matters: Embedding-based entity resolution alternative to Jaro-Winkler
+    statement: SELECT AI_SIMILARITY('Mohammed Ali', 'Muhammad Ali')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238d6: 399258 (0A000): AI function _AI_EMBED_WITH_PROMPT_1024
+      is not available for trial accounts.'
+  AI_EMBED:
+    group: cortex_functions
+    available: false
+    why_it_matters: Alias/transliteration resolution (ml.yml embedding_entity_resolution)
+    statement: SELECT AI_EMBED('snowflake-arctic-embed-l-v2.0', 'kumar trading')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002520e: 399258 (0A000): AI function _AI_EMBED_WITH_PROMPT_1024
+      is not available for trial accounts.'
+  AI_EXTRACT:
+    group: cortex_functions
+    available: false
+    why_it_matters: Policy clause extraction from the FIU circular
+    statement: 'SELECT AI_EXTRACT(text => ''Report cash above Rs 10,00,000 within 7 days'', responseFormat
+      => {''threshold'': ''the rupee threshold''})'
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238da: 399258 (0A000): AI function _AI_EXTRACT is not
+      available for trial accounts.'
+  AI_TRANSCRIBE:
+    group: cortex_functions
+    available: false
+    why_it_matters: Not used by the design; probed only to complete the matrix
+    statement: SELECT AI_TRANSCRIBE(TO_FILE('@RC_CAPABILITY_PROBE.PROBE.PROBE_STAGE', 'probe.txt'))
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238de: 399258 (0A000): AI function _AI_TRANSCRIBE is
+      not available for trial accounts.'
+  AI_PARSE_DOCUMENT:
+    group: cortex_functions
+    available: false
+    why_it_matters: Entire policy ingestion pipeline (diagrams 3, 10)
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238e2: 399258 (0A000): AI function _AI_PARSE_DOCUMENT
+      is not available for trial accounts.'
+  CORTEX_SEARCH_SERVICE:
+    group: cortex_services
+    available: false
+    why_it_matters: REGULATORY_SEARCH_SVC, clause retrieval, citation grounding
+    statement: CREATE OR REPLACE CORTEX SEARCH SERVICE RC_CAPABILITY_PROBE.PROBE.PROBE_SVC ON BODY WAREHOUSE
+      = RC_DEV_WH_DEV TARGET_LAG = '1 hour' AS SELECT ID, BODY FROM RC_CAPABILITY_PROBE.PROBE.SEARCH_SRC
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238e6: 399258 (0A000): AI function EMBED_TEXT_768 is
+      not available for trial accounts.'
+  CREATE_SEMANTIC_VIEW:
+    group: cortex_services
+    available: true
+    why_it_matters: Semantic view OBJECT -- S3 claims this is creatable on Standard
+    statement: CREATE OR REPLACE SEMANTIC VIEW RC_CAPABILITY_PROBE.PROBE.PROBE_SV TABLES (txn AS RC_CAPABILITY_PROBE.PROBE.SV_TXN
+      PRIMARY KEY (TXN_ID)) FACTS (txn.amt AS AMT) DIMENSIONS (txn.account AS ACCOUNT_ID) METRICS (txn.total
+      AS SUM(txn.amt))
+  QUERY_SEMANTIC_VIEW:
+    group: cortex_services
+    available: true
+    why_it_matters: SQL-level querying of the semantic view; distinct from Analyst NL
+    statement: SELECT * FROM SEMANTIC_VIEW(RC_CAPABILITY_PROBE.PROBE.PROBE_SV METRICS txn.total)
+  CORTEX_ANALYST_REST:
+    group: cortex_services
+    available: true
+    why_it_matters: Natural-language querying of the semantic view (Suite 2)
+    statement: POST https://HTQQLHX-GI22223.snowflakecomputing.com/api/v2/cortex/analyst/message semantic_view=RC_CAPABILITY_PROBE.PROBE.PROBE_SV
+  CREATE_AGENT:
+    group: cortex_services
+    available: true
+    why_it_matters: All four agent modes (diagrams 7, 13)
+    statement: 'CREATE OR REPLACE AGENT RC_CAPABILITY_PROBE.PROBE.PROBE_AGENT COMMENT = ''capability probe''
+      FROM SPECIFICATION $$ models: orchestration: auto instructions: response: "Be concise." tools: []
+      $$'
+  DATA_AGENT_RUN:
+    group: cortex_services
+    available: false
+    why_it_matters: Creating an agent OBJECT is not the same as running one; this is the real gate
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399504'
+    error: '399504: Access denied for trial accounts.'
+  EXECUTE_AI_EVALUATION:
+    group: cortex_services
+    available: true
+    why_it_matters: LLM-as-judge groundedness metrics (Suite 3)
+    statement: CALL EXECUTE_AI_EVALUATION('STATUS', OBJECT_CONSTRUCT('run_name', 'rc-probe-run'), '@RC_CAPABILITY_PROBE.PROBE.PROBE_STAGE/agent_evaluation_config.yaml')
+    note: 'Entry point resolves on this account; not exercised end to end. Rejected the probe fixture
+      with: (1304): 01c743cb-000e-0224-0002-411a0002522a: 210007 (P0000): User Error Report: Invalid YAML
+      configuration: Unrecognized field "name" (class com.snowflake.extension.aiobservability.procedure.config.AutoValue_EvaluationY'
+  AGENT_RUN_SQL_NO_OBJECT:
+    group: cortex_agent_paths
+    available: false
+    why_it_matters: Agent orchestration without an agent object, via SQL
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399504'
+    error: '399504: Access denied for trial accounts.'
+  AGENT_RUN_REST_OBJECT:
+    group: cortex_agent_paths
+    available: false
+    why_it_matters: Agent Run REST against the agent object -- the documented preferred path
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399504'
+    error: 'HTTP 400: { "message" : "Access denied for trial accounts.", "code" : "399504", "error_code"
+      : null, "request_id" : "b59d346e-6465-42e6-9fe8-c9a5285b0820" }'
+  AGENT_RUN_REST_OBJECT_STREAMING:
+    group: cortex_agent_paths
+    available: false
+    why_it_matters: The streaming variant answers HTTP 200 even when denied, so it needs its own probe
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399504'
+    error: 'HTTP 200 with error payload: event: error data: {"message":"Access denied for trial accounts.","code":"399504","error_code":null,"request_id":"22ab4b8c-480f-4916-ab79-f6a96acb4f31"}
+      event: done data: [DONE]'
+  AGENT_RUN_REST_INLINE:
+    group: cortex_agent_paths
+    available: false
+    why_it_matters: Agent Run REST with the configuration inline, no agent object
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '399504'
+    error: 'HTTP 400: { "message" : "Access denied for trial accounts.", "code" : "399504", "error_code"
+      : null, "request_id" : "478ed500-7a41-4f60-a8b4-139340acefae" }'
+  CORTEX_THREADS_REST:
+    group: cortex_agent_paths
+    available: true
+    why_it_matters: Conversation history for a multi-turn agent; distinct from running one
+    statement: POST https://HTQQLHX-GI22223.snowflakecomputing.com/api/v2/cortex/threads
+  CORTEX_REST_CHAT_COMPLETIONS:
+    group: cortex_inference_paths
+    available: false
+    why_it_matters: OpenAI-spec Cortex REST API -- a second inference path independent of AI_COMPLETE
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '003001'
+    error: 'HTTP 403: {"code":"003001","message":"This account is not allowed to access this endpoint.
+      Please contact Snowflake support.","request_id":"f7d86939-c6c3-481a-9972-d5fadc9919fc","error_code":"003001"}'
+  CORTEX_REST_MESSAGES:
+    group: cortex_inference_paths
+    available: false
+    why_it_matters: Anthropic-spec Cortex REST API -- a third inference path
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '003001'
+    error: 'HTTP 403: {"code":"003001","message":"This account is not allowed to access this endpoint.
+      Please contact Snowflake support.","request_id":"39514146-5088-42ae-9b1b-2f7dbe6d906b","error_code":"003001"}'
+  CORTEX_INFERENCE_COMPLETE_REST:
+    group: cortex_inference_paths
+    available: false
+    why_it_matters: Cortex Inference REST endpoint -- a fourth inference path
+    statement: <python runner>
+    failure_class: c_trial
+    error_code: '003001'
+    error: 'HTTP 403: {"code":"003001","message":"This account is not allowed to access this endpoint.
+      Please contact Snowflake support.","request_id":"cf5bae1e-d4a6-4063-82f8-9fa2e0b581bb","error_code":"003001"}'
+  AI_SUMMARIZE_AGG:
+    group: cortex_functions
+    available: true
+    why_it_matters: Aggregate summarisation. Works where AI_COMPLETE does not.
+    statement: SELECT AI_SUMMARIZE_AGG(c) FROM (SELECT 'alpha beta gamma' AS c)
+  EMBED_TEXT_768:
+    group: cortex_functions
+    available: false
+    why_it_matters: Underlies Cortex Search; probed directly to locate the real blocker
+    statement: SELECT ARRAY_SIZE(SNOWFLAKE.CORTEX.EMBED_TEXT_768('snowflake-arctic-embed-m', 'kumar trading')::ARRAY)
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a00025256: 399258 (0A000): AI function EMBED_TEXT_768 is
+      not available for trial accounts.'
+  EMBED_TEXT_1024:
+    group: cortex_functions
+    available: false
+    why_it_matters: Higher-dimension embedding, used by arctic-embed-l-v2.0
+    statement: SELECT ARRAY_SIZE(SNOWFLAKE.CORTEX.EMBED_TEXT_1024('snowflake-arctic-embed-l-v2.0', 'kumar
+      trading')::ARRAY)
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002525a: 399258 (0A000): AI function EMBED_TEXT_1024
+      is not available for trial accounts.'
+  CORTEX_SEARCH_EXPLICIT_EMBEDDING_MODEL:
+    group: cortex_services
+    available: false
+    why_it_matters: Whether naming an embedding model explicitly avoids the default's gate
+    statement: CREATE OR REPLACE CORTEX SEARCH SERVICE RC_CAPABILITY_PROBE.PROBE.PROBE_SVC2 ON BODY WAREHOUSE
+      = RC_DEV_WH_DEV TARGET_LAG = '1 hour' EMBEDDING_MODEL = 'snowflake-arctic-embed-l-v2.0' AS SELECT
+      ID, BODY FROM RC_CAPABILITY_PROBE.PROBE.SEARCH_SRC
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a000238fa: 399258 (0A000): AI function EMBED_TEXT_1024
+      is not available for trial accounts.'
+  LEGACY_SENTIMENT:
+    group: cortex_functions
+    available: false
+    why_it_matters: Pre-AI_* namespace; gated separately in principle
+    statement: SELECT SNOWFLAKE.CORTEX.SENTIMENT('this is terrible')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002525e: 399258 (0A000): AI function SENTIMENT is not
+      available for trial accounts.'
+  LEGACY_SUMMARIZE:
+    group: cortex_functions
+    available: false
+    why_it_matters: Pre-AI_* namespace summarisation
+    statement: SELECT SNOWFLAKE.CORTEX.SUMMARIZE('The quick brown fox jumped.')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a00023902: 399258 (0A000): AI function SUMMARIZE is not
+      available for trial accounts.'
+  LEGACY_TRANSLATE:
+    group: cortex_functions
+    available: false
+    why_it_matters: Pre-AI_* namespace translation
+    statement: SELECT SNOWFLAKE.CORTEX.TRANSLATE('hello', 'en', 'hi')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a00025262: 399258 (0A000): AI function TRANSLATE is not
+      available for trial accounts.'
+  LEGACY_EXTRACT_ANSWER:
+    group: cortex_functions
+    available: false
+    why_it_matters: Extractive QA over a clause; a possible AI_EXTRACT substitute
+    statement: SELECT SNOWFLAKE.CORTEX.EXTRACT_ANSWER('The threshold is Rs 10,00,000.', 'What is the threshold?')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-0224-0002-411a00025266: 399258 (0A000): AI function EXTRACT_ANSWER is
+      not available for trial accounts.'
+  AI_TRANSLATE:
+    group: cortex_functions
+    available: false
+    why_it_matters: Transliteration handling for Indian-name screening
+    statement: SELECT AI_TRANSLATE('hello', 'en', 'hi')
+    failure_class: c_trial
+    error_code: '399258'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a00023906: 399258 (0A000): AI function _AI_TRANSLATE is
+      not available for trial accounts.'
+  AI_ESTIMATE_QUERY_COST:
+    group: cortex_functions
+    available: false
+    why_it_matters: Pre-flight AI spend control (models.yml:limits)
+    statement: SELECT AI_ESTIMATE_QUERY_COST('SELECT 1')
+    failure_class: e_precondition
+    error_code: '001003'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a0002390a: 001003 (42000): SQL compilation error:
+
+      AI_ESTIMATE_QUERY_COST is disabled. Set ENABLE_AI_COST_ESTIMATE = true to enable.'
+  ROW_ACCESS_POLICY:
+    group: governance
+    available: false
+    why_it_matters: '''Same question, two roles, two answers'' -- the RLS demo beat (G1)'
+    statement: ALTER TABLE RC_CAPABILITY_PROBE.PROBE.RAP_T ADD ROW ACCESS POLICY RC_CAPABILITY_PROBE.PROBE.RAP
+      ON (BRANCH_REGION)
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002526a: 000002 (0A000): Unsupported feature ''ROW ACCESS
+      POLICY''.'
+  MASKING_POLICY:
+    group: governance
+    available: false
+    why_it_matters: PAN / Aadhaar masking for non-privileged roles (G1)
+    statement: ALTER TABLE RC_CAPABILITY_PROBE.PROBE.MASK_T MODIFY COLUMN PAN SET MASKING POLICY RC_CAPABILITY_PROBE.PROBE.MASK_PAN
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-0224-0002-411a00025272: 000002 (0A000): Unsupported feature ''MASKING
+      POLICY''.'
+  CREATE_TAG:
+    group: governance
+    available: true
+    why_it_matters: Object tagging for the governance inventory
+    statement: CREATE OR REPLACE TAG RC_CAPABILITY_PROBE.PROBE.PROBE_TAG
+  TAG_BASED_MASKING:
+    group: governance
+    available: false
+    why_it_matters: Policy applied once to a tag rather than per column
+    statement: ALTER TAG RC_CAPABILITY_PROBE.PROBE.PROBE_TAG SET MASKING POLICY RC_CAPABILITY_PROBE.PROBE.MASK_PAN
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a00023922: 000002 (0A000): Unsupported feature ''MASKING
+      POLICY''.'
+  AGGREGATION_POLICY:
+    group: governance
+    available: false
+    why_it_matters: Prevents single-party disclosure from an aggregate view
+    statement: CREATE OR REPLACE AGGREGATION POLICY RC_CAPABILITY_PROBE.PROBE.AGG_POL AS () RETURNS AGGREGATION_CONSTRAINT
+      -> AGGREGATION_CONSTRAINT(MIN_GROUP_SIZE => 5)
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002527a: 000002 (0A000): Unsupported feature ''AGGREGATION
+      POLICY''.'
+  PROJECTION_POLICY:
+    group: governance
+    available: false
+    why_it_matters: Blocks a column from being SELECTed while remaining joinable
+    statement: CREATE OR REPLACE PROJECTION POLICY RC_CAPABILITY_PROBE.PROBE.PROJ_POL AS () RETURNS PROJECTION_CONSTRAINT
+      -> PROJECTION_CONSTRAINT(ALLOW => FALSE)
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a0002392a: 000002 (0A000): Unsupported feature ''PROJECTION
+      POLICY''.'
+  CREATE_DMF:
+    group: governance
+    available: false
+    why_it_matters: Pipeline-health gates and freshness qualification (G6, Suite 5)
+    statement: CREATE OR REPLACE DATA METRIC FUNCTION RC_CAPABILITY_PROBE.PROBE.DMF_NULL_AMT (arg_t TABLE(arg_c
+      NUMBER)) RETURNS NUMBER AS $$ SELECT COUNT(*) FROM arg_t WHERE arg_c IS NULL $$
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-01f3-0002-411a0002392e: 000002 (0A000): Unsupported feature ''DATA METRIC
+      FUNCTION''.'
+  ASSOCIATE_DMF:
+    group: governance
+    available: false
+    why_it_matters: A DMF only gates a pipeline once associated and scheduled
+    statement: ALTER TABLE RC_CAPABILITY_PROBE.PROBE.DMF_T ADD DATA METRIC FUNCTION RC_CAPABILITY_PROBE.PROBE.DMF_NULL_AMT
+      ON (AMT)
+    failure_class: a_absent
+    error_code: '000002'
+    error: '(1304): 01c743cb-000e-0224-0002-411a00025296: 000002 (0A000): Unsupported feature ''DATA METRIC
+      FUNCTION''.'
+  DATA_METRIC_SCAN:
+    group: governance
+    available: false
+    why_it_matters: Ad-hoc quality scan without waiting for the schedule
+    statement: SELECT * FROM TABLE(SYSTEM$DATA_METRIC_SCAN(REF_ENTITY_NAME => 'RC_CAPABILITY_PROBE.PROBE.DMF_T',
+      METRIC_NAME => 'RC_CAPABILITY_PROBE.PROBE.DMF_NULL_AMT', ARGUMENT_NAME => 'AMT'))
+    failure_class: a_absent
+    error_code: '510139'
+    error: '(1304): 01c743cb-000e-0224-0002-411a0002529e: 510139 (0A000): SQL compilation error: SYSTEM$DATA_METRIC_SCAN
+      is not supported for RC_CAPABILITY_PROBE.PROBE.DMF_NULL_AMT.'
+  RETENTION_14_DAYS:
+    group: governance
+    available: false
+    why_it_matters: retention.landing_days / evidence_days in conf/profiles/demo.yml
+    statement: ALTER TABLE RC_CAPABILITY_PROBE.PROBE.RETENTION_T SET DATA_RETENTION_TIME_IN_DAYS = 14
+    failure_class: b_edition
+    error_code: 001048
+    error: '(1304): 01c743cb-000e-01f3-0002-411a00023936: 001048 (22023): SQL compilation error:
+
+      Exceeds maximum allowable retention time (1 day(s)).'
+  SNOWFLAKE.ML.ANOMALY_DETECTION:
+    group: ml
+    available: true
+    why_it_matters: Velocity anomaly baseline (ml.yml tier1.velocity_anomaly)
+    statement: CREATE OR REPLACE SNOWFLAKE.ML.ANOMALY_DETECTION RC_CAPABILITY_PROBE.PROBE.AD_MODEL(INPUT_DATA
+      => TABLE(RC_CAPABILITY_PROBE.PROBE.ML_SRC), TIMESTAMP_COLNAME => 'TS', TARGET_COLNAME => 'Y', LABEL_COLNAME
+      => '')
+  SNOWFLAKE.ML.FORECAST:
+    group: ml
+    available: true
+    why_it_matters: Not in Tier 1; probed to establish whether the ML class is gated as a whole
+    statement: CREATE OR REPLACE SNOWFLAKE.ML.FORECAST RC_CAPABILITY_PROBE.PROBE.FC_MODEL(INPUT_DATA =>
+      TABLE(RC_CAPABILITY_PROBE.PROBE.ML_SRC), TIMESTAMP_COLNAME => 'TS', TARGET_COLNAME => 'Y')
+  SNOWFLAKE.ML.CLASSIFICATION:
+    group: ml
+    available: false
+    why_it_matters: Deferred triage classifier (ml.yml future_scope.triage_classifier)
+    statement: CREATE OR REPLACE SNOWFLAKE.ML.CLASSIFICATION RC_CAPABILITY_PROBE.PROBE.CLS_MODEL(INPUT_DATA
+      => TABLE(SELECT F1, F2, LABEL FROM RC_CAPABILITY_PROBE.PROBE.CLS_SRC), TARGET_COLNAME => 'LABEL')
+    failure_class: a_absent
+    error_code: '398208'
+    error: '(1304): 01c743cc-000e-0224-0002-411a0002534a: 398208 (02000): CLASSIFICATION must have an
+      active version defined.'
+  SNOWFLAKE.ML.TOP_INSIGHTS:
+    group: ml
+    available: false
+    why_it_matters: Explains week-over-week alert-volume shifts (ml.yml future_scope)
+    statement: SELECT * FROM TABLE(SNOWFLAKE.ML.TOP_INSIGHTS(INPUT_DATA => SYSTEM$REFERENCE('VIEW', 'RC_CAPABILITY_PROBE.PROBE.CLS_SRC'),
+      LABEL_COLNAME => 'LABEL', METRIC_COLNAME => 'F1'))
+    failure_class: a_absent
+    error_code: '002143'
+    error: '(1304): 01c743cc-000e-01f3-0002-411a0002394a: 002143 (42601): SQL compilation error:
+
+      Unknown user-defined table function SNOWFLAKE.ML.TOP_INSIGHTS'
+  ML_MODEL_REGISTRY:
+    group: ml
+    available: true
+    why_it_matters: AUDIT.AGENT_ACTION_LOG.model_version provenance
+    statement: snowflake.ml.registry.Registry(...).log_model(LinearRegression(), ...)
+  ML_FEATURE_STORE:
+    group: ml
+    available: true
+    why_it_matters: Point-in-time-correct training sets (ml.yml future_scope.feature_store)
+    statement: snowflake.ml.feature_store.FeatureStore(...).register_feature_view(...)
+  CREATE_DYNAMIC_TABLE:
+    group: critical_path
+    available: true
+    why_it_matters: All 8 dynamic tables (diagram 4). The whole pipeline.
+    statement: CREATE OR REPLACE DYNAMIC TABLE RC_CAPABILITY_PROBE.PROBE.DT_PROBE TARGET_LAG = '1 minute'
+      WAREHOUSE = RC_DEV_WH_DEV REFRESH_MODE = INCREMENTAL INITIALIZE = ON_CREATE AS SELECT ID, AMT *
+      2 AS DOUBLED FROM RC_CAPABILITY_PROBE.PROBE.DT_SRC
+  DYNAMIC_TABLE_REFRESHES:
+    group: critical_path
+    available: true
+    why_it_matters: A dynamic table that does not refresh is a static table
+    statement: SELECT COUNT(*) FROM RC_CAPABILITY_PROBE.PROBE.DT_PROBE
+  STREAM_ON_DYNAMIC_TABLE:
+    group: critical_path
+    available: true
+    why_it_matters: SIGNALS_STREAM -> ROUTE_SIGNALS. The routing design depends on this.
+    statement: SELECT COUNT(*) FROM RC_CAPABILITY_PROBE.PROBE.DT_STREAM
+  CREATE_TASK_WAREHOUSE:
+    group: critical_path
+    available: true
+    why_it_matters: ROUTE_SIGNALS scheduling
+    statement: CREATE OR REPLACE TASK RC_CAPABILITY_PROBE.PROBE.T_WH WAREHOUSE = RC_DEV_WH_DEV SCHEDULE
+      = '1440 MINUTE' AS INSERT INTO RC_CAPABILITY_PROBE.PROBE.DT_SRC VALUES (99, 99)
+  CREATE_TASK_SERVERLESS:
+    group: critical_path
+    available: true
+    why_it_matters: Serverless avoids holding a warehouse for a 1-minute task
+    statement: CREATE OR REPLACE TASK RC_CAPABILITY_PROBE.PROBE.T_SRV USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE
+      = 'XSMALL' SCHEDULE = '1440 MINUTE' AS INSERT INTO RC_CAPABILITY_PROBE.PROBE.DT_SRC VALUES (98,
+      98)
+  EXECUTE_TASK:
+    group: critical_path
+    available: true
+    why_it_matters: Demo needs to force a run rather than wait for the schedule
+    statement: EXECUTE TASK RC_CAPABILITY_PROBE.PROBE.T_WH
+  PYTHON_STORED_PROCEDURE:
+    group: critical_path
+    available: true
+    why_it_matters: 8 agent tool procedures. Needs Anaconda ToS accepted by ORGADMIN.
+    statement: CALL RC_CAPABILITY_PROBE.PROBE.PY_PROBE()
+  SQL_STORED_PROCEDURE:
+    group: critical_path
+    available: true
+    why_it_matters: Fallback for the 8 procedures if Python is unavailable
+    statement: CALL RC_CAPABILITY_PROBE.PROBE.SQL_PROBE()
+  RECURSIVE_CTE:
+    group: critical_path
+    available: true
+    why_it_matters: Depth-3 mule-ring traversal
+    statement: WITH RECURSIVE walk (SRC, DST, DEPTH) AS ( SELECT SRC, DST, 1 FROM RC_CAPABILITY_PROBE.PROBE.EDGE
+      WHERE SRC = 'A' UNION ALL SELECT e.SRC, e.DST, w.DEPTH + 1 FROM RC_CAPABILITY_PROBE.PROBE.EDGE e
+      JOIN walk w ON e.SRC = w.DST WHERE w.DEPTH < 3) SELECT COUNT(*) FROM walk
+  MERGE_WITH_UNIQUE_CONSTRAINT:
+    group: critical_path
+    available: true
+    why_it_matters: Signal idempotency (Gap 11). Prevents duplicate SIGNAL/CASE rows.
+    statement: SELECT COUNT(*) FROM RC_CAPABILITY_PROBE.PROBE.SIGNAL_T
+  STREAMLIT:
+    group: critical_path
+    available: true
+    why_it_matters: The demo surface
+    statement: CREATE OR REPLACE STREAMLIT RC_CAPABILITY_PROBE.PROBE.PROBE_APP ROOT_LOCATION = '@RC_CAPABILITY_PROBE.PROBE.ST_STAGE'
+      MAIN_FILE = 'app.py' QUERY_WAREHOUSE = RC_DEV_WH_DEV
+  NOTIFICATION_INTEGRATION_EMAIL:
+    group: critical_path
+    available: true
+    why_it_matters: Case routing and notification dispatch (diagram 9)
+    statement: CREATE OR REPLACE NOTIFICATION INTEGRATION RC_PROBE_EMAIL TYPE = EMAIL ENABLED = TRUE
+  SEND_EMAIL:
+    group: critical_path
+    available: true
+    why_it_matters: An integration that cannot actually send is not a notification path
+    statement: CALL SYSTEM$SEND_EMAIL('RC_PROBE_EMAIL', (SELECT email FROM snowflake.account_usage.users
+      WHERE name = CURRENT_USER() AND deleted_on IS NULL LIMIT 1), 'risk-copilot capability probe', 'Sent
+      by scripts/probe_capabilities.py')
+  NETWORK_RULE:
+    group: critical_path
+    available: true
+    why_it_matters: Prerequisite for external access (Jira/Slack, diagram 13)
+    statement: CREATE OR REPLACE NETWORK RULE RC_CAPABILITY_PROBE.PROBE.PROBE_RULE MODE = EGRESS TYPE
+      = HOST_PORT VALUE_LIST = ('example.com:443')
+  EXTERNAL_ACCESS_INTEGRATION:
+    group: critical_path
+    available: false
+    why_it_matters: MCP / external loop closing (diagram 13)
+    statement: CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION RC_PROBE_EAI ALLOWED_NETWORK_RULES = (RC_CAPABILITY_PROBE.PROBE.PROBE_RULE)
+      ENABLED = TRUE
+    failure_class: c_trial
+    error_code: '509009'
+    error: '(1304): 01c743cd-000e-0224-0002-411a000253fe: 509009 (0A000): SQL compilation error: External
+      access is not supported for trial accounts.'

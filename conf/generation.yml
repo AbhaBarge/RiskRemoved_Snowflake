@@ -9,6 +9,34 @@
 seed: 20260922        # master seed; every sub-generator derives from it
 
 # ---------------------------------------------------------------------------
+# Source-data facts, MEASURED against the HI-Small files on 2026-09-26. Each
+# one contradicted an assumption in the original design; the generator asserts
+# them at run time rather than trusting this comment.
+#
+#   * Ledger span is 2022-09-01 .. 2022-09-18: 18 days, not 12 months.
+#   * 5,078,345 pairs; 5,177 carry is_laundering=1 (0.102%). Only 3,209 of those
+#     are attributed to an attempt in the Patterns file; the other 1,968 are
+#     labelled illicit with no typology.
+#   * Every one of the 3,209 Patterns rows matches exactly ONE ledger row, so
+#     label attribution is unambiguous (GAP-09's premise does not hold here).
+#   * Bank ids are zero-padded in Trans/Patterns and not in accounts; see
+#     risk_copilot.ids.normalise_bank_id.
+#   * 3,208 of 3,209 attributed illicit rows are ACH. No AMLworld typology
+#     exercises the CASH channel, so structuring can only be injected.
+# ---------------------------------------------------------------------------
+source:
+  # Bitcoin has no Indian-banking analogue: no FX rate, no rail. 146,091 pairs
+  # carry it as a payment format; a further ~2K carry it only as a currency.
+  # It touches 1 attributed illicit row (1 STACK attempt of 370).
+  exclude_payment_formats: [Bitcoin]
+  exclude_currencies: [Bitcoin]
+  # whole_pair_and_attempt: an excluded pair is dropped whole (never one leg,
+  # which would break money conservation), and any laundering attempt that
+  # contains a dropped pair is dropped whole -- a truncated cycle is not a
+  # cycle, and labelling half of one would corrupt per-typology recall.
+  exclusion_policy: whole_pair_and_attempt
+
+# ---------------------------------------------------------------------------
 # GAP-02 -- subgraph sampling.
 # AMLworld ships 518,581 accounts / ~700K entities. We do NOT generate parties
 # independently and hope they join: we sample a CONNECTED subgraph of the real
@@ -16,10 +44,16 @@ seed: 20260922        # master seed; every sub-generator derives from it
 # laundering attempts guarantees the illicit typologies survive sampling.
 # ---------------------------------------------------------------------------
 subgraph:
-  seed_source: laundering_patterns   # accounts named in HI-Small_Patterns.txt
+  # laundering_patterns -- seed from every account named in HI-Small_Patterns.txt
+  #                        (370 attempts, 3,170 accounts, 2,851 parties).
+  # injection_hosts     -- seed from the structuring cohort's host parties only.
+  #                        The dev thin slice uses this: its one rule is
+  #                        cash-based and no AMLworld typology uses cash.
+  seed_source: laundering_patterns
   expansion_hops: 2                  # BFS hops along the transaction graph
   target_parties: 5000
   target_accounts: 10000
+  # LEGS, not pairs: RAW_TRANSACTIONS is leg-level, so one pair costs two.
   max_transactions: 400000
   # A leg is kept only if BOTH sides resolve to a sampled account. Guarantees
   # referential integrity of counterparty_account_id by construction.
@@ -87,13 +121,28 @@ legs:
 # ---------------------------------------------------------------------------
 entities:
   faker_locale: hi_IN
+  # Keyed on the AMLworld entity_name prefix ("Corporation #33520"). Measured
+  # mix: Corporation 55,530 / Sole Proprietorship 55,369 / Partnership 55,170 /
+  # Individual 134 / Country 2 / Direct 2.
   party_type_from_entity_name:
     Corporation: LEGAL_PERSON
     Partnership: LEGAL_PERSON
-    "Sole Proprietorship": LEGAL_PERSON
+    # The RBI KYC Master Direction performs CDD on the proprietor as an
+    # individual, so a sole proprietorship is typed as one. Leaving it as a legal
+    # person made the customer base 99.9% companies (134 individuals in 166K).
+    "Sole Proprietorship": INDIVIDUAL
     Company: LEGAL_PERSON
     Individual: INDIVIDUAL
-  party_type_default: INDIVIDUAL
+    # Not customers. "Country #1" holds 6,677 accounts and 75% of Bitcoin flow;
+    # the previous default would have made it a single INDIVIDUAL party.
+    Country: EXTERNAL
+    Direct: EXTERNAL
+  # null: an unmapped prefix FAILS generation instead of being guessed. Every
+  # prefix present in the source is mapped above.
+  party_type_default: null
+  # Parties of these types, and every pair touching one of their accounts, are
+  # excluded under source.exclusion_policy.
+  excluded_party_types: [EXTERNAL]
 
   # Must match roles.branch_analysts keys in conf/base.yml. Drives RLS.
   branch_regions:
@@ -125,15 +174,31 @@ entities:
   # plausible coverage ratio, with lognormal noise. The illicit cohort then
   # deliberately under-declares, which is what the rule is supposed to find.
   # -------------------------------------------------------------------------
+  #
+  # The ledger spans 18 days, so there is no 12-month inflow to observe. The
+  # window's legit inflow is annualised by annualise_to_days / observed span,
+  # where the span is MEASURED from the sampled legs at run time, never written
+  # here. Measured effect: a legit party at median draws sits at an
+  # inflow-to-declared ratio of ~0.057 against INCOME_MISMATCH_MULTIPLE's 3.0,
+  # so noise alone does not fire the rule.
+  #
+  # ceiling_inr was REMOVED. Capping declared income below a party's real
+  # capacity manufactures a mismatch: at Rs 25 cr it would have flagged 9,755
+  # legit-only entities. Plausibility is reported by the income_calibration
+  # gate instead of being forced by a cap.
+  # -------------------------------------------------------------------------
   income:
-    derive_from: legit_inflow_12m
-    coverage_ratio_mean: 1.15        # declared ~= annual legit inflow / 1.15
+    derive_from: legit_inflow_window_annualised
+    annualise_to_days: 365
+    coverage_ratio_mean: 1.15        # declared ~= annualised legit inflow / 1.15
     coverage_ratio_sigma: 0.28
     noise_lognormal_sigma: 0.22
     floor_inr: 180000
-    ceiling_inr: 250000000
     round_to_inr: 10000
-    illicit_cohort_under_declare_factor: 0.35   # declare ~35% of true capacity
+    # UNCALIBRATED for an 18-day window: at 0.35 only 104 of 3,255 AMLworld
+    # launderers would fire. Recalibrated when INCOME_ACTIVITY_MISMATCH lands;
+    # it is not a thin-slice rule.
+    illicit_cohort_under_declare_factor: 0.35
 
   # -------------------------------------------------------------------------
   # GAP-05 -- shared device fingerprints must be co-located with existing fund
@@ -157,27 +222,77 @@ entities:
     fund_flow_min_txn_count: 2
 
 # ---------------------------------------------------------------------------
+# Institution-owned accounts.
+#
+# A cash deposit is Dr branch cash / Cr customer, which is how a core banking
+# system posts it. AMLworld has no such convention to borrow: all 490,891 of its
+# Cash rows are party-to-party payments. The cash desk is the ONE deliberate
+# exception to "never mint ids", and it is kept narrow:
+#
+#   * its ids still derive deterministically through risk_copilot.ids, from
+#     keys that cannot collide with AMLworld (bank ids there are numeric,
+#     entity ids hex; these contain letters and ':'),
+#   * it is written ONLY to ID_MAP_PARTY / ID_MAP_ACCOUNT, never to
+#     RAW_PARTY_CBS / RAW_PARTY_KYC / RAW_ACCOUNTS, so every customer-facing
+#     table excludes it by construction,
+#   * downstream, DT_PARTY_RELATIONSHIP must exclude src_bank_id below from
+#     FUND_FLOW, or the desk becomes a hub joining every depositor.
+# ---------------------------------------------------------------------------
+internal_accounts:
+  src_bank_id: INTERNAL
+  owner_entity_key: "INTERNAL:BANK"
+  cash_desk:
+    account_number_prefix: CASH_DESK   # -> CASH_DESK:<branch_region>
+    per: branch_region
+
+# ---------------------------------------------------------------------------
 # GAP-06/07 -- typology injection.
 # FX conversion alone cannot create Rs 9.4-9.8L clusters against a Rs 10L
 # trigger: structuring is INJECTED as a separate, explicitly labelled cohort.
 # Bands are expressed as fractions of the CTR threshold resolved from
 # GOVERNANCE.POLICY_CLAUSE (CTR_CASH_THRESHOLD), never as literals.
+#
+# AMOUNTS ARE DEFERRED. generate emits each injected deposit as a fraction of
+# the CTR threshold, not in rupees; `load` resolves
+#   amount_inr = ROUND(amount_ctr_ratio * threshold_lower, rounding_decimals)
+# by joining V_POLICY_CLAUSE_CURRENT on ctr_clause_id. The threshold therefore
+# really comes from POLICY_CLAUSE at runtime while generation stays offline.
+# The ratio lives in GROUND_TRUTH.INJECTED_TXN_PENDING, never in a RAW file:
+# a column present only on injected rows would be a label.
 # ---------------------------------------------------------------------------
 injection:
   structuring:
     enabled: true
     cohort_parties: 40
+    host_party_type: INDIVIDUAL
     accounts_per_party_min: 2
     accounts_per_party_max: 4
     deposits_per_account_min: 3
     deposits_per_account_max: 6
+    # Asserted to lie within STRUCTURING_BAND by the injection_band gate.
     amount_band_pct_of_ctr: [0.90, 0.985]
-    window_days: 21
+    # Was 21, which does not fit an 18-day ledger. Asserted <= the observed span
+    # and <= STRUCTURING_WINDOW_DAYS by the injection_window gate, so injected
+    # legs stay inside the real event clock.
+    window_days: 14
     channel: CASH
+    txn_type: DEPOSIT
+    debit_side: cash_desk            # see internal_accounts
+    amount_resolution: deferred_ctr_ratio
+    # Matches INJECTED_TXN_PENDING.amount_ctr_ratio NUMBER(12,10): sub-paise
+    # resolution at any plausible threshold, and exactly representable in Parquet.
+    amount_ctr_ratio_decimals: 10
+    ctr_clause_id: CTR_CASH_THRESHOLD
+    band_clause_id: STRUCTURING_BAND
+    window_clause_id: STRUCTURING_WINDOW_DAYS
+    min_accounts_clause_id: STRUCTURING_MIN_ACCOUNTS
+    typology_id: TYP_STRUCTURING
     label: reskin_structuring
 
+  # Not in the thin slice (S6): injection is structuring-only until the
+  # slice runs end to end. Disabled so generate never claims to have built them.
   rapid_credit_velocity:
-    enabled: true
+    enabled: false
     cohort_parties: 30
     remitters_min: 7
     remitters_max: 14
@@ -186,8 +301,11 @@ injection:
     window_days: 3
     label: reskin_mule_fan_in
 
+  # INFEASIBLE on this source as configured: 180 days of dormancy cannot exist
+  # in an 18-day ledger. Needs synthesised pre-window history or a shorter
+  # dormancy definition -- a decision, not a tweak.
   dormant_reactivation:
-    enabled: true
+    enabled: false
     cohort_parties: 20
     dormancy_days_min: 180
     burst_txn_count_min: 8
@@ -202,8 +320,35 @@ injection:
 validation:
   illicit_rate_pct:
     min: 0.10
-    max: 1.50
+    # Raised from 1.50 (decision 2026-09-26). Seeding the demo subgraph from
+    # laundering accounts concentrates illicit legs to ~2%; that is the known,
+    # accepted cost of guaranteeing every typology survives sampling.
+    max: 2.50
     fail_build: true
+  bank_id_resolution:
+    # Every sampled leg's (bank, account) must resolve to an owning entity.
+    # Catches a regression of the zero-padding defect immediately.
+    max_unresolved_legs: 0
+    fail_build: true
+  label_attribution:
+    # Measured 1:1 on the source. Asserted, so a different AMLworld revision
+    # that breaks it fails loudly instead of lowering match_confidence quietly.
+    require_unique_match: true
+    fail_build: true
+  id_map_one_to_one:
+    # A surrogate collision would merge two entities. Fail rather than merge.
+    fail_build: true
+  injection_window:
+    # window_days <= observed ledger span and <= STRUCTURING_WINDOW_DAYS.
+    fail_build: true
+  injection_band:
+    # amount_band_pct_of_ctr must lie within STRUCTURING_BAND, or the cohort
+    # is built to be undetectable.
+    fail_build: true
+  income_calibration:
+    # Reports the distribution of generated inflow-to-declared ratios. A
+    # property of the generated data, not a re-implementation of the rule.
+    fail_build: false
   money_conservation:
     # Every pair must have exactly one debit leg and one credit leg.
     max_unpaired_legs: 0
@@ -221,9 +366,23 @@ validation:
     max_power_law_alpha: 3.5
     fail_build: false
   label_leakage:
-    # V6: no label column may be reachable from the semantic view.
-    forbidden_columns: [is_laundering, is_illicit, typology_id, injection_method]
+    # V6: no label column may be reachable from the semantic view. Checked
+    # against every RAW output file.
+    forbidden_columns:
+      - is_laundering
+      - is_illicit
+      - typology_id
+      - injection_method
+      - amlworld_pattern
+      - attempt_id
+      - match_confidence
+      - amount_ctr_ratio
+      - cohort
     fail_build: true
+  # EVALUATED AFTER LOAD, in Snowflake, against the real detection SQL.
+  # Re-implementing the rules in Python to fake this offline would put
+  # detection logic outside Snowflake. Offline, generate checks only that each
+  # cohort was CONSTRUCTED to be detectable, and reports this gate as deferred.
   signal_yield:
     # Each Tier-1 rule must produce a non-trivial, non-absurd number of
     # detections, otherwise generation is miscalibrated (this is what catches

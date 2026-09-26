@@ -23,8 +23,16 @@ streams_tasks:
   route_signals_schedule: 60 minutes
 
 retention:
-  landing_days: 3
-  evidence_days: 3
+  # Capped at 1 day because the dev account is Standard edition, where 1 day is
+  # the maximum allowable Time Travel window -- anything higher is rejected at
+  # CREATE SCHEMA time ("Exceeds maximum allowable retention time"). Extended
+  # Time Travel needs Enterprise. Correctness is unaffected: the Reviewer reads
+  # EVIDENCE_QUERY_LOG.result_snapshot, and Time Travel is the demonstrable
+  # provenance layer on top of it. demo.yml still asks for 14 and is clamped at
+  # load time from the recorded probe evidence (config.py, RetentionClamp);
+  # doctor reports the reduction.
+  landing_days: 1
+  evidence_days: 1
 
 warehouses:
   pipeline:
@@ -34,11 +42,27 @@ warehouses:
 
 # Small sample for a fast build/test loop. Validation gates still run, so
 # calibration bugs surface here rather than at demo time.
+#
+# THIN SLICE (S6, decision 2026-09-26): dev seeds from the structuring cohort's
+# host parties, not from the 370 laundering attempts. The laundering seed set
+# alone is 2,851 parties -- 5.7x this budget -- and the slice's only rule is
+# cash-based while AMLworld laundering is 99.97% ACH, so no AMLworld typology
+# is needed to validate it. Switch seed_source back to laundering_patterns when
+# rules 2-6 land; nothing else changes.
 generation_overrides:
   subgraph:
+    seed_source: injection_hosts
     target_parties: 500
     target_accounts: 1000
     max_transactions: 40000
+  injection:
+    structuring:
+      # 40 parties x ~3 accounts x ~4.5 deposits x 2 legs is ~1,080 illicit legs
+      # in 40K, or ~2.7%: above the illicit_rate_pct ceiling. 10 lands ~0.7%.
+      cohort_parties: 10
+  demo_entity:
+    # The other listed rules do not exist in the slice yet.
+    must_trigger_rules: [STRUCTURING_CROSS_ACCOUNT]
   narratives:
     kyc_notes:
       count: 200
@@ -53,5 +77,7 @@ generation_overrides:
 ml_overrides:
   tier1:
     velocity_anomaly:
-      # 40K transactions over a small window cannot support a 45-day baseline.
+      # The source ledger spans 18 days in EVERY profile, so no profile can
+      # support the 45-day baseline yet (see conf/ml.yml). Disabled here to keep
+      # the dev deploy quiet; demo will surface the contradiction instead.
       enabled: false
