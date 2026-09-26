@@ -27,15 +27,19 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.compute as pc
+
 from risk_copilot.generation.source import (
     LEDGER_COLUMNS,
+    SRC_ROW_NUMBER,
     LedgerFormat,
     SourceError,
     source_dataset,
@@ -309,3 +313,80 @@ def load_patterns(data_root: Path, generation: Mapping[str, Any]) -> Patterns:
         attempts=ds.require("laundering_attempts"), rows=ds.require("illicit_transactions")
     )
     return patterns
+
+
+# --------------------------------------------------------------------------- #
+# Locating attempts in the ledger
+# --------------------------------------------------------------------------- #
+
+#: Ledger fields that form :data:`MatchKey`, in order.
+MATCH_KEY_COLUMNS = LEDGER_COLUMNS[:-1]
+
+
+def ledger_match_key(row: Mapping[str, Any]) -> MatchKey:
+    """The :data:`MatchKey` of a ledger row as returned by ``Table.to_pylist()``.
+
+    Ledger amounts carry the reader's scale (``2848.960000``) and Patterns amounts
+    the file's (``2848.96``). :class:`Decimal` equality and hashing are by value,
+    so the two keys match; floats would not be exact here.
+    """
+    return tuple(row[col] for col in MATCH_KEY_COLUMNS)
+
+
+@dataclass(frozen=True)
+class AttemptLocation:
+    """Where each Patterns row sits in the ledger.
+
+    ``matches`` maps a Patterns line number to every ``src_row_number`` whose full
+    :data:`MatchKey` equals that row's. Measured on HI-Small, every list has
+    exactly one element (M4). The counts are kept rather than asserted here so
+    the ``label_attribution`` gate can report them, and so ``labels`` can derive
+    ``match_confidence`` if a revision ever breaks uniqueness.
+    """
+
+    matches: Mapping[int, tuple[int, ...]]
+    #: ``src_row_number``s matched by a Patterns row but carrying
+    #: ``is_laundering = 0`` -- the two files would then contradict each other.
+    legit_matches: tuple[int, ...]
+
+    def src_rows(self, attempt: Attempt) -> tuple[int, ...]:
+        """Every ledger row matched by any row of ``attempt``, sorted."""
+        return tuple(sorted({n for row in attempt.rows for n in self.matches[row.line_number]}))
+
+    def match_counts(self) -> dict[int, int]:
+        """Number of Patterns rows per match count, e.g. ``{1: 3209}``."""
+        return dict(sorted(Counter(len(v) for v in self.matches.values()).items()))
+
+    def is_unique(self) -> bool:
+        """True when every Patterns row matches exactly one ledger row."""
+        return all(len(v) == 1 for v in self.matches.values())
+
+
+def locate_attempts(patterns: Patterns, ledger: pa.Table) -> AttemptLocation:
+    """Match every Patterns row against the whole ledger on the full key.
+
+    The ledger is first narrowed to rows sharing a Patterns timestamp and sender
+    account -- a necessary condition of a full-key match -- so only a few
+    thousand rows are keyed in Python rather than five million. Uniqueness is
+    therefore judged against the entire ledger, legit rows included.
+    """
+    rows = [row for attempt in patterns.attempts for row in attempt.rows]
+    timestamps = pa.array(sorted({r.txn_timestamp for r in rows}), type=pa.timestamp("s"))
+    senders = pa.array(sorted({r.from_account for r in rows}), type=pa.string())
+    mask = pc.and_(
+        pc.is_in(ledger["txn_timestamp"], value_set=timestamps),
+        pc.is_in(ledger["from_account"], value_set=senders),
+    )
+    candidates = ledger.filter(mask).select([SRC_ROW_NUMBER, *LEDGER_COLUMNS]).to_pylist()
+
+    index: dict[MatchKey, list[tuple[int, int]]] = defaultdict(list)
+    for cand in candidates:
+        index[ledger_match_key(cand)].append((cand[SRC_ROW_NUMBER], cand["is_laundering"]))
+
+    matches: dict[int, tuple[int, ...]] = {}
+    legit: set[int] = set()
+    for row in rows:
+        found = index.get(row.match_key(), [])
+        matches[row.line_number] = tuple(sorted(n for n, _ in found))
+        legit.update(n for n, label in found if label != 1)
+    return AttemptLocation(matches=matches, legit_matches=tuple(sorted(legit)))

@@ -80,7 +80,7 @@ def test_ledger_reads_every_row_positionally(
     amlworld_mini: Path, generation: dict[str, Any]
 ) -> None:
     table = load_ledger(amlworld_mini, generation)
-    assert table.num_rows == 14
+    assert table.num_rows == 16
     assert table.column_names == [SRC_ROW_NUMBER, *LEDGER_COLUMNS]
 
 
@@ -93,7 +93,7 @@ def test_duplicate_account_header_keeps_both_sides(amlworld_mini: Path, fmt: Led
 def test_src_row_number_is_the_one_based_data_row(amlworld_mini: Path, fmt: LedgerFormat) -> None:
     """Matches METADATA$FILE_ROW_NUMBER under SKIP_HEADER = 1 (measured, M16)."""
     table = read_ledger(_ledger_path(amlworld_mini), fmt)
-    assert table[SRC_ROW_NUMBER].to_pylist() == list(range(1, 15))
+    assert table[SRC_ROW_NUMBER].to_pylist() == list(range(1, 17))
     lines = _ledger_path(amlworld_mini).read_text(encoding="utf-8").splitlines()
     tenth = table.slice(9, 1).to_pylist()[0]
     assert lines[tenth[SRC_ROW_NUMBER]].startswith("2022/09/03 14:22,021174,8000A0060")
@@ -161,8 +161,8 @@ def test_label_outside_zero_one_fails(copy_root: Path, fmt: LedgerFormat) -> Non
 def test_row_count_is_asserted_against_the_manifest(
     copy_root: Path, generation: dict[str, Any]
 ) -> None:
-    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 14", "rows: 15")
-    with pytest.raises(SourceError, match="manifest declares 15"):
+    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 16", "rows: 99")
+    with pytest.raises(SourceError, match="manifest declares 99"):
         load_ledger(copy_root, generation)
 
 
@@ -183,7 +183,7 @@ def test_missing_file_fails(copy_root: Path) -> None:
 
 
 def test_declared_size_is_checked(copy_root: Path) -> None:
-    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 14", "rows: 14\n    bytes: 1")
+    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 16", "rows: 16\n    bytes: 1")
     with pytest.raises(SourceError, match="truncated"):
         dataset(copy_root, "amlworld_transactions")
 
@@ -201,7 +201,7 @@ def test_required_total_must_be_declared(copy_root: Path) -> None:
 
 def test_accounts_carry_the_entity_prefix(amlworld_mini: Path, generation: dict[str, Any]) -> None:
     table = load_accounts(amlworld_mini, generation)
-    assert table.num_rows == 15
+    assert table.num_rows == 17
     assert set(table[ENTITY_PREFIX].to_pylist()) == {
         "Corporation",
         "Sole Proprietorship",
@@ -235,8 +235,8 @@ def test_ownership_groups_accounts_by_entity(
     amlworld_mini: Path, generation: dict[str, Any]
 ) -> None:
     ownership = EntityOwnership(load_accounts(amlworld_mini, generation))
-    assert len(ownership) == 15
-    assert ownership.entity_count == 9
+    assert len(ownership) == 17
+    assert ownership.entity_count == 10
     assert ownership.accounts_of("800A00002") == (
         ("1", "8000A0021"),
         ("10", "8000A0020"),

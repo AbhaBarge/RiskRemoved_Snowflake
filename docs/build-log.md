@@ -17,12 +17,14 @@ at each step.
 | 0 | Pre-work: the two live config bugs (`ml.yml` edition gate, demo retention) | **Done** |
 | 1 | Contracts: bank-id normalisation, config corrections, typology seed, `INJECTED_TXN_PENDING` DDL, `.gitignore` | **Done** |
 | 2 | `patterns.py` + positional ledger reader | **Done** |
-| 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | Pending |
+| 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | **Done** -- illicit-rate calibration open (M18) |
 | 4 | `reskin.py` + `labels.py` | Pending |
 | 5 | `entities.py` + `relationships.py` | Pending |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | Pending |
 | 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+
+**Verification at the end of step 3:** `pytest -q` 269 passed in 37 s; ruff, mypy (15 files), lint and doctor (exit 0, 0 failed) clean.
 
 **Verification at the end of step 2:**
 
@@ -63,6 +65,8 @@ re-asserts them at run time. They are not only recorded here.
 | M14 | Amounts are **not** all 2 dp. Every value with more than 2 places is Bitcoin: 6 dp, on 148,151 received / 146,066 paid values. Non-Bitcoin amounts are always exactly 2 dp. Max integer part: 13 digits | pyarrow refused `decimal128(20,2)` ("rescaling would cause data loss"); fraction-digit counts per currency over all rows | Reader parses at `decimal128(20,6)`, from config. **`RAW_AMLWORLD_TRANS.amount_*` is `NUMBER(20,2)` and would round Bitcoin on COPY** -- see open items |
 | M15 | The ledger has 30,470 distinct bank ids after normalisation, none still padded. Accounts ids are never padded; `(bank_id, account_number)` is unique over all 518,581 rows; 166,207 entities, each with exactly one name, and every name has the form `<type> #<n>` | Full-file scans through `source.py` | The reader asserts each of these, so a changed revision fails at read time |
 | M16 | `METADATA$FILE_ROW_NUMBER` does **not** count a skipped header: with `SKIP_HEADER = 1` the first data row is 1 | A 3-row CSV on a temporary stage on ASHWINRAVI004, queried with `SKIP_HEADER` 0 and 1 | `src_row_number` = 1-based data-row ordinal, so labels join exactly onto the rows `load` copies into `RAW_AMLWORLD_TRANS` |
+| M17 | Accounts per entity are **heavy-tailed**: median 1; 102,689 entities have 1 account, 37,015 have 2-4, 22 have >1,000 (max 7,820). The launderers are the mega-entities: demo's 2,838 surviving seed parties own **96,886** accounts, while the attempts themselves touch only 3,156 | Group-by over the accounts file; seed set via `patterns.py` + `EntityOwnership` | Party-closed inclusion is impossible within a 10,000-account budget. Sampling is **account-level** (D13) |
+| M18 | Induced samples are far sparser than `max_transactions` assumes. **dev**: BFS saturates at 2 hops with no budget skip (450 parties / 502 accounts / 9,328 legs, 4 AMLworld illicit legs); 3 hops gives 687 accounts / 12,148 legs; 4 gives 857 / 13,634. **demo**: hits its budgets exactly (5,000 / 10,000) with all 369 surviving attempts captured, but only 66,223 pairs, **4.87% of them illicit before any injection** | `sample_subgraph` on the real files, per profile and hop count | Projected illicit rate vs the 2.50% ceiling. dev: expected 2.85% / worst 4.93% at 2 hops, 2.21% / 3.83% at 3, 1.97% / 3.43% at 4. demo: above the ceiling before injection. `test_dev_cohort_is_sized_for_the_illicit_rate_band` divides by `max_transactions` and is therefore optimistic. **Needs a decision** (open items) |
 
 ---
 
@@ -82,6 +86,9 @@ re-asserts them at run time. They are not only recorded here.
 | D10 | 09-26 | `party_type_default: null`, so an unmapped entity prefix fails generation | Build | Guessing INDIVIDUAL is what mis-typed `Country #1` |
 | D11 | 09-26 | `rapid_credit_velocity` and `dormant_reactivation` set `enabled: false` | Build | Not in the slice; dormancy is infeasible as configured (M2) |
 | D12 | 09-26 | Graph typologies carry `expected_rule_ids: []` | Build | Which rule catches a STACK is to be measured, not declared in advance |
+| D13 | 09-26 | Sampling is **account-level**: a party carries only its sampled accounts. Structuring hosts are the exception, seeded with all 2-4 of their accounts | Build | M17. It is also what §S5 #3 specified ("seed from the attempts' accounts"); a bank sees only the accounts it holds |
+| D14 | 09-26 | Structuring hosts are selected in `graph.py`, not `inject.py`, and are seeded in **both** seed modes. A host must be INDIVIDUAL, own 2-4 accounts, have no `is_laundering=1` pair anywhere in the ledger, and have at least `host_min_ledger_pairs` eligible pairs | Build | A host outside the sample cannot be injected. A tainted host would carry a second, unrelated label; an inactive one is an island. 12,048 entities qualify |
+| D15 | 09-26 | The worst-case injected legs are reserved from `max_transactions` before sampling. An attempt captured only partly is dropped whole (`partial_attempts: drop`). The leg cut ranks legitimate pairs by a hash of their **content**, protecting attempt and host pairs | Build | Keeps the leg budget hard, applies D9's reasoning to sampling truncation, and keeps the sample independent of the ledger's row order |
 
 ---
 
@@ -155,6 +162,44 @@ re-asserts them at run time. They are not only recorded here.
   - 3,170 seed accounts owned by 2,851 parties (M11)
   - every one of the 3,209 Patterns rows matches exactly 1 illicit ledger row (M4)
 
+### Step 3 -- subgraph sampling
+- `patterns.py`: `locate_attempts()` matches every Patterns row against the **whole** ledger on the full key. It pre-narrows by timestamp + sender, so only a few thousand rows are keyed in Python (0.5 s on the real data). `AttemptLocation` keeps the match counts and any legit-row matches for the `label_attribution` gate rather than asserting them. Real data: `{1: 3209}`, 0 legit matches.
+- `src/risk_copilot/generation/graph.py`, `sample_subgraph()`:
+  - vectorised exclusions with per-reason counts
+  - whole-attempt drop (D9)
+  - host selection (D14)
+  - seeds by mode
+  - account-level BFS (D13): `max_neighbours_per_account` ranked per edge by `stable_hash`, admission in hash order within hard party/account budgets
+  - induced pairs, partial-attempt drop and injection reserve (D15)
+  - content-ranked leg cut
+  - ID maps through `ids.party_id` / `ids.account_id`
+  - a `stats` block for the manifest
+
+  Only the implemented option of each policy is accepted (`seed_source` enum, `exclusion_policy`, `partial_attempts`, `require_both_legs_resolvable: true`, an enabled but unimplemented cohort); anything else fails.
+- `conf/generation.yml`: `subgraph.partial_attempts`, the account-level inclusion note (M17), `max_transactions` documented as including the injection reserve, `injection.structuring.host_requires_clean_history` / `host_min_ledger_pairs`.
+- Fixture: one clean SoleProp host (`800A0000A`, 2 accounts, 2 legit pairs) appended, so no existing row number moved.
+- Tests: `tests/unit/test_generation_graph.py` (26). The fixture's BFS is traced by hand in the module docstring and asserted pair by pair. Also covered:
+  - exclusion counts per reason
+  - whole-attempt drop
+  - host qualification
+  - both seed modes
+  - each hard budget
+  - the neighbour cap
+  - the leg-cut protection
+  - every unsupported setting
+  - ID derivation
+  - **order independence** (a shuffled ledger samples the same customers and transfer contents)
+  - seed sensitivity
+- **Real-data runs:**
+
+  | Profile | Time | Parties / accounts | Legs | Attempts captured | Illicit before injection |
+  |---|---|---|---|---|---|
+  | dev | 19 s | 450 / 502 | 9,328 | 0 (368 not sampled, 1 partial, 1 excluded) | 0.04% of pairs |
+  | demo | 21 s | 5,000 / 10,000 | 132,446 | 369 | **4.87%** of pairs |
+
+  Exclusions on the full ledger: 149,019 pairs (146,091 format, 148,204 currency, 110,612 party type; they overlap), 1 attempt. 12,048 entities qualify as hosts.
+- **Environment note:** two runs were 25-70x slower than their repeats: a 15.5-minute pytest (36 s on repeat) and a 944 s hop-4 sample (13 s under the profiler). Neither reproduced. Timings in this log are from the fast runs.
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
@@ -163,12 +208,19 @@ re-asserts them at run time. They are not only recorded here.
 | `income_rule_yield` gate | `income_calibration`, which reports the generated inflow-to-declared distribution | Counting would-fire parties means applying the rule's threshold in Python, the same objection as D7. The distribution is a property of the data; firing is checked after load |
 | "A ledger reader" (module unnamed) | `generation/source.py`, which also holds the accounts reader, the ownership map and manifest resolution | One module owns every positional source contract; `patterns.py` reuses its column tuple and format, so the two can't drift |
 | Plan step 7's fixture list included a SoleProp host | Added in step 2 | Costs nothing now, and step 3 needs it |
+| Plan left inclusion granularity open; step 3 first built party-closed inclusion | Account-level (D13) | M17: party-closed cannot fit any budget once launderers are seeded |
+| Plan puts host ranking in `inject.py` | `graph.py` (D14); `inject.py` consumes `Subgraph.hosts` | Sampling must know the hosts to seed them |
 
 ---
 
 ## Open items and risks
 
-- **Demo illicit rate** is expected around 2%, inside the new 2.50% ceiling (D6). It is measured when demo first runs.
+- **DECISION NEEDED -- illicit-rate calibration (M18).** Both profiles are projected to fail `illicit_rate_pct.max` (2.50%, D6):
+  - dev: expected 2.85% at 2 hops, falling to 2.21% at 3 hops and 1.97% at 4
+  - demo: 4.87% from AMLworld alone, before any injection
+
+  The levers are hops, cohort size, budgets, or the ceiling itself. The ceiling is a user decision (D6), so it is not changed here. Steps 4-7 do not depend on the answer; the gate measures the real rate in step 7.
+- **Demo illicit rate:** the D6 estimate of ~2% assumed a ~400K-leg demo sample; the measured sample is 132K legs and 4.87% illicit before injection (M18). Superseded by the decision item above.
 - **Income under-declare factor** is uncalibrated for 18 days (M12). Recalibrate when `INCOME_ACTIVITY_MISMATCH` lands.
 - **ML velocity baseline** needs 45 days; the source has 18 (M2). This needs a decision before Phase 5.
 - **Dormant reactivation** needs 180 days of dormancy (M2). It needs synthesised history or a redefinition before that cohort is built.

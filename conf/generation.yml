@@ -69,13 +69,30 @@ subgraph:
   target_parties: 5000
   target_accounts: 10000
   # LEGS, not pairs: RAW_TRANSACTIONS is leg-level, so one pair costs two.
+  # Includes injected legs: the worst case of every enabled cohort
+  # (parties x accounts_max x deposits_max x 2) is reserved from this budget
+  # before sampling, so the total can never exceed it.
   max_transactions: 400000
   # A leg is kept only if BOTH sides resolve to a sampled account. Guarantees
   # referential integrity of counterparty_account_id by construction.
   require_both_legs_resolvable: true
   # Cap on how much of one high-degree hub's neighbourhood is pulled in, so a
-  # single hub cannot dominate the sample.
+  # single hub cannot dominate the sample. Counts NEW neighbour accounts per
+  # frontier account, ranked by stable_hash -- never by file order.
   max_neighbours_per_account: 40
+  # Inclusion is ACCOUNT-level: a sampled party carries only its sampled
+  # accounts, as a bank sees only the accounts it holds. Party-closed inclusion
+  # was measured and rejected (M17): accounts per entity are heavy-tailed (22
+  # entities hold >1,000, max 7,820), and demo's laundering seeds alone would
+  # bring 96,886 accounts against a 10,000 budget. Structuring hosts are the one
+  # exception -- seeded with ALL their accounts, since the rule is cross-account.
+  #
+  # The budgets above are hard: a candidate that would exceed one is skipped,
+  # and a seed set that alone exceeds them fails the build rather than being
+  # subsampled. A laundering attempt that sampling captures only partly is
+  # dropped whole, for the reason source.exclusion_policy gives: a truncated
+  # cycle is not a cycle. Only `drop` is implemented.
+  partial_attempts: drop
 
 # ---------------------------------------------------------------------------
 # GAP-06 -- FX. A blanket x83 is wrong across 14 currencies. Rates are
@@ -280,6 +297,13 @@ injection:
     enabled: true
     cohort_parties: 40
     host_party_type: INDIVIDUAL
+    # Hosts are real AMLworld entities (M13), ranked by stable_hash and SEEDED
+    # into the subgraph in every profile -- a host outside the sample cannot be
+    # injected. A host with any is_laundering=1 pair would carry a second,
+    # unrelated label, so hosts must have a clean history; and it needs real
+    # traffic, or it is an isolated island in the sample.
+    host_requires_clean_history: true
+    host_min_ledger_pairs: 1
     accounts_per_party_min: 2
     accounts_per_party_max: 4
     deposits_per_account_min: 3

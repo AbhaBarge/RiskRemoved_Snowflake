@@ -77,7 +77,7 @@ BANK_COLUMNS = ("from_bank", "to_bank")
 
 #: "Corporation #33520" -> "Corporation". Every one of 518,581 names matches.
 _ENTITY_NAME_RE = re.compile(r"^(?P<prefix>\S.*?) #\d+$")
-_KEY_SEP = "\x1f"
+KEY_SEP = "\x1f"
 
 
 class SourceError(GenerationError):
@@ -240,7 +240,7 @@ def map_distinct(values: pa.ChunkedArray | pa.Array, fn: Callable[[str], str]) -
 
 def composite_key(bank: pa.ChunkedArray | pa.Array, account: pa.ChunkedArray | pa.Array) -> Any:
     """``bank \\x1f account`` per row, for vectorised uniqueness checks and joins."""
-    return pc.binary_join_element_wise(bank, account, _KEY_SEP)
+    return pc.binary_join_element_wise(bank, account, KEY_SEP)
 
 
 def read_ledger(path: Path, fmt: LedgerFormat, *, expected_rows: int | None = None) -> pa.Table:
@@ -307,7 +307,7 @@ def read_accounts(path: Path, *, expected_rows: int | None = None) -> pa.Table:
         raise SourceError(
             f"{path.name}: (bank_id, account_number) repeats after bank-id "
             f"normalisation, so ownership is ambiguous: "
-            f"{[v.replace(_KEY_SEP, '/') for v in dupes[:5].to_pylist()]}"
+            f"{[v.replace(KEY_SEP, '/') for v in dupes[:5].to_pylist()]}"
         )
 
     per_entity = table.group_by("entity_id").aggregate([("entity_name", "count_distinct")])
