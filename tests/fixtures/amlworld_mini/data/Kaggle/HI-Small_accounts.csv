@@ -1,0 +1,16 @@
+Bank Name,Bank ID,Account Number,Entity ID,Entity Name
+US Bank #10,10,8000A0010,800A00001,Corporation #1
+Portugal Bank #21174,21174,8000A0011,800A00001,Corporation #1
+US Bank #10,10,8000A0020,800A00002,Sole Proprietorship #2
+First Bank #1,1,8000A0021,800A00002,Sole Proprietorship #2
+UK Bank #20,20,8000A0022,800A00002,Sole Proprietorship #2
+UK Bank #20,20,8000A0030,800A00003,Partnership #3
+First Bank #1,1,8000A0040,800A00004,Individual #4
+India Bank #70,70,8000A0041,800A00004,Individual #4
+India Bank #70,70,8000A0050,800A00005,Country #1
+Portugal Bank #21174,21174,8000A0060,800A00006,Sole Proprietorship #6
+UK Bank #20,20,8000A0061,800A00006,Sole Proprietorship #6
+US Bank #10,10,8000A0070,800A00007,Corporation #7
+First Bank #1,1,8000A0080,800A00008,Direct #1
+Portugal Bank #21174,21174,8000A0090,800A00009,Partnership #9
+India Bank #70,70,8000A0070,800A00009,Partnership #9

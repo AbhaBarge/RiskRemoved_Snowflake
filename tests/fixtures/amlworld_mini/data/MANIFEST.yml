@@ -1,0 +1,36 @@
+# ===========================================================================
+# tests/fixtures/amlworld_mini -- hand-built AMLworld slice for unit tests
+# ===========================================================================
+# Same shape as data/MANIFEST.yml so the generator reads it through the same
+# code path. `bytes` is omitted on purpose: git may rewrite line endings on
+# checkout, and the readers are tested to accept LF and CRLF alike.
+#
+# What each file exercises:
+#   * padded bank ids in Trans/Patterns (010, 001, 021174), unpadded in accounts
+#   * a colon-less BEGIN header (STACK)
+#   * a Bitcoin row inside an attempt (STACK, line 8), 6 decimal places
+#   * Country / Direct entities (non-customers -> EXTERNAL)
+#   * a cross-currency pair (CYCLE: 1000.00 US Dollar paid, 82500.00 Rupee received)
+#   * Sole Proprietorship hosts with 2-3 accounts
+#   * account number 8000A0070 at two banks, owned by different entities
+#   * one illicit ledger row no attempt attributes (2022/09/04 07:35)
+# ===========================================================================
+
+manifest_version: 1
+
+datasets:
+  amlworld_transactions:
+    path: data/Kaggle/HI-Small_Trans.csv
+    required: true
+    rows: 14
+
+  amlworld_accounts:
+    path: data/Kaggle/HI-Small_accounts.csv
+    required: true
+    rows: 15
+
+  amlworld_patterns:
+    path: data/Kaggle/HI-Small_Patterns.txt
+    required: true
+    laundering_attempts: 3
+    illicit_transactions: 7

@@ -35,6 +35,21 @@ source:
   # contains a dropped pair is dropped whole -- a truncated cycle is not a
   # cycle, and labelling half of one would corrupt per-typology recall.
   exclusion_policy: whole_pair_and_attempt
+  # data/MANIFEST.yml keys for each source role. Row and attempt totals are
+  # asserted against the manifest entries, never against literals in code.
+  datasets:
+    ledger: amlworld_transactions
+    accounts: amlworld_accounts
+    patterns: amlworld_patterns
+  # File-format facts, measured 2026-09-26 (build log M14-M16).
+  ledger:
+    timestamp_format: "%Y/%m/%d %H:%M"
+    # Every non-Bitcoin amount carries exactly 2 decimal places; Bitcoin carries
+    # 6 (148,151 received / 146,066 paid values). Parsed at scale 6 so nothing is
+    # rounded on read -- the reader FAILS rather than rescale if a later revision
+    # carries more. Max integer part is 13 digits, so precision 20 has headroom.
+    amount_precision: 20
+    amount_scale: 6
 
 # ---------------------------------------------------------------------------
 # GAP-02 -- subgraph sampling.

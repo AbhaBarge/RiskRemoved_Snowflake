@@ -16,7 +16,7 @@ at each step.
 |---|---|---|
 | 0 | Pre-work: the two live config bugs (`ml.yml` edition gate, demo retention) | **Done** |
 | 1 | Contracts: bank-id normalisation, config corrections, typology seed, `INJECTED_TXN_PENDING` DDL, `.gitignore` | **Done** |
-| 2 | `patterns.py` + positional ledger reader | Pending |
+| 2 | `patterns.py` + positional ledger reader | **Done** |
 | 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | Pending |
 | 4 | `reskin.py` + `labels.py` | Pending |
 | 5 | `entities.py` + `relationships.py` | Pending |
@@ -24,16 +24,18 @@ at each step.
 | 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
 
-**Verification at the end of step 1:**
+**Verification at the end of step 2:**
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 191 passed (baseline 125) |
+| `pytest -q` | 243 passed in 31 s (step 1: 191) |
 | `ruff check src tests` | clean |
-| `mypy src` (strict) | clean |
+| `mypy src` (strict) | clean, 14 source files |
 | `risk_copilot.pipeline.lint .` | dev + demo, 6 templates each, all render |
 | `doctor --profile dev` | exit 0, 0 failed |
-| `deploy --stage ddl` on dev | 44 statements, ok, run twice, idempotent |
+| Real-data smoke (readers on the full HI-Small files) | M1, M2, M3, M4, M11 reproduced through the generator's own code; see step 2 below |
+
+Step 1 also passed `deploy --stage ddl` on dev (44 statements, run twice, idempotent). Step 2 changed no SQL.
 
 ---
 
@@ -58,6 +60,9 @@ re-asserts them at run time. They are not only recorded here.
 | M11 | The laundering seed set is 3,170 accounts owned by **2,851** parties; dev's budget is 500 | Corrected parser + accounts join | Dev seeds from cohort hosts instead (decision D3) |
 | M12 | Income under annualisation: a legit party at median draws sits at ratio **0.057** vs the trigger of 3.0. `ceiling_inr` would falsely flag **9,755** legit-only entities. The 0.35 under-declare factor catches **104 / 3,255** launderers | Legit/illicit inflow per entity, whole ledger | Ceiling removed. Under-declare factor marked uncalibrated until the income rule lands |
 | M13 | 37,015 entities have 2-4 accounts; after D5, 12,452 of them are individuals | Accounts file | Enough real hosts for the structuring cohort; no ids minted |
+| M14 | Amounts are **not** all 2 dp. Every value with more than 2 places is Bitcoin: 6 dp, on 148,151 received / 146,066 paid values. Non-Bitcoin amounts are always exactly 2 dp. Max integer part: 13 digits | pyarrow refused `decimal128(20,2)` ("rescaling would cause data loss"); fraction-digit counts per currency over all rows | Reader parses at `decimal128(20,6)`, from config. **`RAW_AMLWORLD_TRANS.amount_*` is `NUMBER(20,2)` and would round Bitcoin on COPY** -- see open items |
+| M15 | The ledger has 30,470 distinct bank ids after normalisation, none still padded. Accounts ids are never padded; `(bank_id, account_number)` is unique over all 518,581 rows; 166,207 entities, each with exactly one name, and every name has the form `<type> #<n>` | Full-file scans through `source.py` | The reader asserts each of these, so a changed revision fails at read time |
+| M16 | `METADATA$FILE_ROW_NUMBER` does **not** count a skipped header: with `SKIP_HEADER = 1` the first data row is 1 | A 3-row CSV on a temporary stage on ASHWINRAVI004, queried with `SKIP_HEADER` 0 and 1 | `src_row_number` = 1-based data-row ordinal, so labels join exactly onto the rows `load` copies into `RAW_AMLWORLD_TRANS` |
 
 ---
 
@@ -117,12 +122,47 @@ re-asserts them at run time. They are not only recorded here.
 
 ---
 
+### Step 2 -- source layer
+- `src/risk_copilot/generation/__init__.py`: the package and `GenerationError`.
+- `src/risk_copilot/generation/source.py`:
+  - manifest resolution: `dataset()` and `source_dataset()` check presence and declared size; `Dataset.require()` fails when a total the generator asserts is undeclared
+  - `read_ledger()`: positional, with the header **asserted**, bank ids normalised through `ids.normalise_bank_id` itself (applied per distinct value, not re-implemented), amounts as `decimal128`, `is_laundering` checked to be in {0, 1}, no nulls, row count checked against the manifest, `src_row_number` prepended (M16)
+  - `read_accounts()` + `EntityOwnership`: ownership map with a normalising lookup, accounts per entity, entity prefix, `party_type()` (fails on an unmapped prefix, D10); asserts key uniqueness after normalisation and one name per entity (M15)
+- `src/risk_copilot/generation/patterns.py`:
+  - strict block grammar: optional `:` detail (M3); BEGIN and END typology must match; unclosed block, nested BEGIN, END without BEGIN, empty attempt, row outside a block, blank line inside a block, wrong field count, non-illicit row, non-plain amount and bad timestamp all fail with `file:line`
+  - `attempt_id` is the 1-based block position; each row keeps its line number and raw text for `RAW_LAUNDERING_PATTERNS.txn_data`
+  - `match_key()` is the full 10-field identity, built exactly like a ledger row's
+  - `seed_accounts()`; totals asserted against `laundering_attempts` / `illicit_transactions` in the manifest
+- `src/risk_copilot/config.py`: `data_manifest_file()`, the single path owner; `doctor.py` uses it.
+- `conf/generation.yml`: `source.datasets` (manifest key per role) and `source.ledger` (timestamp format, amount precision and scale, M14).
+- Fixture `tests/fixtures/amlworld_mini/`: 14 ledger rows, 15 accounts, 3 attempts / 7 rows. It covers:
+  - padded bank ids
+  - a colon-less STACK header
+  - a Bitcoin row (6 dp) inside an attempt
+  - Country and Direct entities
+  - a cross-currency Wire pair
+  - SoleProp hosts with 2-3 accounts
+  - one account number at two banks with different owners
+  - one unattributed illicit row
+  
+  The fixture is pinned to LF with `.gitattributes`; CRLF is tested on a converted copy.
+- Tests: `tests/unit/test_generation_source.py` (26), `tests/unit/test_generation_patterns.py` (26).
+- **Real-data smoke run** through the new readers:
+  - patterns: 0.1 s; 370 attempts / 3,209 rows; the 8 typologies with the M3 counts; 3 without detail
+  - ledger: 2.2 s, 643 MB in memory; 5,078,345 rows; span 2022-09-01 00:00 to 2022-09-18 16:18; 5,177 illicit
+  - accounts: 2.6 s; 518,581 accounts / 166,207 entities
+  - **0 unresolved pairs** of 5,078,345 (M1)
+  - 3,170 seed accounts owned by 2,851 parties (M11)
+  - every one of the 3,209 Patterns rows matches exactly 1 illicit ledger row (M4)
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
 |---|---|---|
 | Add `internal_party_id` / `internal_account_id` to `ids.py` | Not added. The cash desk derives through the existing `party_id("INTERNAL:BANK")` and `account_id("INTERNAL", "CASH_DESK:<region>")` | Same determinism with less surface. The keys cannot collide with AMLworld's (numeric bank ids, hex entity ids; these contain letters and `:`), and `normalise_bank_id` leaves non-numeric ids intact. The combined 1:1 gate still covers collisions |
 | `income_rule_yield` gate | `income_calibration`, which reports the generated inflow-to-declared distribution | Counting would-fire parties means applying the rule's threshold in Python, the same objection as D7. The distribution is a property of the data; firing is checked after load |
+| "A ledger reader" (module unnamed) | `generation/source.py`, which also holds the accounts reader, the ownership map and manifest resolution | One module owns every positional source contract; `patterns.py` reuses its column tuple and format, so the two can't drift |
+| Plan step 7's fixture list included a SoleProp host | Added in step 2 | Costs nothing now, and step 3 needs it |
 
 ---
 
@@ -136,5 +176,6 @@ re-asserts them at run time. They are not only recorded here.
   - `load` must run after the `policy` seed stage (D2)
   - `DT_PARTY_RELATIONSHIP` must exclude `internal_accounts.src_bank_id` from FUND_FLOW (D4)
   - ground-truth files need a stage the service role cannot read
-- **Commit pending:** `conf/generated/capabilities.ASHWINRAVI004.yml` is now trackable but **not committed**. It holds the account locator, user name and credit balance, and no credentials. It is committed only on request.
+- **Phase 3 obligation (M14):** `RAW_AMLWORLD_TRANS.amount_received` / `amount_paid` are `NUMBER(20,2)`, so COPY would round Bitcoin's 6 dp values (`0.025852` -> `0.03`) in a table documented as verbatim. Snowflake cannot change a NUMBER column's scale in place, so the fix is `NUMBER(20,6)` in the DDL plus a drop and re-create of the (empty) dev table. That is a destructive step, so it is left for `load` and not applied now. Generated RAW tables are unaffected: Bitcoin is excluded before reskin (D9).
+- **Commits:** everything without a credential is committed at the user's standing request, on `feature/ashwinAnalyze`, not pushed (`b8b94b4`, `85c862c`, then one commit per step). Before each commit, the actual secret values from `.env`, `connections.toml` and the key file are compared against every staged file; counts only are printed. `.env` stays gitignored.
 - **`docs/enhanced-architecture-diagrams.md` §S4/§S5** still state 0.063% and assume label ambiguity. Corrected in step 8, once the dev run confirms M4/M5 through the generator itself.

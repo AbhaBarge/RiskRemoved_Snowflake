@@ -18,6 +18,15 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture
+def amlworld_mini() -> Path:
+    """Data root of the hand-built AMLworld slice (``data/MANIFEST.yml`` beneath it).
+
+    Stands in for the 950 MB source files, so no unit test depends on them.
+    """
+    return Path(__file__).resolve().parent / "fixtures" / "amlworld_mini"
+
+
 @pytest.fixture(autouse=True)
 def _clear_rc_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove ``RC_*`` variables so a developer's shell cannot alter results.

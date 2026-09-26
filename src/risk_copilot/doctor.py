@@ -30,7 +30,7 @@ from risk_copilot.capabilities import (
     load_capabilities,
     on_unavailable_policy,
 )
-from risk_copilot.config import Settings
+from risk_copilot.config import Settings, data_manifest_file
 from risk_copilot.session import SessionError, build_connect_params, execute, fetch_scalar
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,7 @@ def check_data(settings: Settings, report: Report, *, verify_checksums: bool = F
     run once after acquiring the files.
     """
     g = "data"
-    manifest_path = settings.repo_root / "data" / "MANIFEST.yml"
+    manifest_path = data_manifest_file(settings.repo_root)
     if not manifest_path.is_file():
         report.add(g, "manifest", Status.FAIL, f"Not found: {manifest_path}")
         return

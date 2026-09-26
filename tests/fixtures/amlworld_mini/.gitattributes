@@ -1,0 +1,3 @@
+# The fixture's line endings are part of what the tests pin (LF on disk; CRLF is
+# exercised by writing a converted copy). Stop core.autocrlf rewriting them.
+* -text

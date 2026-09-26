@@ -145,6 +145,11 @@ def capabilities_file(repo_root: Path, connection: str) -> Path:
     return repo_root / "conf" / "generated" / f"capabilities.{connection}.yml"
 
 
+def data_manifest_file(repo_root: Path) -> Path:
+    """The source dataset registry. ``doctor`` and ``generate`` both read it."""
+    return repo_root / "data" / "MANIFEST.yml"
+
+
 def _retention_ceiling(repo_root: Path, connection: str) -> tuple[int, dict[str, str]] | None:
     """Return the account's Time Travel cap in days, with the evidence for it.
 
