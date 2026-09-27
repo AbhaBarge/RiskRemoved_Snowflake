@@ -122,13 +122,21 @@ def test_unknown_stage_is_rejected(deployer: Deployer) -> None:
         deployer.stage_files("nonexistent")
 
 
+def _code(statement: str) -> str:
+    """A statement without its leading comment lines, whitespace-normalised, upper-case."""
+    lines = [line for line in statement.splitlines() if not line.strip().startswith("--")]
+    return " ".join(" ".join(lines).split()).upper()
+
+
 def test_all_ddl_statements_are_idempotent(deployer: Deployer) -> None:
     # Re-running a stage is the normal way to apply a change, so it must never be
-    # a destructive act.
+    # a destructive act. Leading comments are stripped first: every statement in
+    # these files opens with its header comment, and a check on the raw text
+    # would never see the CREATE behind it.
     for stage in ("bootstrap", "ddl", "dynamic_tables", "streams_tasks", "policy"):
         for path in deployer.stage_files(stage):
             for statement in split_statements(deployer.render(path)):
-                head = " ".join(statement.split()).upper()
+                head = _code(statement)
                 if head.startswith(("DROP ", "TRUNCATE ", "DELETE ")):
                     raise AssertionError(f"{path.name}: destructive statement: {head[:110]}")
                 if not head.startswith("CREATE"):
@@ -150,10 +158,7 @@ def test_ground_truth_stage_is_granted_to_nobody(deployer: Deployer) -> None:
     for key, _ in STAGE_ORDER:
         for path in deployer.stage_files(key):
             for statement in split_statements(deployer.render(path)):
-                head = " ".join(
-                    line for line in statement.splitlines() if not line.strip().startswith("--")
-                ).upper()
-                head = " ".join(head.split())
+                head = _code(statement)
                 if head.startswith("CREATE STAGE") and stage in head:
                     created += 1
                 elif head.startswith("GRANT") and ctx["fq"]["ground_truth"] in head:

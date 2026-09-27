@@ -135,6 +135,7 @@ re-asserts them at run time. They are not only recorded here.
 | D30 | 09-27 | **Cash is a deposit only:** a Cash pair becomes the single pair *payee's desk -> payee*, both legs DEPOSIT. The payer's side is not booked. Supersedes D27's first build (payer -> desk + desk -> payee) | **User** ("we genuinely don't know where that cash came from") | M24: booking the payer's withdrawal left a perfect twin. The payer-to-payee link survives only via `TXN_LABELS.src_row_number` -> `RAW_AMLWORLD_TRANS`; costs listed in step 1 below |
 | D31 | 09-27 | Desk-routed deposits are always in INR (`retain_foreign_pct` does not apply to them) | Build, within the residual-tell scan | M26; an over-the-counter deposit at an Indian branch credits rupees |
 | D32 | 09-27 | Dynamic-table lags: `dim_party`, `party_relationship` -> `DOWNSTREAM`; `txn_daily_agg` gets a real lag equal to `signals_fast` (dev 60 min, demo 5 min). Each table declares `upstream`, and the config refuses to load a graph with a table fresher than its upstream, a `DOWNSTREAM` table nobody reads, a cycle or an unknown name | Build (plan P2, P3) | Snowflake rejects the first at CREATE and never refreshes the second, silently. A check at load keeps the next edit from reintroducing either |
+| D33 | 09-27 | The policy seed is **insert-only for versioned governed rows** (POLICY_CLAUSE, RULE_DEFINITION): a live row that differs from `conf/detection.yml` fails the deploy before anything is written. TYPOLOGY and REF_CHANNEL are unversioned reference data and upserted. RULE_DEFINITION lists only rules whose SQL is built (STRUCTURING_CROSS_ACCOUNT) | Build | Editing the seed and redeploying must not be a way round the clause-versioning gate. A registry row for an unbuilt rule would let a finding cite logic nobody wrote |
 
 ---
 
@@ -440,8 +441,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 |---|---|---|
 | 1 | Close the cash-desk tell in the generator (D27, D30), residual-tell scan (D29, D31), M18 test | **Done** |
 | 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | **Done** |
-| 3 | `policy` seed stage | Next |
-| 4 | `riskcopilot load` | |
+| 3 | `policy` seed stage | **Done** |
+| 4 | `riskcopilot load` | Next |
 | 5 | Dynamic tables for the structuring slice | |
 | 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | |
 | 7 | Post-load verify: signal_yield, hero promotion | |
@@ -549,3 +550,45 @@ Tests that had counted the desk as a customer were corrected: the eval-grain leg
 **Departures:** the plan's step-2 config additions were moved to the steps that consume them (above). M27 was not in the plan; found by inspecting the live stage owners before `load` depends on them.
 
 **Verification:** 387 passed; ruff, mypy (27 files), lint clean; `doctor --profile dev` exit 0, 0 failed.
+
+## Step 3 -- the `policy` seed stage (D33)
+
+**What changed**
+- `conf/detection.yml`:
+  - new `rules` block: STRUCTURING_CROSS_ACCOUNT v1, TYP_STRUCTURING, its 4 clauses, PARTY_WINDOW, `window_clause_id: STRUCTURING_WINDOW_DAYS`, `window_anchor: "1970-01-01"`;
+  - new `channels` block: the 6 rails, CASH the only `is_cash`, `typical_max_inr` null rather than quoted from memory.
+- New `src/risk_copilot/policy.py`:
+  - `sql_literal(value, type)` is the one escaping function. It doubles quotes and backslashes, casts every literal (so an all-NULL column keeps its type in the UNION ALL), and writes numbers through `Decimal(str())` so `0.999` stays `0.999`.
+  - `policy_seed(detection)` validates, then returns `{table: [{column: literal}]}`. It refuses a clause without `provenance.source_document`, a rule with no/unknown clauses, an unknown typology, a missing severity, a bad grain or window clause, duplicate keys, and an empty block.
+  - `RULE_DEFINITION.window_bucket_expr` names the anchor and the window clause, never the length.
+- `config.sql_context()` exposes `policy_seed`; `sql/README.md` documents it as usable by `05_policy` only.
+- New `sql/05_policy/01_seed.sql`:
+  - each table's rows go into a session TEMPORARY table;
+  - for POLICY_CLAUSE and RULE_DEFINITION, a Snowflake Scripting drift check raises -20001 / -20002 before the insert-only MERGE;
+  - TYPOLOGY and REF_CHANNEL are MERGE-upserted;
+  - RULE_DEFINITION is written after TYPOLOGY, because the foreign key is not enforced.
+  - `rule_sql_hash` is left NULL here; it is bound when the rule's SQL is deployed (step 5).
+- **Test fix found on the way:** the idempotency test compared the *raw* statement text, and every statement in these files opens with its header comment, so `startswith("CREATE")` never matched and the check had been vacuous. It now strips leading comment lines. Re-run over bootstrap and DDL, it still passes: every CREATE there was idempotent.
+
+**Live, on RISK_COPILOT_DEV**
+- `deploy --stage policy` run twice: 11 statements ok both times. The second run's drift checks passed, so live equals seed.
+- Counts: 15 clauses, 11 typologies, 1 rule, 6 channels. `V_POLICY_CLAUSE_CURRENT` returns 15 rows, one of them CTR.
+- The CTR row equals the seed on threshold (1,000,000), source document and effective date. STRUCTURING_BAND is [0.9000, 0.9990].
+- CASH is the only `is_cash` channel.
+- The RULE_DEFINITION row carries its 4 clause ids as an ARRAY, severity HIGH, and the bucket expression.
+- **The drift check was proved to fire.** A seed rendered with the CTR threshold changed to 900,000 was loaded into the temporary table and only the drift block was run: it raised -20001. The live CTR stayed 1,000,000; no MERGE ran.
+
+**Tests:** 417 passed (387 before). New `tests/unit/test_policy_seed.py` (30):
+- literal escaping (quotes, backslashes, float exactness, dates, arrays, typed NULL) and type refusal;
+- one row per config entry (15 clauses);
+- provenance and exact threshold carried;
+- only built rules registered;
+- every rule governed;
+- 10 refusal cases;
+- every channel `generation.yml` can emit is catalogued, and the injected channel is `is_cash`;
+- one SELECT per row, on its own line (a lost newline had fused rows at first render);
+- **no other stage's rendered SQL carries a threshold value.**
+
+**Departure:** `window_clause_id` was added to the rule, so the bucket expression names its clause explicitly instead of the code guessing which of the four it is.
+
+**Verification:** 417 passed; ruff, mypy (28 files), lint (dev + demo, 7 templates each) clean; `doctor --profile dev` exit 0, 0 failed.

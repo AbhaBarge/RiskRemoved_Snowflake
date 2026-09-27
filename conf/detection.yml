@@ -306,6 +306,54 @@ typologies:
   - { typology_id: TYP_AML_RANDOM,         name: random_walk,    amlworld_pattern: RANDOM,         detection_approach: graph, injection_label: amlworld_original, expected_rule_ids: [], fatf_reference: null, rbi_reference: null, description: Funds moved along a random path of hops. }
 
 # ---------------------------------------------------------------------------
+# Rule registry -- seed for GOVERNANCE.RULE_DEFINITION.
+#
+# Only rules whose detection SQL is BUILT are listed: a registry row for a rule
+# that does not exist would let a finding cite logic nobody wrote. Each rule
+# names the clauses it implements (a rule with none is ungoverned and fails the
+# deploy) and takes its severity from `severity` below.
+#
+# The seed is insert-only for a (rule_id, rule_version) that already exists; if
+# the live row differs from this file the deploy FAILS instead of overwriting it.
+# Changing a rule means a new rule_version, so past signals keep the version
+# that fired (EVIDENCE_CHAIN.SIGNAL.rule_version).
+# ---------------------------------------------------------------------------
+rules:
+  - rule_id: STRUCTURING_CROSS_ACCOUNT
+    rule_version: 1
+    typology_id: TYP_STRUCTURING
+    clause_ids: [CTR_CASH_THRESHOLD, STRUCTURING_BAND, STRUCTURING_MIN_ACCOUNTS, STRUCTURING_WINDOW_DAYS]
+    description: >
+      One party receives cash deposits within STRUCTURING_BAND of the CTR
+      threshold into at least STRUCTURING_MIN_ACCOUNTS distinct accounts within
+      one STRUCTURING_WINDOW_DAYS observation window.
+    detection_grain: PARTY_WINDOW
+    # Observation windows are tumbling, window_clause_id's threshold_lower days
+    # long, counted from window_anchor. The Unix epoch is used because it is not
+    # a choice that could be tuned to the data. With the current 30-day clause,
+    # the window holding 2022-09-01 runs 2022-08-26..09-24 (bucket 641), so the
+    # whole 10-day legit window falls inside a single bucket.
+    window_clause_id: STRUCTURING_WINDOW_DAYS
+    window_anchor: "1970-01-01"
+    is_active: true
+    admissible_as_primary_evidence: true
+
+# ---------------------------------------------------------------------------
+# Payment rails -- seed for GOVERNANCE.REF_CHANNEL. Every channel that
+# conf/generation.yml can emit must be listed (asserted by a test).
+# is_cash decides CTR applicability: a wrong value silently changes which
+# transactions are reportable. typical_max_inr is left null rather than quoted
+# from memory.
+# ---------------------------------------------------------------------------
+channels:
+  - { channel_code: CASH,   channel_name: Cash at branch counter,                 is_cash: true,  is_instant: true,  typical_max_inr: null }
+  - { channel_code: UPI,    channel_name: Unified Payments Interface,             is_cash: false, is_instant: true,  typical_max_inr: null }
+  - { channel_code: IMPS,   channel_name: Immediate Payment Service,              is_cash: false, is_instant: true,  typical_max_inr: null }
+  - { channel_code: NEFT,   channel_name: National Electronic Funds Transfer,     is_cash: false, is_instant: false, typical_max_inr: null }
+  - { channel_code: RTGS,   channel_name: Real Time Gross Settlement,             is_cash: false, is_instant: true,  typical_max_inr: null }
+  - { channel_code: CHEQUE, channel_name: Cheque clearing,                        is_cash: false, is_instant: false, typical_max_inr: null }
+
+# ---------------------------------------------------------------------------
 # Severity mapping: rule -> signal severity. Drives ROUTE_SIGNALS case
 # creation and the Sentinel triage ordering.
 # ---------------------------------------------------------------------------

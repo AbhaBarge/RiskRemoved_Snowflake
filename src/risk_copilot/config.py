@@ -809,7 +809,18 @@ class Settings(BaseModel):
             # names, model names). Thresholds still come from POLICY_CLAUSE.
             "ml": self.ml,
             "external": self.external,
+            # conf/detection.yml as typed, escaped SQL literals for sql/05_policy,
+            # the one stage allowed to carry threshold values (as data, into
+            # POLICY_CLAUSE). Validated on build: an ungoverned row fails here.
+            "policy_seed": _policy_seed(self.detection),
         }
+
+
+def _policy_seed(detection: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    # Imported here: risk_copilot.policy imports ConfigError from this module.
+    from risk_copilot.policy import policy_seed
+
+    return policy_seed(detection)
 
 
 def load_settings(

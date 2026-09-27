@@ -32,6 +32,7 @@ or `BRANCH_ANALYST_*` as a literal.
 | `{{ view.txn_velocity_features }}` | `V_TXN_VELOCITY_FEATURES_DEV` |
 | `{{ cortex.semantic_view }}` `{{ cortex.search_service }}` `{{ cortex.agent }}` | Cortex object names |
 | `{{ ml.tier1.* }}` | structural ML settings from `conf/ml.yml` |
+| `{{ policy_seed.clauses }}` `.typologies` `.rules` `.channels` | `conf/detection.yml` as rows of `{column: typed SQL literal}` (`src/risk_copilot/policy.py`). **Only `05_policy` may use it**: it is how threshold values enter Snowflake, as POLICY_CLAUSE rows. A test fails if any other stage renders a threshold |
 
 `StrictUndefined` is enabled: a typo raises at render time instead of emitting an
 empty identifier and creating the wrong object.
