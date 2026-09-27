@@ -105,7 +105,10 @@ dynamic_tables:
   # Matches signals_fast so the features and the signals agree in time.
   txn_daily_agg:          { name: DT_TXN_DAILY_AGG,          target_lag: 5 minutes, upstream: [transactions_enriched] }
   txn_velocity_1h:        { name: DT_TXN_VELOCITY_1H,        target_lag: DOWNSTREAM, upstream: [transactions_enriched] }
-  party_relationship:     { name: DT_PARTY_RELATIONSHIP,     target_lag: DOWNSTREAM, upstream: [] }
+  # A real lag, not DOWNSTREAM (D34): its designed consumer, signals_aggregate,
+  # is not built yet, and a DOWNSTREAM table with no DEPLOYED consumer never
+  # refreshes. Must stay <= signals_aggregate's lag.
+  party_relationship:     { name: DT_PARTY_RELATIONSHIP,     target_lag: 60 minutes, upstream: [transactions_enriched] }
   sanctions_consolidated: { name: DT_SANCTIONS_CONSOLIDATED, target_lag: DOWNSTREAM, upstream: [] }
   # Row-level, incremental-safe rules only.
   signals_fast:           { name: DT_SIGNALS_FAST,           target_lag: 5 minutes, upstream: [transactions_enriched, txn_velocity_1h, sanctions_consolidated] }

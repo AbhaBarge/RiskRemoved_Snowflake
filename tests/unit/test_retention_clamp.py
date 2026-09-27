@@ -47,6 +47,9 @@ CAP_ERROR = (
 def fake_repo(repo_root: Path, tmp_path: Path) -> Path:
     """A copy of the real ``conf/`` tree, safe to fabricate evidence inside."""
     shutil.copytree(repo_root / "conf", tmp_path / "conf")
+    # sql_context() hashes each registered rule's detection SQL, and refuses a
+    # rule with none; the rules are part of what a repository must hold.
+    shutil.copytree(repo_root / "sql" / "rules", tmp_path / "sql" / "rules")
     # Remove any real evidence so each test states its own starting point
     # explicitly rather than inheriting whatever the last probe recorded.
     generated = tmp_path / "conf" / "generated"

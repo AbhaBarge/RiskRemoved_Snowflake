@@ -812,15 +812,37 @@ class Settings(BaseModel):
             # conf/detection.yml as typed, escaped SQL literals for sql/05_policy,
             # the one stage allowed to carry threshold values (as data, into
             # POLICY_CLAUSE). Validated on build: an ungoverned row fails here.
-            "policy_seed": _policy_seed(self.detection),
+            "policy_seed": _policy_seed(self.detection, self.repo_root / "sql"),
+            # Per rule: its id, version, clause ids by role and window anchor, as
+            # literals, for sql/rules/<rule_id>.sql. Names, never thresholds.
+            "rule": _rule_context(self.detection),
+            # The bank's own accounts (the cash desk), as a literal: CURATED
+            # flags them so rules and graph edges can leave them out (D4).
+            "internal": {
+                "bank_id": _sql_literal(
+                    str(self.generation["internal_accounts"]["src_bank_id"]), "VARCHAR"
+                )
+            },
         }
 
 
-def _policy_seed(detection: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+def _policy_seed(detection: dict[str, Any], sql_root: Path) -> dict[str, list[dict[str, str]]]:
     # Imported here: risk_copilot.policy imports ConfigError from this module.
     from risk_copilot.policy import policy_seed
 
-    return policy_seed(detection)
+    return policy_seed(detection, sql_root)
+
+
+def _rule_context(detection: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    from risk_copilot.policy import rule_context
+
+    return rule_context(detection)
+
+
+def _sql_literal(value: Any, sql_type: str) -> str:
+    from risk_copilot.policy import sql_literal
+
+    return sql_literal(value, sql_type)
 
 
 def load_settings(

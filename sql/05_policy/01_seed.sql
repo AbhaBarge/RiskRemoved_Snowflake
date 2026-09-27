@@ -103,7 +103,9 @@ WHEN NOT MATCHED THEN INSERT (
 -- --------------------------------------------------------------------------
 -- RULE_DEFINITION -- insert-only, drift fails. After TYPOLOGY: the foreign key
 -- is not enforced by Snowflake, so the order is what keeps it true.
--- rule_sql_hash is bound when the rule's detection SQL is deployed.
+-- rule_sql_hash (SHA-256 of sql/rules/<rule_id>.sql) is bound once, while the
+-- live row still has NULL; from then on a changed rule file is drift, and the
+-- rule needs a new rule_version.
 -- --------------------------------------------------------------------------
 CREATE OR REPLACE TEMPORARY TABLE SEED_RULE_DEFINITION AS
 {{ seed_select(policy_seed.rules) }};
@@ -123,6 +125,7 @@ BEGIN
             AND EQUAL_NULL(t.description, s.description)
             AND EQUAL_NULL(t.detection_grain, s.detection_grain)
             AND EQUAL_NULL(t.window_bucket_expr, s.window_bucket_expr)
+            AND (t.rule_sql_hash IS NULL OR t.rule_sql_hash = s.rule_sql_hash)
             AND EQUAL_NULL(t.severity, s.severity)
             AND EQUAL_NULL(t.is_active, s.is_active)
             AND EQUAL_NULL(t.admissible_as_primary_evidence, s.admissible_as_primary_evidence)
@@ -140,11 +143,19 @@ USING SEED_RULE_DEFINITION s
    ON t.rule_id = s.rule_id AND t.rule_version = s.rule_version
 WHEN NOT MATCHED THEN INSERT (
     rule_id, rule_version, typology_id, clause_ids, description, detection_grain,
-    window_bucket_expr, severity, is_active, admissible_as_primary_evidence
+    window_bucket_expr, rule_sql_hash, severity, is_active, admissible_as_primary_evidence
 ) VALUES (
     s.rule_id, s.rule_version, s.typology_id, s.clause_ids, s.description, s.detection_grain,
-    s.window_bucket_expr, s.severity, s.is_active, s.admissible_as_primary_evidence
+    s.window_bucket_expr, s.rule_sql_hash, s.severity, s.is_active, s.admissible_as_primary_evidence
 );
+
+-- The one-time binding of a hash to a row seeded before its SQL was hashed.
+UPDATE RULE_DEFINITION t
+   SET rule_sql_hash = s.rule_sql_hash
+  FROM SEED_RULE_DEFINITION s
+ WHERE t.rule_id = s.rule_id
+   AND t.rule_version = s.rule_version
+   AND t.rule_sql_hash IS NULL;
 
 -- --------------------------------------------------------------------------
 -- REF_CHANNEL -- reference catalogue, upserted

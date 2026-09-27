@@ -17,6 +17,11 @@ Seed semantics, enforced by the template:
 * ``POLICY_CLAUSE`` and ``RULE_DEFINITION`` are versioned and **insert-only**. A
   row that already exists must match the seed exactly, or the deploy fails:
   a threshold changes through a new clause version, never by editing a live row.
+* ``RULE_DEFINITION.rule_sql_hash`` is the SHA-256 of the rule's detection SQL
+  (``sql/rules/<rule_id>.sql``). It is bound once, while NULL; after that a
+  changed rule file fails the deploy until the rule gets a new version. A
+  registered rule with no SQL file is refused, so the registry cannot claim a
+  rule nobody wrote.
 * ``TYPOLOGY`` and ``REF_CHANNEL`` are unversioned reference data and are
   **upserted**.
 """
@@ -24,11 +29,16 @@ Seed semantics, enforced by the template:
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from risk_copilot.config import ConfigError
+
+#: Where each rule's detection SELECT lives, relative to ``sql/``.
+RULE_SQL_DIR = "rules"
 
 #: Column -> Snowflake type, in table order. The types are the DDL's
 #: (``sql/01_ddl/02_governance.sql``); every literal is cast, so a column whose
@@ -66,6 +76,7 @@ RULE_COLUMNS: dict[str, str] = {
     "description": "VARCHAR",
     "detection_grain": "VARCHAR",
     "window_bucket_expr": "VARCHAR",
+    "rule_sql_hash": "VARCHAR",
     "severity": "VARCHAR",
     "is_active": "BOOLEAN",
     "admissible_as_primary_evidence": "BOOLEAN",
@@ -132,7 +143,22 @@ def _text(value: Any) -> str | None:
     return " ".join(str(value).split()) if value is not None else None
 
 
-def policy_seed(detection: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]:
+def rule_sql_path(sql_root: Path, rule_id: str) -> Path:
+    return sql_root / RULE_SQL_DIR / f"{rule_id}.sql"
+
+
+def rule_sql_hash(path: Path) -> str:
+    """SHA-256 of a rule's SQL source, line endings normalised.
+
+    The template source, not its rendering: the rendered text carries the
+    profile's object names, and one rule must hash the same on dev and demo, on
+    Windows and Linux checkouts alike.
+    """
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def policy_seed(detection: Mapping[str, Any], sql_root: Path) -> dict[str, list[dict[str, str]]]:
     """Rows for the four seeded tables, as ``{table: [{column: literal}]}``."""
     clauses = list(detection.get("clauses") or [])
     typologies = list(detection.get("typologies") or [])
@@ -183,7 +209,12 @@ def policy_seed(detection: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]
     rule_rows = []
     for r in rules:
         rid = r["rule_id"]
-        ids = list(r.get("clause_ids") or [])
+        roles = r.get("clauses") or {}
+        if not isinstance(roles, Mapping):
+            raise ConfigError(
+                f"conf/detection.yml: rule {rid!r} clauses must map role -> clause_id"
+            )
+        ids = list(roles.values())
         if not ids:
             raise ConfigError(f"conf/detection.yml: rule {rid!r} implements no clause")
         unknown = [i for i in ids if i not in clause_by_id]
@@ -198,12 +229,20 @@ def policy_seed(detection: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]
                 f"conf/detection.yml: rule {rid!r} detection_grain must be one of "
                 f"{DETECTION_GRAINS}"
             )
+        sql_path = rule_sql_path(sql_root, rid)
+        if not sql_path.is_file():
+            raise ConfigError(
+                f"conf/detection.yml: rule {rid!r} has no detection SQL at "
+                f"sql/{RULE_SQL_DIR}/{rid}.sql; only built rules are registered"
+            )
         rule_rows.append(
             _row(
                 {
                     **r,
+                    "clause_ids": ids,
                     "description": _text(r.get("description")),
                     "window_bucket_expr": window_bucket_expr(r, clause_by_id),
+                    "rule_sql_hash": rule_sql_hash(sql_path),
                     "severity": severity[rid],
                 },
                 RULE_COLUMNS,
@@ -226,15 +265,16 @@ def window_bucket_expr(rule: Mapping[str, Any], clauses: Mapping[str, Any]) -> s
     """The documented bucket expression of a windowed rule (GAP-11), or ``None``.
 
     Text for the registry, naming the anchor and the clause the window length is
-    read from -- never the length itself, which lives only in POLICY_CLAUSE.
+    read from (the rule's ``window`` clause) -- never the length itself, which
+    lives only in POLICY_CLAUSE.
     """
     if rule.get("detection_grain") == "TRANSACTION":
         return None
-    clause_id = rule.get("window_clause_id")
+    clause_id = (rule.get("clauses") or {}).get("window")
     anchor = rule.get("window_anchor")
     if clause_id not in clauses or not anchor:
         raise ConfigError(
-            f"conf/detection.yml: windowed rule {rule.get('rule_id')!r} needs window_clause_id "
+            f"conf/detection.yml: windowed rule {rule.get('rule_id')!r} needs a `window` clause "
             "naming a known clause and a window_anchor"
         )
     anchor_date = dt.date.fromisoformat(str(anchor)).isoformat()
@@ -242,3 +282,24 @@ def window_bucket_expr(rule: Mapping[str, Any], clauses: Mapping[str, Any]) -> s
         f"FLOOR(DATEDIFF('day', '{anchor_date}'::DATE, TO_DATE(txn_timestamp)) / "
         f"{clause_id}.threshold_lower)"
     )
+
+
+def rule_context(detection: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """What a rule's detection SQL may reference, as SQL literals.
+
+    ``{rule_id: {id, version, clause: {role: 'CLAUSE_ID'}, anchor, dynamic_table}}``.
+    The clause ids are names, not thresholds: the SQL joins each to
+    V_POLICY_CLAUSE_CURRENT for its value at refresh time.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for r in detection.get("rules") or []:
+        anchor = r.get("window_anchor")
+        clauses = r.get("clauses") or {}
+        out[str(r["rule_id"])] = {
+            "id": sql_literal(r["rule_id"], "VARCHAR"),
+            "version": int(r["rule_version"]),
+            "clause": {str(role): sql_literal(cid, "VARCHAR") for role, cid in clauses.items()},
+            "anchor": sql_literal(anchor, "DATE") if anchor else None,
+            "dynamic_table": str(r.get("dynamic_table") or ""),
+        }
+    return out

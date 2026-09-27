@@ -19,9 +19,11 @@ import pytest
 
 from risk_copilot.config import ConfigError, load_settings
 from risk_copilot.pipeline.deploy import STAGE_ORDER, Deployer, split_statements
-from risk_copilot.policy import policy_seed, sql_literal
+from risk_copilot.policy import policy_seed, rule_sql_hash, rule_sql_path, sql_literal
 
 pytestmark = pytest.mark.unit
+
+SQL_ROOT = Path(__file__).resolve().parents[2] / "sql"
 
 
 @pytest.fixture
@@ -67,7 +69,7 @@ def test_sql_literal_rejects_a_value_of_the_wrong_type(value: Any, sql_type: str
 
 
 def test_one_row_per_config_entry(detection: dict[str, Any]) -> None:
-    seed = policy_seed(detection)
+    seed = policy_seed(detection, SQL_ROOT)
     for table, block in (
         ("clauses", "clauses"),
         ("typologies", "typologies"),
@@ -79,7 +81,7 @@ def test_one_row_per_config_entry(detection: dict[str, Any]) -> None:
 
 
 def test_clause_rows_keep_provenance_and_exact_thresholds(detection: dict[str, Any]) -> None:
-    rows = {r["clause_id"]: r for r in policy_seed(detection)["clauses"]}
+    rows = {r["clause_id"]: r for r in policy_seed(detection, SQL_ROOT)["clauses"]}
     ctr = next(c for c in detection["clauses"] if c["clause_id"] == "CTR_CASH_THRESHOLD")
     row = rows["'CTR_CASH_THRESHOLD'::VARCHAR"]
     assert row["threshold_lower"] == f"{Decimal(str(ctr['threshold_lower']))}::NUMBER(20,4)"
@@ -90,7 +92,7 @@ def test_clause_rows_keep_provenance_and_exact_thresholds(detection: dict[str, A
 def test_only_built_rules_are_registered(detection: dict[str, Any]) -> None:
     """A registry row for a rule with no SQL would let a finding cite logic nobody wrote."""
     assert [r["rule_id"] for r in detection["rules"]] == ["STRUCTURING_CROSS_ACCOUNT"]
-    (rule,) = policy_seed(detection)["rules"]
+    (rule,) = policy_seed(detection, SQL_ROOT)["rules"]
     assert rule["severity"] == sql_literal(
         detection["severity"]["STRUCTURING_CROSS_ACCOUNT"], "VARCHAR"
     )
@@ -103,21 +105,48 @@ def test_every_rule_is_governed(detection: dict[str, Any]) -> None:
     clause_ids = {c["clause_id"] for c in detection["clauses"]}
     typology_ids = {t["typology_id"] for t in detection["typologies"]}
     for rule in detection["rules"]:
-        assert rule["clause_ids"] and set(rule["clause_ids"]) <= clause_ids
+        assert rule["clauses"] and set(rule["clauses"].values()) <= clause_ids
         assert rule["typology_id"] in typology_ids
         assert rule["rule_id"] in detection["severity"]
+
+
+def test_rule_row_is_unchanged_by_the_role_keyed_clauses(detection: dict[str, Any]) -> None:
+    """The live row was seeded from a flat clause_ids list; the drift check
+    compares it with this one, so the order must be the one deployed."""
+    (rule,) = policy_seed(detection, SQL_ROOT)["rules"]
+    assert rule["clause_ids"] == (
+        "ARRAY_CONSTRUCT('CTR_CASH_THRESHOLD'::VARCHAR, 'STRUCTURING_BAND'::VARCHAR, "
+        "'STRUCTURING_MIN_ACCOUNTS'::VARCHAR, 'STRUCTURING_WINDOW_DAYS'::VARCHAR)"
+    )
+
+
+def test_rule_sql_hash_is_the_rule_files_hash(detection: dict[str, Any], tmp_path: Path) -> None:
+    (rule,) = policy_seed(detection, SQL_ROOT)["rules"]
+    path = rule_sql_path(SQL_ROOT, "STRUCTURING_CROSS_ACCOUNT")
+    assert rule["rule_sql_hash"] == sql_literal(rule_sql_hash(path), "VARCHAR")
+    # A CRLF checkout of the same file hashes identically.
+    crlf = tmp_path / "rule.sql"
+    crlf.write_bytes(path.read_text(encoding="utf-8").replace("\n", "\r\n").encode("utf-8"))
+    assert rule_sql_hash(crlf) == rule_sql_hash(path)
+
+
+def test_a_rule_with_no_sql_file_is_refused(detection: dict[str, Any], tmp_path: Path) -> None:
+    """Only built rules are registered, mechanically."""
+    with pytest.raises(ConfigError, match="has no detection SQL"):
+        policy_seed(detection, tmp_path)
 
 
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
         (lambda d: d["clauses"][0]["provenance"].update(source_document=" "), "provenance"),
-        (lambda d: d["rules"][0].update(clause_ids=[]), "implements no clause"),
-        (lambda d: d["rules"][0].update(clause_ids=["NO_SUCH"]), "unknown clause"),
+        (lambda d: d["rules"][0].update(clauses={}), "implements no clause"),
+        (lambda d: d["rules"][0]["clauses"].update(ctr="NO_SUCH"), "unknown clause"),
+        (lambda d: d["rules"][0].update(clauses=["CTR_CASH_THRESHOLD"]), "role -> clause_id"),
         (lambda d: d["rules"][0].update(typology_id="TYP_NONE"), "unknown typology"),
         (lambda d: d["severity"].pop("STRUCTURING_CROSS_ACCOUNT"), "no severity"),
         (lambda d: d["rules"][0].update(detection_grain="DAILY"), "detection_grain"),
-        (lambda d: d["rules"][0].update(window_clause_id="NO_SUCH"), "window_clause_id"),
+        (lambda d: d["rules"][0]["clauses"].pop("window"), "needs a `window` clause"),
         (lambda d: d["channels"].append(dict(d["channels"][0])), "duplicate channel_code"),
         (lambda d: d["clauses"].append(dict(d["clauses"][0])), "duplicate clause"),
         (lambda d: d.update(rules=[]), "`rules` is empty"),
@@ -128,7 +157,7 @@ def test_an_ungoverned_seed_is_refused(
 ) -> None:
     mutate(detection)
     with pytest.raises(ConfigError, match=message):
-        policy_seed(detection)
+        policy_seed(detection, SQL_ROOT)
 
 
 def test_every_channel_generation_can_emit_is_catalogued(repo_root: Path) -> None:

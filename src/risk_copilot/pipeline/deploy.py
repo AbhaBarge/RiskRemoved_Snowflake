@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jinja2 import Environment, StrictUndefined, TemplateError
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateError
 
 from risk_copilot.config import ConfigError, Settings
 from risk_copilot.session import SessionError, open_session
@@ -180,6 +180,9 @@ class Deployer:
         self.settings = settings
         self.sql_root = settings.repo_root / "sql"
         self.env = Environment(
+            # Lets a stage include a shared fragment -- a rule's detection SELECT
+            # lives once in sql/rules/ and is hashed from there (RULE_DEFINITION).
+            loader=FileSystemLoader(str(self.sql_root)),
             # StrictUndefined: a typo in a template variable must fail loudly at
             # render time rather than silently emitting an empty identifier and
             # producing SQL that creates the wrong object.
@@ -268,6 +271,19 @@ class Deployer:
                     self.render(path)
                 except ConfigError as exc:
                     errors.append(str(exc))
+        # Included fragments (sql/rules/) are rendered inside a stage file, so
+        # render() never sees their source; lint it here.
+        for path in sorted((self.sql_root / "rules").glob("*.sql")):
+            source = path.read_text(encoding="utf-8")
+            if match := _FORBIDDEN_LITERALS.search(source):
+                errors.append(
+                    f"{self._display(path)}: contains the literal object name {match.group(0)!r}"
+                )
+            if ";" in source:
+                errors.append(
+                    f"{self._display(path)}: a rule is one SELECT inside a CREATE; a ';' "
+                    "would end that statement early"
+                )
         return errors
 
     # ------------------------------------------------------------------ #

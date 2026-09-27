@@ -98,6 +98,7 @@ re-asserts them at run time. They are not only recorded here.
 | M27 | **The stages and file formats were owned by ACCOUNTADMIN.** `01_account_objects.sql` creates them under that role and `02_roles_grants.sql` handed over only the database and schemas: all 4 stages and all 4 file formats on dev had owner ACCOUNTADMIN. The admin role could list a stage only through a human session's secondary roles, which a task does not have | `SHOW STAGES` / `SHOW FILE FORMATS IN DATABASE` as the admin role | Ownership handed to the admin role in bootstrap; verified live after the change |
 | M28 | **Not every pair balances in INR, and correctly so.** 122 of 4,931 dev pairs have a non-zero `amount_inr` sum; all 122 are AMLworld rows whose payment and receiving currencies differ (0 same-currency), so each side's real amount converts at our rate to a different rupee value. The plan's "every pair sums to 0" was wrong as stated | Local join of the unbalanced pairs to the source ledger; re-asserted in Snowflake by `load` (0 unexplained) | Post-load check is "every unbalanced pair is a cross-currency source row" |
 | M29 | **Snowflake reads a Parquet `timestamp[ms]` as epoch milliseconds.** Without logical types, `$1:col` is an INTEGER (`1662650340000`); `::TIMESTAMP_NTZ` reads it as seconds and gives year **54657**. `TO_TIMESTAMP_NTZ(n, 3)` gives the right `2022-09-08 15:19`. `decimal128` reads exactly (sum of `amount_inr` equal to the paisa), `date32` reads as DATE, `list<string>` as ARRAY, JSON text as VARCHAR | Probe on the real dev files on a scratch stage path, removed after | `load` builds each timestamp cast from the file's own time unit |
+| M30 | **STRUCTURING_CROSS_ACCOUNT fires on exactly the planted hosts.** `DT_SIGNALS_FAST_DEV` holds **10** signals, all in bucket `2022-08-26`: **10 of 10** on injected hosts, none elsewhere. Their **101** evidence legs are all injected deposits (101 illicit, 0 genuine). The one genuine in-band deposit (P6) does not fire, being a single account. metric_value is 2 distinct accounts for 9 hosts and 3 for one, against the clause's 2 | SQL on the refreshed tables, joined as admin to INJECTED_TXN_PENDING and TXN_LABELS | Precision and recall are formalised in step 7 |
 
 ---
 
@@ -138,6 +139,8 @@ re-asserts them at run time. They are not only recorded here.
 | D31 | 09-27 | Desk-routed deposits are always in INR (`retain_foreign_pct` does not apply to them) | Build, within the residual-tell scan | M26; an over-the-counter deposit at an Indian branch credits rupees |
 | D32 | 09-27 | Dynamic-table lags: `dim_party`, `party_relationship` -> `DOWNSTREAM`; `txn_daily_agg` gets a real lag equal to `signals_fast` (dev 60 min, demo 5 min). Each table declares `upstream`, and the config refuses to load a graph with a table fresher than its upstream, a `DOWNSTREAM` table nobody reads, a cycle or an unknown name | Build (plan P2, P3) | Snowflake rejects the first at CREATE and never refreshes the second, silently. A check at load keeps the next edit from reintroducing either |
 | D33 | 09-27 | The policy seed is **insert-only for versioned governed rows** (POLICY_CLAUSE, RULE_DEFINITION): a live row that differs from `conf/detection.yml` fails the deploy before anything is written. TYPOLOGY and REF_CHANNEL are unversioned reference data and upserted. RULE_DEFINITION lists only rules whose SQL is built (STRUCTURING_CROSS_ACCOUNT) | Build | Editing the seed and redeploying must not be a way round the clause-versioning gate. A registry row for an unbuilt rule would let a finding cite logic nobody wrote |
+| D34 | 09-27 | `party_relationship` gets a real lag (60 min) instead of `DOWNSTREAM` | Build | Its only designed consumer, DT_SIGNALS_AGGREGATE, is not built; a `DOWNSTREAM` table with no deployed consumer never refreshes. D32 checks the design graph, so a test now checks the deployed one |
+| D35 | 09-27 | **Each rule's detection SQL is one file, `sql/rules/<rule_id>.sql`**, included by its signal table; `RULE_DEFINITION.rule_sql_hash` is the SHA-256 of that source (line endings normalised), bound once while NULL. A changed file then fails the policy stage until `rule_version` is bumped; a registered rule without a file fails the render. Rules name their clauses by role (`ctr`, `band`, ...) so the SQL reads clause ids from config | Build | Makes "a silent logic change is visible" (the column's purpose) and "only built rules are registered" (D33) mechanical rather than a matter of discipline |
 
 ---
 
@@ -445,8 +448,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | **Done** |
 | 3 | `policy` seed stage | **Done** |
 | 4 | `riskcopilot load` | **Done** |
-| 5 | Dynamic tables for the structuring slice | Next |
-| 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | |
+| 5 | Dynamic tables for the structuring slice | **Done** |
+| 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | Next |
 | 7 | Post-load verify: signal_yield, hero promotion | |
 | 8 | Replay harness, docs | |
 
@@ -664,3 +667,72 @@ Independent checks afterwards:
 | Refusals, then connect | Offline refusals before the session opens | So a failed demo build is refused although demo has no database |
 
 **Verification:** 436 passed; ruff, mypy (29 files), lint clean; `doctor --profile dev` exit 0, 0 failed.
+
+## Step 5 -- dynamic tables for the structuring slice (D34, D35)
+
+**What changed**
+- New `sql/02_dynamic_tables/`, all `CREATE OR ALTER`, on `{{ wh.pipeline }}`, `REFRESH_MODE = INCREMENTAL` (explicit, so a construct that forces FULL fails the deploy instead of quietly costing credits):
+  - `01_dim_party.sql`: CBS + KYC, current state (`DOWNSTREAM`);
+  - `02_transactions_enriched.sql`: every leg with party, branch, account type, `is_cash` / `is_instant` from REF_CHANNEL, and `is_internal_account` / `is_internal_counterparty` from `{{ internal.bank_id }}`. All joins LEFT, so no leg can vanish from CURATED. **No threshold is joined here**: the plan put the in-band flag in this table, but a missing clause would then remove rows every consumer reads, so the band test lives in the rule;
+  - `03_txn_daily_agg.sql`: customer account x day, with `conf/ml.yml`'s contract columns (`account_id`, `txn_date`, `credit_amount_inr`); desk excluded;
+  - `04_party_relationship.sql`: OWNS_ACCOUNT, FUND_FLOW (debit legs, **desk excluded on both sides**, self-flows dropped; obligation 6) and the attribute edges;
+  - `05_signals_fast.sql`: UNION ALL of every rule assigned to `signals_fast`, each from `sql/rules/`;
+  - `06_views.sql`: `V_TRANSACTION_PAIRS`;
+  - `_macros.sql` (not deployed on its own): quoting of `TARGET_LAG`.
+- New `sql/rules/STRUCTURING_CROSS_ACCOUNT.sql` (D35):
+  - tumbling buckets from the anchor;
+  - band, CTR, minimum accounts and window all read from `V_POLICY_CLAUSE_CURRENT` through the role-keyed clause ids;
+  - emits `signal_business_key` in `ids.signal_business_key`'s format, the metric, the threshold, sorted evidence txn ids, and a `detail` object.
+- `conf/detection.yml`: rule `clauses` keyed by role, and `dynamic_table: signals_fast`. The rendered `clause_ids` array is unchanged, so the live row still matches (pinned by a test).
+- `conf/base.yml`: `party_relationship` 60 minutes, upstream `[transactions_enriched]` (D34).
+- `policy.py`: `rule_context`, `rule_sql_path` / `rule_sql_hash`, and `policy_seed(detection, sql_root)` carrying the hash. The seed template's drift check accepts a NULL live hash, and a one-time UPDATE binds it.
+- `config.sql_context()`: `rule` and `internal`. `deploy.py`: a `FileSystemLoader` for includes, and `lint()` also lints `sql/rules/` (forbidden names, no `;`), which `render()` cannot see inside an include.
+- **Not built, by decision:** `V_TXN_VELOCITY_FEATURES`. Its rolling windows need lengths no config declares, and inventing them would be a hardcoded value. It lands with the velocity rule. VELOCITY_1H, SANCTIONS_CONSOLIDATED and SIGNALS_AGGREGATE stay deferred, as planned.
+
+**Live, on RISK_COPILOT_DEV**
+- `deploy --stage dynamic_tables` run twice: 6 files ok both times (14 s, then 6 s).
+- `SHOW DYNAMIC TABLES` (P4 measured):
+
+  | Table | Lag | refresh_mode | reason | State | Rows |
+  |---|---|---|---|---|---|
+  | DT_DIM_PARTY_DEV | DOWNSTREAM | INCREMENTAL | none | ACTIVE | 500 |
+  | DT_TRANSACTIONS_ENRICHED_DEV | 1 hour | INCREMENTAL | none | ACTIVE | 10,064 |
+  | DT_TXN_DAILY_AGG_DEV | 1 hour | INCREMENTAL | none | ACTIVE | 2,745 |
+  | DT_PARTY_RELATIONSHIP_DEV | 1 hour | INCREMENTAL | none | ACTIVE | 1,198 |
+  | DT_SIGNALS_FAST_DEV | 1 hour | INCREMENTAL | none | ACTIVE | 10 |
+
+  The `V_POLICY_CLAUSE_CURRENT` join (a `CURRENT_DATE` QUALIFY view) did not force FULL.
+- Detection: M30.
+- ENRICHED: 10,064 rows = RAW; 699 desk legs; 0 unknown channels; 0 customer legs without a region.
+- Edges: OWNS_ACCOUNT 553, FUND_FLOW 555, SHARED_DEVICE 60, BENEFICIAL_OWNER 20, SHARED_PHONE 10. **0 FUND_FLOW edges touch the desk party.**
+- CURATED: 76 columns, **none** of the 10 `label_leakage.forbidden_columns`.
+- `deploy --stage policy` run twice: 12 statements ok. `RULE_DEFINITION.rule_sql_hash` is bound, and equals the local file's SHA-256.
+- **The hash lock was proved to fire.** The seed was rendered from a copy of `sql/` with one comment line appended to the rule file, and only the rule drift block was run: it raised -20002, and the live hash was unchanged.
+
+**Tests:** 460 passed (436 before). New `tests/unit/test_dynamic_tables.py` (11 tests, 9 of them run for dev and demo: 20 cases):
+- exactly the built tables are deployed;
+- **every deployed `DOWNSTREAM` table is read by another deployed table**;
+- lags as configured;
+- all INCREMENTAL on the pipeline warehouse;
+- nothing in CURATED reads GROUND_TRUTH;
+- FUND_FLOW excludes the desk on both sides;
+- the desk flag comes from the configured bank id;
+- every rule sits in its dynamic table;
+- the rule SQL has no number beyond a cast and the window's +/- 1, and reads every role's clause;
+- the business key matches `ids.signal_business_key`;
+- lint catches a bad included rule file.
+
+In `test_policy_seed.py`: the rule row is unchanged by the role keys; the hash equals the file's, and is identical under CRLF; a rule with no SQL is refused. `test_retention_clamp.py`'s fake repository now carries `sql/rules/`, which the mechanical "only built rules" check made necessary.
+
+**Departures**
+
+| Plan said | Built | Why |
+|---|---|---|
+| In-band flag in DT_TRANSACTIONS_ENRICHED | In the rule SQL | A missing clause must not remove rows from CURATED |
+| `V_TXN_VELOCITY_FEATURES` with channel entropy | Not built | No configured window lengths (no invented values) |
+| `party_relationship` `DOWNSTREAM` (D32) | 60 minutes | D34 |
+| rule_sql_hash left NULL | Bound from `sql/rules/` | D35 |
+
+**Credits:** the five tables are ACTIVE on dev lags (DIM_PARTY on demand, the rest hourly). With no new RAW data, a scheduled refresh has nothing to process.
+
+**Verification:** 460 passed; ruff, mypy (29 files), lint (dev + demo, 13 templates each) clean; `doctor --profile dev` exit 0, 0 failed.

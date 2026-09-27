@@ -33,6 +33,14 @@ or `BRANCH_ANALYST_*` as a literal.
 | `{{ cortex.semantic_view }}` `{{ cortex.search_service }}` `{{ cortex.agent }}` | Cortex object names |
 | `{{ ml.tier1.* }}` | structural ML settings from `conf/ml.yml` |
 | `{{ policy_seed.clauses }}` `.typologies` `.rules` `.channels` | `conf/detection.yml` as rows of `{column: typed SQL literal}` (`src/risk_copilot/policy.py`). **Only `05_policy` may use it**: it is how threshold values enter Snowflake, as POLICY_CLAUSE rows. A test fails if any other stage renders a threshold |
+| `{{ rule.<RULE_ID>.id }}` `.version` `.clause.<role>` `.anchor` `.dynamic_table` | Per registered rule, for `sql/rules/<RULE_ID>.sql`: the rule id and each role's clause id as literals, the window anchor as a DATE literal. Names only -- the SQL joins each clause id to `V_POLICY_CLAUSE_CURRENT` for its value |
+| `{{ internal.bank_id }}` | `internal_accounts.src_bank_id` as a literal: identifies the bank's own (cash desk) accounts in CURATED |
+
+**`sql/rules/`** holds one detection SELECT per registered rule, included by the
+signal dynamic table its `dynamic_table` names. Each file is one SELECT (no `;`),
+linted like a stage file, and hashed into `RULE_DEFINITION.rule_sql_hash`: after
+the first deploy, editing it fails the policy stage until the rule gets a new
+`rule_version`. A registered rule without a file fails the render.
 
 `StrictUndefined` is enabled: a typo raises at render time instead of emitting an
 empty identifier and creating the wrong object.
