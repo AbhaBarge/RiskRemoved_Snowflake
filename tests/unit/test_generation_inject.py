@@ -13,19 +13,21 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute
 import pytest
 
 from risk_copilot.config import deep_merge, load_settings
 from risk_copilot.generation.demo_entity import DemoEntityError, select_demo_entity
+from risk_copilot.generation.desk import CashDesk
 from risk_copilot.generation.entities import build_entities
 from risk_copilot.generation.eval_grain import build_eval_grain
 from risk_copilot.generation.graph import sample_subgraph
-from risk_copilot.generation.inject import InjectionError, cash_desk_ids, inject_structuring
+from risk_copilot.generation.inject import InjectionError, inject_structuring
 from risk_copilot.generation.labels import label_source_legs
 from risk_copilot.generation.patterns import load_patterns, locate_attempts
 from risk_copilot.generation.reskin import reskin_pairs
 from risk_copilot.generation.source import load_accounts, load_ledger
-from risk_copilot.ids import account_id, party_id
+from risk_copilot.ids import party_id
 
 pytestmark = pytest.mark.unit
 
@@ -77,7 +79,7 @@ def inject(built: dict[str, Any], generation: dict[str, Any], **structuring: Any
         if structuring
         else generation
     )
-    return inject_structuring(built["subgraph"], built["entities"], config)
+    return inject_structuring(built["subgraph"], built["entities"], built["legs"], config)
 
 
 def host_accounts(built: dict[str, Any]) -> dict[str, str]:
@@ -113,9 +115,9 @@ def test_each_deposit_is_a_cash_desk_debit_and_a_customer_credit(
     built: dict[str, Any], generation: dict[str, Any]
 ) -> None:
     inj = inject(built, generation)
-    desk_party, _, desk = cash_desk_ids(generation)
+    desk = CashDesk.from_config(generation)
     region = built["entities"].branch_region[built["subgraph"].party_ids[HOST]]
-    desk_account = desk[region][1]
+    desk_account = desk.account(region)
     pairs: dict[str, list[dict[str, Any]]] = {}
     for row in inj.pending.to_pylist():
         pairs.setdefault(row["pair_ref"], []).append(row)
@@ -149,7 +151,7 @@ def test_each_deposit_is_a_cash_desk_debit_and_a_customer_credit(
         cohort["deposits_per_account_min"] <= n <= cohort["deposits_per_account_max"]
         for n in per_account.values()
     )
-    assert desk_party == party_id(
+    assert desk.party_id == party_id(
         generation["internal_accounts"]["owner_entity_key"], seed=generation["seed"]
     )
 
@@ -174,10 +176,38 @@ def test_deposits_fall_in_one_burst_inside_the_legit_window(
     (plan,) = inj.hosts
     assert (plan.window_end - plan.window_start).days == cohort["window_days"] - 1
     assert window.first_day <= plan.window_start and plan.window_end <= window.last_day
-    start, end = cohort["deposit_hours"]
     for ts in inj.pending["txn_timestamp"].to_pylist():
         assert plan.window_start <= ts.date() <= plan.window_end
-        assert start <= ts.hour < end and ts.second == 0
+
+
+def test_deposit_clock_times_come_from_genuine_cash_deposits(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    """D29: planted deposits have no clock window of their own to give them away."""
+    desks = {aid for _, aid in CashDesk.from_config(generation).accounts.values()}
+    genuine = {
+        r["txn_timestamp"].time()
+        for r in built["legs"].to_pylist()
+        if r["leg_side"] == "C" and r["txn_type"] == "DEPOSIT" and r["account_id"] not in desks
+    }
+    assert genuine  # the fixture's cash pair (row 8)
+    planted = {ts.time() for ts in inject(built, generation).pending["txn_timestamp"].to_pylist()}
+    assert planted <= genuine
+
+
+def test_no_genuine_cash_deposit_fails_rather_than_invent_a_clock(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    no_cash = built["legs"].filter(pa.compute.not_equal(built["legs"]["channel"], "CASH"))
+    with pytest.raises(InjectionError, match="no genuine cash deposit"):
+        inject_structuring(built["subgraph"], built["entities"], no_cash, generation)
+
+
+def test_unknown_time_of_day_source_fails(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    with pytest.raises(InjectionError, match="deposit_time_of_day"):
+        inject(built, generation, deposit_time_of_day="branch_hours")
 
 
 def test_pending_legs_carry_no_rupee_amount(
@@ -200,28 +230,6 @@ def test_every_injected_leg_is_labelled(built: dict[str, Any], generation: dict[
             cohort["label"],
         )
         assert row["src_row_number"] is None and row["match_confidence"] is None
-
-
-def test_cash_desk_lives_only_in_the_id_maps(
-    built: dict[str, Any], generation: dict[str, Any]
-) -> None:
-    """D4: the desk is never a customer record."""
-    inj = inject(built, generation)
-    internal = generation["internal_accounts"]
-    regions = [r["code"] for r in generation["entities"]["branch_regions"]]
-    expected = {
-        account_id(
-            internal["src_bank_id"],
-            f"{internal['cash_desk']['account_number_prefix']}:{r}",
-            seed=generation["seed"],
-        )
-        for r in regions
-    }
-    assert set(inj.id_map_account["account_id"].to_pylist()) == expected
-    assert set(inj.id_map_account["src_bank_id"].to_pylist()) == {internal["src_bank_id"]}
-    ents = built["entities"]
-    assert expected.isdisjoint(ents.accounts["account_id"].to_pylist())
-    assert inj.id_map_party["party_id"].to_pylist()[0] not in ents.cbs["party_id"].to_pylist()
 
 
 def test_window_longer_than_the_legit_span_fails(
@@ -284,9 +292,12 @@ def test_grain_counts_every_customer_leg_and_skips_the_desk(
 ) -> None:
     table = grain(built, generation, detection)
     inj = inject(built, generation)
-    customer_legs = built["legs"].num_rows + inj.pending.num_rows // 2
+    customers = set(built["entities"].accounts["account_id"].to_pylist())
+    customer_legs = sum(1 for a in built["legs"]["account_id"].to_pylist() if a in customers)
+    customer_legs += inj.pending.num_rows // 2
+    assert customer_legs < built["legs"].num_rows + inj.pending.num_rows  # desk legs exist
     assert sum(table["total_leg_count"].to_pylist()) == customer_legs
-    assert inj.id_map_party["party_id"].to_pylist()[0] not in table["party_id"].to_pylist()
+    assert CashDesk.from_config(generation).party_id not in table["party_id"].to_pylist()
     for row in table.to_pylist():
         if not row["is_illicit_actual"]:
             assert row["illicit_leg_count"] == 0 and row["expected_rule_ids"] == []

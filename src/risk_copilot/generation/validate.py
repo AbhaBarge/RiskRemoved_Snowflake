@@ -251,23 +251,36 @@ def referential_integrity(g: GateInputs) -> Gate:
     )
 
 
+def _internal_accounts(g: GateInputs) -> set[str]:
+    """The bank's own accounts (the cash desk): no customer's degree or amounts."""
+    bank = str(g.generation["internal_accounts"]["src_bank_id"])
+    ids = g.raw["ID_MAP_ACCOUNT"]
+    return {
+        a
+        for a, b in zip(ids["account_id"].to_pylist(), ids["src_bank_id"].to_pylist(), strict=True)
+        if b == bank
+    }
+
+
 def benford(g: GateInputs) -> Gate:
-    """Leading-digit chi-square of legit credit legs' INR amounts. Reported."""
+    """Leading-digit chi-square of legit customer credit legs' INR amounts. Reported."""
     labels = g.ground_truth["TXN_LABELS"]
     illicit = {
         t
         for t, v in zip(labels["txn_id"].to_pylist(), labels["is_illicit"].to_pylist(), strict=True)
         if v
     }
+    internal = _internal_accounts(g)
     tx = g.raw["RAW_TRANSACTIONS"]
     digits: Counter[int] = Counter()
-    for txn, side, amount in zip(
+    for txn, side, account, amount in zip(
         tx["txn_id"].to_pylist(),
         tx["leg_side"].to_pylist(),
+        tx["account_id"].to_pylist(),
         tx["amount_inr"].to_pylist(),
         strict=True,
     ):
-        if side == "C" and txn not in illicit and amount:
+        if side == "C" and txn not in illicit and account not in internal and amount:
             digits[int(str(abs(amount)).lstrip("0.")[:1] or 0)] += 1
     n = sum(digits[d] for d in range(1, 10))
     if not n:
@@ -292,7 +305,11 @@ def benford(g: GateInputs) -> Gate:
 
 
 def degree_distribution(g: GateInputs) -> Gate:
-    """Discrete power-law MLE (xmin = 1) over party degree. Reported."""
+    """Discrete power-law MLE (xmin = 1) over customer party degree. Reported.
+
+    The cash desk is excluded (D4): it would be one hub joined to every cash
+    customer, which is a bookkeeping artefact, not a relationship.
+    """
     owner = dict(
         zip(
             g.raw["ID_MAP_ACCOUNT"]["account_id"].to_pylist(),
@@ -300,12 +317,13 @@ def degree_distribution(g: GateInputs) -> Gate:
             strict=True,
         )
     )
+    internal = _internal_accounts(g)
     tx = g.raw["RAW_TRANSACTIONS"]
     neighbours: dict[str, set[str]] = defaultdict(set)
     for a, b in zip(
         tx["account_id"].to_pylist(), tx["counterparty_account_id"].to_pylist(), strict=True
     ):
-        if owner[a] != owner[b]:
+        if a not in internal and b not in internal and owner[a] != owner[b]:
             neighbours[owner[a]].add(owner[b])
     degrees = [len(v) for v in neighbours.values() if v]
     if not degrees:

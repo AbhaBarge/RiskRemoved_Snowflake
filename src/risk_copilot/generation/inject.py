@@ -4,7 +4,7 @@ AMLworld has no structuring (M6: 3,208 of 3,209 attributed illicit rows are
 ACH), so the cohort is injected onto real host parties chosen by ``graph``
 (D14). Each host deposits cash into 2-4 of its own deposit accounts (D20), a few
 times each, within a ``window_days`` burst inside the measured legitimate window
-(D18), during branch hours.
+(D18), at times of day drawn from the sample's genuine cash deposits (D29).
 
 **Amounts are deferred (D2).** Each deposit is a fraction of the CTR threshold,
 drawn inside ``amount_band_pct_of_ctr``; ``load`` resolves rupees from
@@ -12,9 +12,9 @@ drawn inside ``amount_band_pct_of_ctr``; ``load`` resolves rupees from
 ``GROUND_TRUTH.INJECTED_TXN_PENDING`` and never in a RAW file.
 
 **Cash desk (D4).** A deposit posts Dr branch cash / Cr customer. The debit leg
-sits on one internal account per branch region, derived through ``ids`` from
-``internal_accounts`` -- the single documented exception to "never mint ids".
-It is written to ``ID_MAP_PARTY`` / ``ID_MAP_ACCOUNT`` only.
+sits on one internal account per branch region (:mod:`~risk_copilot.generation.desk`),
+the same desks every AMLworld cash pair is posted through (D27). The pipeline
+writes their id-map rows.
 """
 
 from __future__ import annotations
@@ -28,11 +28,11 @@ from typing import Any
 import pyarrow as pa
 
 from risk_copilot.generation import GenerationError
-from risk_copilot.generation.draws import weighted_options
+from risk_copilot.generation.desk import CashDesk
 from risk_copilot.generation.entities import Entities
 from risk_copilot.generation.graph import Subgraph
 from risk_copilot.generation.labels import LABEL_SCHEMA
-from risk_copilot.ids import account_id, derived_rng, party_id, stable_hash
+from risk_copilot.ids import derived_rng, stable_hash
 
 RATIO = pa.decimal128(12, 10)
 
@@ -58,19 +58,6 @@ PENDING_SCHEMA = pa.schema(
     ]
 )
 
-ID_MAP_PARTY_SCHEMA = pa.schema(
-    [("party_id", pa.string()), ("src_entity_id", pa.string()), ("generation_seed", pa.int64())]
-)
-ID_MAP_ACCOUNT_SCHEMA = pa.schema(
-    [
-        ("account_id", pa.string()),
-        ("src_bank_id", pa.string()),
-        ("src_account_number", pa.string()),
-        ("party_id", pa.string()),
-        ("generation_seed", pa.int64()),
-    ]
-)
-
 
 class InjectionError(GenerationError):
     """The cohort cannot be injected under the configured contract."""
@@ -86,7 +73,6 @@ class StructuringConfig:
     deposits_max: int
     band: tuple[Decimal, Decimal]
     window_days: int
-    hours: tuple[int, int]
     channel: str
     txn_type: str
     ctr_clause_id: str
@@ -103,11 +89,13 @@ class StructuringConfig:
                     "amount_resolution deferred_ctr_ratio is implemented"
                 )
             lo, hi = (Decimal(str(v)) for v in s["amount_band_pct_of_ctr"])
-            start, end = (int(h) for h in s["deposit_hours"])
-            if not (0 < lo < hi < 1) or not (0 <= start < end <= 24):
+            if s["deposit_time_of_day"] != "genuine_cash_deposits":
                 raise InjectionError(
-                    "injection.structuring: band must be 0 < lo < hi < 1, hours 0-24"
+                    "injection.structuring.deposit_time_of_day: only genuine_cash_deposits "
+                    "is implemented"
                 )
+            if not 0 < lo < hi < 1:
+                raise InjectionError("injection.structuring: band must be 0 < lo < hi < 1")
             return cls(
                 typology_id=str(s["typology_id"]),
                 label=str(s["label"]),
@@ -117,7 +105,6 @@ class StructuringConfig:
                 deposits_max=int(s["deposits_per_account_max"]),
                 band=(lo, hi),
                 window_days=int(s["window_days"]),
-                hours=(start, end),
                 channel=str(s["channel"]),
                 txn_type=str(s["txn_type"]),
                 ctr_clause_id=str(s["ctr_clause_id"]),
@@ -145,36 +132,40 @@ class HostPlan:
 class Injection:
     pending: pa.Table
     labels: pa.Table
-    id_map_party: pa.Table
-    id_map_account: pa.Table
     hosts: tuple[HostPlan, ...]
     stats: Mapping[str, int]
 
 
-def cash_desk_ids(generation: Mapping[str, Any]) -> tuple[str, str, dict[str, tuple[str, str]]]:
-    """``(party_id, owner_key, {region: (account_number, account_id)})`` for the desk."""
-    seed = int(generation["seed"])
-    internal = generation["internal_accounts"]
-    bank = str(internal["src_bank_id"])
-    owner = str(internal["owner_entity_key"])
-    desk = internal["cash_desk"]
-    if desk.get("per") != "branch_region":
-        raise InjectionError("internal_accounts.cash_desk.per: only branch_region is implemented")
-    regions = [
-        code
-        for code, _ in weighted_options(generation["entities"]["branch_regions"], "branch_regions")
-    ]
-    accounts = {}
-    for region in regions:
-        number = f"{desk['account_number_prefix']}:{region}"
-        accounts[region] = (number, account_id(bank, number, seed=seed))
-    return party_id(owner, seed=seed), owner, accounts
+def genuine_deposit_times(legs: pa.Table, cfg: StructuringConfig, desk: CashDesk) -> list[dt.time]:
+    """Times of day of the sample's genuine cash deposits, sorted (with repeats).
+
+    Planted deposits draw their clock time from this empirical distribution.
+    A fixed "branch hours" window made them recognisable: measured with the old
+    10:00-16:00 window, 100% of planted deposits fell in it against 24-26% of
+    genuine desk-routed cash deposits, which AMLworld spreads over all 24 hours.
+    """
+    desks = {aid for _, aid in desk.accounts.values()}
+    return sorted(
+        r["txn_timestamp"].time()
+        for r in legs.select(
+            ["leg_side", "account_id", "txn_type", "channel", "txn_timestamp"]
+        ).to_pylist()
+        if r["leg_side"] == "C"
+        and r["txn_type"] == cfg.txn_type
+        and r["channel"] == cfg.channel
+        and r["account_id"] not in desks
+    )
 
 
 def inject_structuring(
-    subgraph: Subgraph, entities: Entities, generation: Mapping[str, Any]
+    subgraph: Subgraph, entities: Entities, legs: pa.Table, generation: Mapping[str, Any]
 ) -> Injection:
-    """Build the structuring cohort's pending legs, labels and cash-desk id maps."""
+    """Build the structuring cohort's pending legs and labels.
+
+    Args:
+        legs: The reskinned source legs, whose genuine cash deposits supply the
+            planted deposits' times of day.
+    """
     cfg = StructuringConfig.from_config(generation)
     seed = int(generation["seed"])
     window = entities.window
@@ -183,8 +174,13 @@ def inject_structuring(
             f"injection_window: window_days {cfg.window_days} exceeds the observed legitimate "
             f"span of {window.span_days} days"
         )
-    desk_party, desk_owner, desk_accounts = cash_desk_ids(generation)
-    internal_bank = str(generation["internal_accounts"]["src_bank_id"])
+    desk = CashDesk.from_config(generation)
+    clock = genuine_deposit_times(legs, cfg, desk)
+    if subgraph.hosts and not clock:
+        raise InjectionError(
+            "The sample holds no genuine cash deposit to take a time of day from; planted "
+            "deposits would need an invented clock"
+        )
     atype = dict(
         zip(
             entities.accounts["account_id"].to_pylist(),
@@ -196,11 +192,10 @@ def inject_structuring(
     pending: list[dict[str, Any]] = []
     labels: list[dict[str, Any]] = []
     plans: list[HostPlan] = []
-    minutes = (cfg.hours[1] - cfg.hours[0]) * 60
     for entity in subgraph.hosts:
         pid = subgraph.party_ids[entity]
         region = entities.branch_region[pid]
-        desk_account = desk_accounts[region][1]
+        desk_account = desk.account(region)
         rng = derived_rng(entity, seed=seed, namespace="structuring")
         deposit_accounts = sorted(
             (
@@ -222,8 +217,7 @@ def inject_structuring(
         for account in chosen:
             for n in range(rng.randint(cfg.deposits_min, cfg.deposits_max)):
                 day = start + dt.timedelta(days=rng.randint(0, cfg.window_days - 1))
-                minute = rng.randrange(minutes)
-                ts = dt.datetime.combine(day, dt.time(cfg.hours[0] + minute // 60, minute % 60))
+                ts = dt.datetime.combine(day, clock[rng.randrange(len(clock))])
                 lo, hi = cfg.band
                 ratio = (lo + (hi - lo) * Decimal(repr(rng.random()))).quantize(
                     cfg.ratio_quantum, rounding=ROUND_HALF_UP
@@ -283,27 +277,13 @@ def inject_structuring(
 
     pending.sort(key=lambda r: (r["order_key"], r["leg_side"]))
     labels.sort(key=lambda r: (r["pair_ref"], r["leg_side"]))
-    id_party = [{"party_id": desk_party, "src_entity_id": desk_owner, "generation_seed": seed}]
-    id_accounts = [
-        {
-            "account_id": aid,
-            "src_bank_id": internal_bank,
-            "src_account_number": number,
-            "party_id": desk_party,
-            "generation_seed": seed,
-        }
-        for _, (number, aid) in sorted(desk_accounts.items())
-    ]
     return Injection(
         pending=pa.Table.from_pylist(pending, schema=PENDING_SCHEMA),
         labels=pa.Table.from_pylist(labels, schema=LABEL_SCHEMA),
-        id_map_party=pa.Table.from_pylist(id_party, schema=ID_MAP_PARTY_SCHEMA),
-        id_map_account=pa.Table.from_pylist(id_accounts, schema=ID_MAP_ACCOUNT_SCHEMA),
         hosts=tuple(plans),
         stats={
             "structuring_hosts": len(plans),
             "structuring_deposits": sum(p.deposits for p in plans),
             "structuring_legs": len(pending),
-            "cash_desk_accounts": len(id_accounts),
         },
     )

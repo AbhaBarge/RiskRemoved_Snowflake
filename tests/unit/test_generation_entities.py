@@ -368,9 +368,14 @@ def test_beneficial_owners_are_sampled_individuals(
 def _flow_pairs(pipeline: dict[str, Any], owner: dict[str, str]) -> set[tuple[str, str]]:
     by_pair: dict[str, list[str]] = {}
     for leg in pipeline["legs"].to_pylist():
-        by_pair.setdefault(leg["pair_ref"], []).append(leg["account_id"])
+        if leg["account_id"] in owner:  # a cash pair's desk side belongs to no customer
+            by_pair.setdefault(leg["pair_ref"], []).append(leg["account_id"])
     return {
-        tuple(sorted((owner[a], owner[b]))) for a, b in by_pair.values() if owner[a] != owner[b]
+        tuple(sorted((owner[a], owner[b])))
+        for accts in by_pair.values()
+        if len(accts) == 2
+        for a, b in (accts,)
+        if owner[a] != owner[b]
     }
 
 
@@ -383,7 +388,10 @@ def test_colocated_clusters_follow_real_flow(
         device={"shared_fingerprint_pct": 100, "colocate_with_fund_flow_pct": 100},
         relationships={"fund_flow_min_txn_count": 1},
     )
-    assert rel.colocated_clusters and not rel.decoy_clusters
+    # The flow graph holds fewer accounts than a 100% target (the fixture's cash
+    # pair links a customer only to the desk, D27), so the shortfall is placed as
+    # decoys by design. Every co-located cluster must still follow real flow.
+    assert rel.colocated_clusters
     owner = dict(
         zip(
             rel.accounts["account_id"].to_pylist(),

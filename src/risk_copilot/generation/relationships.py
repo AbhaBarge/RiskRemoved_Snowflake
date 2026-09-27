@@ -106,6 +106,11 @@ def build_relationships(
     seen: dict[str, list[dt.datetime]] = defaultdict(list)
     pair_accounts: dict[str, list[str]] = defaultdict(list)
     for leg in legs.select(["pair_ref", "account_id", "txn_timestamp"]).to_pylist():
+        # The cash desk's side of a cash leg (D27) belongs to no customer. Skipping
+        # it also keeps the desk out of the flow graph below: otherwise it would be
+        # a hub joining every cash customer (D4).
+        if leg["account_id"] not in owner:
+            continue
         seen[owner[leg["account_id"]]].append(leg["txn_timestamp"])
         pair_accounts[leg["pair_ref"]].append(leg["account_id"])
 

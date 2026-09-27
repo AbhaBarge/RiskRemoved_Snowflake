@@ -38,7 +38,7 @@ import pyarrow as pa
 from faker import Faker
 
 from risk_copilot.generation import GenerationError
-from risk_copilot.generation.draws import account_type, draw, weighted_options
+from risk_copilot.generation.draws import account_type, branch_region, draw, weighted_options
 from risk_copilot.generation.graph import Subgraph
 from risk_copilot.generation.reskin import MONEY
 from risk_copilot.ids import derived_rng, stable_hash
@@ -212,7 +212,6 @@ def build_entities(
         if income["derive_from"] != "legit_inflow_window_annualised":
             raise EntityError("entities.income.derive_from: only legit_inflow_window_annualised")
         _check_dates(dates)
-        regions = weighted_options(ent["branch_regions"], "entities.branch_regions")
         risk = weighted_options(ent["risk_rating_distribution"], "risk_rating_distribution")
         kyc_status = weighted_options(ent["kyc_status_distribution"], "kyc_status_distribution")
         funds = {
@@ -241,7 +240,10 @@ def build_entities(
     net_flow: dict[str, Decimal] = defaultdict(Decimal)
     illicit_parties: set[str] = {subgraph.party_ids[h] for h in subgraph.hosts}
     for leg in legs.select(["pair_ref", "leg_side", "account_id", "amount_inr"]).to_pylist():
-        party = party_of_account[leg["account_id"]]
+        # A cash leg's desk side (D27) is the bank's, not a customer's.
+        party = party_of_account.get(leg["account_id"])
+        if party is None:
+            continue
         net_flow[leg["account_id"]] += leg["amount_inr"]
         if (leg["pair_ref"], leg["leg_side"]) in illicit_leg:
             illicit_parties.add(party)
@@ -288,7 +290,7 @@ def build_entities(
         latest = as_of - dt.timedelta(days=int(tenure["min"]) * _DAYS_PER_YEAR)
         customer_since = earliest + dt.timedelta(days=rng.randint(0, (latest - earliest).days))
 
-        region = draw(entity, seed=seed, namespace="branch_region", options=regions)
+        region = branch_region(entity, generation)
         branch = str(ent["branch_code_template"]).format(
             region=region, index=rng.randint(1, int(ent["branches_per_region"]))
         )

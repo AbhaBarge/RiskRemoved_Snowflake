@@ -28,6 +28,7 @@ import pyarrow as pa
 from risk_copilot.config import Settings
 from risk_copilot.generation import GenerationError
 from risk_copilot.generation.demo_entity import DemoEntityError, select_demo_entity
+from risk_copilot.generation.desk import CashDesk
 from risk_copilot.generation.entities import build_entities
 from risk_copilot.generation.eval_grain import EVAL_SCHEMA, build_eval_grain
 from risk_copilot.generation.graph import sample_subgraph
@@ -151,7 +152,8 @@ def run_generation(
     labels = label_source_legs(subgraph, patterns, location, generation, detection)
     entities = build_entities(subgraph, legs, labels, generation)
     relationships = build_relationships(entities, legs, generation)
-    injection = inject_structuring(subgraph, entities, generation)
+    injection = inject_structuring(subgraph, entities, legs, generation)
+    desk = CashDesk.from_config(generation)
 
     # ---- identifiers (once, over everything) ------------------------------- #
     pair_keys = {
@@ -195,7 +197,7 @@ def run_generation(
             }
             for e in subgraph.entities
         ]
-        + [{**r, "in_subgraph": True} for r in injection.id_map_party.to_pylist()],
+        + [{**r, "in_subgraph": True} for r in desk.id_map_party().to_pylist()],
         key=lambda r: r["party_id"],
     )
     id_account = sorted(
@@ -211,7 +213,7 @@ def run_generation(
             for e, keys in subgraph.accounts_by_entity.items()
             for k in keys
         ]
-        + [{**r, "in_subgraph": True} for r in injection.id_map_account.to_pylist()],
+        + [{**r, "in_subgraph": True} for r in desk.id_map_account().to_pylist()],
         key=lambda r: r["account_id"],
     )
 
@@ -301,6 +303,13 @@ def run_generation(
         "entities": dict(entities.stats),
         "relationships": dict(relationships.stats),
         "injection": dict(injection.stats),
+        "cash_desk": {
+            "accounts": len(desk.accounts),
+            "routed_payment_formats": sorted(desk.routed_formats),
+            "routed_source_pairs": sum(
+                1 for f in subgraph.pairs["payment_format"].to_pylist() if f in desk.routed_formats
+            ),
+        },
         "gates": [
             {
                 "name": g.name,

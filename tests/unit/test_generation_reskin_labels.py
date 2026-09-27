@@ -15,6 +15,8 @@ from typing import Any
 import pytest
 
 from risk_copilot.config import deep_merge, load_settings
+from risk_copilot.generation.desk import CashDesk
+from risk_copilot.generation.draws import branch_region
 from risk_copilot.generation.graph import Subgraph, sample_subgraph
 from risk_copilot.generation.labels import (
     LabelError,
@@ -107,9 +109,13 @@ def test_legs_reference_the_sampled_accounts(
     built: dict[str, Any], generation: dict[str, Any]
 ) -> None:
     sg: Subgraph = built["subgraph"]
+    desks = {aid for _, aid in CashDesk.from_config(generation).accounts.values()}
     known = set(sg.account_ids.values())
     for leg in reskin(built, generation).to_pylist():
-        assert {leg["account_id"], leg["counterparty_account_id"]} <= known
+        # Exactly one side of a leg may be a desk, and only on the cash channel.
+        sides = {leg["account_id"], leg["counterparty_account_id"]}
+        assert sides <= known | desks and len(sides & desks) <= 1
+        assert (leg["channel"] == "CASH") == bool(sides & desks)
     row1 = legs_by_row(reskin(built, generation))[(1, "D")]
     assert row1["account_id"] == sg.account_ids[("10", "8000A0010")]
     assert row1["counterparty_account_id"] == sg.account_ids[("20", "8000A0030")]
@@ -138,11 +144,55 @@ def test_cross_currency_pair_keeps_each_sides_amount(
 
 def test_channels_and_cash_txn_types(built: dict[str, Any], generation: dict[str, Any]) -> None:
     legs = legs_by_row(reskin(built, generation))
-    assert legs[(8, "C")]["channel"] == "CASH"
-    assert (legs[(8, "D")]["txn_type"], legs[(8, "C")]["txn_type"]) == ("WITHDRAWAL", "DEPOSIT")
+    assert legs[(8, "D")]["channel"] == legs[(8, "C")]["channel"] == "CASH"
+    # A cash pair is a deposit at the desk on both legs, like an injected one (D30).
+    assert (legs[(8, "D")]["txn_type"], legs[(8, "C")]["txn_type"]) == ("DEPOSIT", "DEPOSIT")
     assert legs[(9, "D")]["channel"] == "RTGS"  # Wire
     assert legs[(1, "D")]["txn_type"] == "TRANSFER"
     assert all(leg["reference_text"] is None for leg in legs.values())
+
+
+def test_cash_pair_is_a_deposit_from_the_payees_regional_desk(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    """D27/D30: desk -> payee only. The payer's side is not booked, so no leg of the
+    pair touches the payer and no customer-to-customer cash leg exists."""
+    sg: Subgraph = built["subgraph"]
+    desk = CashDesk.from_config(generation)
+    payer, payee = sg.account_ids[("10", "8000A0020")], sg.account_ids[("20", "8000A0030")]
+    owner = {k: e for e, keys in sg.accounts_by_entity.items() for k in keys}
+    payee_desk = desk.account(branch_region(owner[("20", "8000A0030")], generation))
+    legs = reskin(built, generation, retain_foreign_pct=0)
+    cash = legs_by_row(legs)
+    debit, credit = cash[(8, "D")], cash[(8, "C")]
+    assert (debit["account_id"], debit["counterparty_account_id"]) == (payee_desk, payee)
+    assert (credit["account_id"], credit["counterparty_account_id"]) == (payee, payee_desk)
+    assert debit["amount"] == -credit["amount"] == Decimal("-5000.00")
+    assert debit["pair_ref"] == credit["pair_ref"] == source_pair_ref(8)
+    row8 = [r for r in legs.to_pylist() if r[SRC_ROW_NUMBER] == 8]
+    assert payer not in {r["account_id"] for r in row8} | {
+        r["counterparty_account_id"] for r in row8
+    }
+
+
+def test_desk_deposits_are_always_in_rupees(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    """D31: routing the fixture's USD-to-USD pair (row 1) through the desk forces INR,
+    even when every other pair keeps its foreign currency."""
+    config = deep_merge(
+        generation,
+        {"fx": {"retain_foreign_pct": 100}},
+    )
+    fmt = next(
+        r["payment_format"] for r in built["subgraph"].pairs.to_pylist() if r[SRC_ROW_NUMBER] == 1
+    )
+    config["internal_accounts"]["cash_desk"]["routes_payment_formats"] = ["Cash", fmt]
+    legs = legs_by_row(reskin_pairs(built["subgraph"], config))
+    for side in ("D", "C"):
+        assert legs[(1, side)]["currency"] == "INR"
+        assert abs(legs[(1, side)]["amount"]) == Decimal("235039.20")
+    assert legs[(9, "D")]["currency"] == "USD"  # a non-routed pair still keeps its own
 
 
 def test_foreign_retention_is_per_pair_and_deterministic(

@@ -1,10 +1,11 @@
-# Build log -- Phase 2 (data synthesis, thin vertical slice)
+# Build log -- Phase 2 (data synthesis) and Phase 3 (load, pipeline, replay)
 
-Progress record for Phase 2. It covers what is done, what was decided and by
-whom, what was measured, and where the build departs from the plan. Kept current
-at each step.
+Progress record for Phases 2 and 3. It covers what is done, what was decided and
+by whom, what was measured, and where the build departs from the plan. Kept
+current at each step. Phase 3 has its own status table and step log below the
+Phase 2 sections; measured facts and decisions are numbered continuously.
 
-- **Plan:** `.snowflake/cortex/plans/phase2-data-synthesis-slice.plan.md`
+- **Plans:** `.snowflake/cortex/plans/phase2-data-synthesis-slice.plan.md`, `.snowflake/cortex/plans/phase3-load-dt-replay.plan.md`
 - **Build truth:** `docs/enhanced-architecture-diagrams.md`, BUILD STATUS (§S1-S6)
 - **Evidence:** `conf/generated/capabilities.ASHWINRAVI004.yml`
 
@@ -90,6 +91,10 @@ re-asserts them at run time. They are not only recorded here.
 | M20 | Faker `hi_IN` writes names and companies in **Devanagari** (`हर्शद कुमारजी`) and formats phones as `+91 0433218196` (leading 0, not a mobile). `en_IN` gives Latin-script Indian names with the same per-seed determinism (Faker 40.39.0) | Seeded provider calls on both locales | Locale switched to `en_IN`; phones generated from a configured mobile format. Devanagari names would make JAROWINKLER screening against the Latin-script OpenSanctions list meaningless |
 | M21 | **Legitimate activity ends on 2022-09-10.** 99.98% of the 5,078,345 pairs fall on 09-01..09-10; 09-11..09-18 holds 1,108 pairs, **655 illicit (59%)**. 109 of 370 attempts (29%) run into the tail. dev's sample has no pair after 09-10; demo's has 452 legit / 652 illicit pairs there | Pair counts per calendar day over the ledger; per-attempt last-row day; the same over each profile's sample | The usable legit window is **10 days**, not 18. The income span is measured over legit legs (D19) and the structuring window goes 14 -> 7 (D18). The tail is itself a temporal label proxy inherited from AMLworld; cut at 09-10 (D25) |
 | M22 | With the 09-10 cut, demo's illicit rate falls **5.44% -> 3.06%** (all 261 surviving attempts). Seeding N attempts per typology: 40 -> 3.03%, 30 -> 2.78%, **25 -> 2.51%**, **20 -> 2.06%**, 15 -> 1.89%. At 20, every typology keeps exactly 20 attempts (160 captured) | Full sample -> reskin -> entities -> inject on demo, per N | N = 20 (D26) |
+| M23 | **The cash desk was a label proxy.** On the `b450d3a` dev output, all **196 of 196** injected legs touch a cash-desk account and **0 of 9,862** source legs do: after load, "counterparty is the cash desk" would select exactly the planted rows. Neither `label_leakage` scan can see it, because the desk exists only in the ID maps | Desk account ids from `ID_MAP_ACCOUNT` (`src_bank_id = INTERNAL`) against both leg files | D27 |
+| M24 | **Booking both halves of a cash pair leaves a twin.** With payer -> desk + desk -> payee (the first D27 build), **598/598** dev and **7,822/7,822** demo genuine deposits have a same-minute, equal-INR customer withdrawal; **0/98** and **0/405** planted deposits do -- nor does any planted amount equal *any* withdrawal in the window (0/98, 0/405), so moving the withdrawal in time would not help | Self-join of desk deposits on (timestamp, amount) against customer debits, both profiles | D30 |
+| M25 | **The fixed branch-hours window was a tell.** AMLworld spreads cash over all 24 hours: **25.6%** (dev) / **24.2%** (demo) of genuine desk deposits fall in 10:00-16:00, against **100%** of planted ones under D22. With times drawn from the genuine deposits: planted **28.7%** / **23.2%**, and 23 / 24 distinct hours | Hour histogram of desk-deposit credit legs, before and after D29 | D29 |
+| M26 | **A retained foreign currency marked genuine cash deposits.** `fx.retain_foreign_pct` kept a foreign currency on **35 of 598** dev / **338 of 7,822** demo genuine desk deposits; no planted deposit is ever foreign. After D31: 0 / 0 (all legs: 3.61% / 4.49% foreign) | Currency of desk-deposit credit legs | D31 |
 
 ---
 
@@ -118,11 +123,16 @@ re-asserts them at run time. They are not only recorded here.
 | D19 | 09-26 | Income annualisation (D1) and all date anchors use the span of **legitimate** sampled legs | Build | M21. Measured over all legs, demo's illicit tail stretches the span to 18 days and understates legit income by 10/18 |
 | D20 | 09-26 | A host needs at least `accounts_per_party_min` **deposit** accounts (`deposit_account_types: [SAVINGS, CURRENT]`). Account type is a pure function of the account id (`draws.account_type`), shared by sampler and entity builder | Build | A cash deposit into a LOAN or FD account is not a structuring pattern a bank would recognise |
 | D21 | 09-26 | Faker locale `hi_IN` -> `en_IN`; Indian mobile numbers from a configured format | Build | M20 |
-| D22 | 09-26 | Structuring deposits fall in branch hours (`deposit_hours: [10, 16]`, minute resolution); one `window_days` burst per host at a hashed offset inside the legit window | Build | Deposits at arbitrary clock times or in the illicit tail would be recognisable without any rule |
+| D22 | 09-26 | Structuring deposits fall in branch hours (`deposit_hours: [10, 16]`, minute resolution); one `window_days` burst per host at a hashed offset inside the legit window | Build | Deposits at arbitrary clock times or in the illicit tail would be recognisable without any rule. **Clock part superseded by D29** (M25: the window was itself the tell) |
 | D23 | 09-26 | `EVAL_GRAIN_PARTY_MONTH.typology_id` = the month's dominant typology (most illicit legs, smallest id on ties); `expected_rule_ids` = the **union** over every typology present | Build | One party can be in two typologies; recall for each rule must count it |
 | D24 | 09-26 | The demo hero must have been **constructed** to trip every `must_trigger_rules` entry (its eval grain expects them all). Otherwise `generate` fails (`fail_if_not_found`) | Build | Demo lists RAPID_CREDIT_VELOCITY and SHARED_DEVICE_CLUSTER, whose cohorts do not exist yet; pinning a party that cannot show the story would repeat GAP-18 |
 | D25 | 09-27 | **The ledger is cut at 2022-09-10** (`source.window_end`). Later pairs are excluded, and every attempt reaching past the cut is dropped whole (109 of 370) | **User** | M21: after 09-10 activity is 59% laundering, so "active late" would be a label proxy that inflates any detection metric. All 8 typologies survive |
 | D26 | 09-27 | Demo seeds **20 attempts per typology** (`subgraph.attempts_per_typology`), chosen by content hash; the rest leave with their pairs | **User** chose "fewer laundering cases"; 20 set by measurement (M22) | Seeding every attempt put demo at twice the 2.50% ceiling (D6). 20 is the most per typology that clears it with margin |
+| D27 | 09-27 | **Every AMLworld Cash pair is posted through the branch cash desk** (`internal_accounts.cash_desk.routes_payment_formats: [Cash]`), like the planted deposits. The desk is per region of the customer it serves | **User** (after the plain-language explanation of M23) | Genuine and planted cash must share one shape, or the desk is the label. It is also how core banking books cash |
+| D28 | 09-27 | Drop and re-create the empty dev `RAW_AMLWORLD_TRANS` at `NUMBER(20,6)` during Phase 3 step 2, after re-checking it has 0 rows | **User** | M14; the only destructive step, approved once for that step |
+| D29 | 09-27 | Planted deposits take their **clock time from the sample's genuine cash deposits** (`deposit_time_of_day: genuine_cash_deposits`, the empirical times, drawn per deposit); no clock window is configured | Build, within the approved step-1 residual-tell scan | M25 |
+| D30 | 09-27 | **Cash is a deposit only:** a Cash pair becomes the single pair *payee's desk -> payee*, both legs DEPOSIT. The payer's side is not booked. Supersedes D27's first build (payer -> desk + desk -> payee) | **User** ("we genuinely don't know where that cash came from") | M24: booking the payer's withdrawal left a perfect twin. The payer-to-payee link survives only via `TXN_LABELS.src_row_number` -> `RAW_AMLWORLD_TRANS`; costs listed in step 1 below |
+| D31 | 09-27 | Desk-routed deposits are always in INR (`retain_foreign_pct` does not apply to them) | Build, within the residual-tell scan | M26; an over-the-counter deposit at an Indian branch credits rupees |
 
 ---
 
@@ -413,3 +423,90 @@ re-asserts them at run time. They are not only recorded here.
 - **Phase 3 obligation (M14):** `RAW_AMLWORLD_TRANS.amount_received` / `amount_paid` are `NUMBER(20,2)`, so COPY would round Bitcoin's 6 dp values (`0.025852` -> `0.03`) in a table documented as verbatim. Snowflake cannot change a NUMBER column's scale in place, so the fix is `NUMBER(20,6)` in the DDL plus a drop and re-create of the (empty) dev table. That is a destructive step, so it is left for `load` and not applied now. Generated RAW tables are unaffected: Bitcoin is excluded before reskin (D9).
 - **Commits:** everything without a credential is committed at the user's standing request, on `feature/ashwinAnalyze`, not pushed (`b8b94b4`, `85c862c`, then one commit per step). Before each commit, the actual secret values from `.env`, `connections.toml` and the key file are compared against every staged file; counts only are printed. `.env` stays gitignored.
 - **`docs/enhanced-architecture-diagrams.md` §S4/§S5** corrected in step 8 from the measured facts (see step 8 below).
+
+---
+
+# Phase 3 -- load, dynamic tables, streams/tasks, replay harness
+
+Plan: `.snowflake/cortex/plans/phase3-load-dt-replay.plan.md`, approved 09-27. Dev
+thin slice only; demo `load` stays refused while its manifest says `passed: false`
+(D24).
+
+## Status
+
+| Step | Scope | State |
+|---|---|---|
+| 1 | Close the cash-desk tell in the generator (D27, D30), residual-tell scan (D29, D31), M18 test | **Done** |
+| 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | Next |
+| 3 | `policy` seed stage | |
+| 4 | `riskcopilot load` | |
+| 5 | Dynamic tables for the structuring slice | |
+| 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | |
+| 7 | Post-load verify: signal_yield, hero promotion | |
+| 8 | Replay harness, docs | |
+
+## Findings made while planning (P1-P7)
+
+| # | Finding | Source |
+|---|---|---|
+| P1 | The cash-desk label proxy | Measured -- recorded as M23 |
+| P2 | `base.yml` lags are invalid: `DT_DIM_PARTY` (1 day) sits upstream of `DT_TRANSACTIONS_ENRICHED` (1 min / 60 min dev), `DT_PARTY_RELATIONSHIP` (1 day) upstream of `DT_SIGNALS_AGGREGATE` (60 min). Snowflake rejects a downstream table fresher than its upstream | Snowflake docs (target lag) |
+| P3 | `DT_TXN_DAILY_AGG` is `DOWNSTREAM` with only a view as consumer, so it would never refresh; and a view cannot sit between two dynamic tables | Docs |
+| P4 | `CURRENT_DATE()` in WHERE/QUALIFY is supported for incremental refresh, so an incremental table may join `V_POLICY_CLAUSE_CURRENT` -- to be measured | Docs |
+| P5 | All 38 dev tables exist and hold 0 rows; `demo` has no database | Live, ZC14131 |
+| P6 | Dev: 598 source cash pairs, 0 illicit, 1 legit in-band credit | Measured |
+| P7 | A party's region is a pure hash draw on its AMLworld entity key | Code |
+
+## Step 1 -- the cash desk stops being a label (D27, D29-D31)
+
+**What changed**
+- New `src/risk_copilot/generation/desk.py`: `CashDesk` owns the desk identity (moved out of `inject.py`), the per-region account, the routed payment formats, and the desk's `ID_MAP_*` rows. The pipeline now emits those rows itself, so they exist whether or not any cohort is injected.
+- `draws.branch_region()`: the region draw, shared by entities and reskin (identical values to before).
+- `reskin.py`: a pair whose format is in `routes_payment_formats` becomes *payee's regional desk -> payee*, both legs the format's credit type (DEPOSIT), always in INR (D30, D31). Every other pair is unchanged.
+- `inject.py`: planted deposit times are drawn from the sample's genuine cash deposits (D29); `deposit_hours` is gone. `inject_structuring` now takes the reskinned legs. It fails rather than invent a clock if the sample has no genuine cash deposit.
+- `entities.py` / `relationships.py`: legs on the desk are skipped (no customer owns them), which also keeps the desk out of the shared-device flow graph (D4).
+- `validate.py`: `benford` and `degree_distribution` exclude the bank's own accounts; the desk would otherwise be one hub joined to every cash customer.
+- `conf/generation.yml`: `internal_accounts.cash_desk.routes_payment_formats: [Cash]`, `injection.structuring.deposit_time_of_day`, and comments rewritten with the measurements.
+- M18 cleanup: `test_dev_cohort_is_sized_for_the_illicit_rate_band` replaced by `test_worst_case_reserve_fits_the_leg_budget` (both profiles), which asserts what the division actually checked. The rate is left to the blocking `illicit_rate_pct` gate.
+
+**What D30 costs** (the drawbacks of deposit-only)
+- **The payer loses a debit.** A's account no longer shows the cash leaving: its window outflow and closing balance omit it. A is still a customer if it has other activity; on dev, the 598 routed pairs remove 598 payer-side legs.
+- **The visible cash link between two customers is gone.** No customer-to-customer cash leg exists in RAW (measured: 0 on both profiles). A graph rule cannot follow cash hand-offs -- as a real bank cannot. The link is recoverable only for evaluation, via `TXN_LABELS.src_row_number` -> `RAW_AMLWORLD_TRANS` (admin-only).
+- **Sampling still follows cash edges.** The subgraph BFS runs over the source ledger, so a payer can be sampled because of a cash hand-off that is not booked. That makes those parties slightly less connected in the visible data than their sampling reason suggests.
+- **Illicit cash rows keep a label but lose a leg.** The ledger's 108 illicit Cash pairs (0 on dev) are labelled on the desk leg and the payee credit only. For graph typologies this is nothing: 3,208 of 3,209 attributed illicit rows are ACH (M6).
+
+**Tests:** 378 passed (371 before). New or changed:
+- cash pair shape (desk -> payee only, payer untouched);
+- desk deposits forced to INR (a routed USD-to-USD pair);
+- every desk leg on the cash channel, and only there;
+- planted clock times drawn from genuine ones, plus the no-cash failure and the unknown-mode failure;
+- the D27 config coherence: the routed format maps to the injected channel and txn_type;
+- the reserve-fits-budget test.
+
+Tests that had counted the desk as a customer were corrected: the eval-grain leg total, the shared-device flow helper, and the 100%-co-location test, which now allows the decoys the smaller flow graph forces.
+
+**Real data**
+
+| Profile | Legs (source + injected) | Illicit | Genuine desk deposits | Planted | Blocking failures |
+|---|---|---|---|---|---|
+| dev | 9,862 + 202 = 10,064 | **2.047%** (206) | 598 | 101 | none; hero P-754971478708 unchanged |
+| demo | 163,182 + 812 = 163,994 | **2.057%** (3,374) | 7,822 | 406 | `demo_entity` only (D24) |
+
+- Dev ran twice byte-identical (12 files).
+- The tell checks all close on both profiles:
+  - identical (txn_type, channel) on every desk leg;
+  - 0 customer-to-customer cash legs;
+  - 0 twins;
+  - hours within 3 points of each other (M25);
+  - 0 foreign desk deposits.
+- The false-positive control for STRUCTURING_CROSS_ACCOUNT holds genuine in-band desk deposits: 1 on dev (1 account), 53 on demo (11 accounts).
+
+**Departures from the Phase 3 plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| Two pairs per cash row (payer -> desk, desk -> payee), 4-leg budget accounting in `graph.py` and `labels.py` | One pair, desk -> payee; `graph.py` and `labels.py` unchanged | D30 (M24). The two-pair version was built, measured, and removed |
+| Desk helpers in `draws.py` | `branch_region` in `draws.py`; the desk in its own `desk.py` | The desk is identity, not a draw |
+| Scan and fix the hour tell only | Hour (D29) and currency (D31) | The scan found both |
+
+**Verification:** 378 passed; ruff, mypy (27 files), lint (dev + demo, 6 templates each) clean; `doctor --profile dev` exit 0, 0 failed. No SQL changed.

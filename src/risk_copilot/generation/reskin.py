@@ -9,6 +9,16 @@ keeps its own side's amount and currency (``legs.use_side_specific_amounts``):
 So money is conserved per currency, and a cross-currency pair keeps both of its
 real amounts.
 
+**Cash is a deposit at the desk (D27, D30).** A pair whose payment format is in
+``internal_accounts.cash_desk.routes_payment_formats`` is posted as ONE pair:
+the payee's regional cash desk -> the payee, both legs the format's credit type
+-- the same shape as an injected structuring deposit, so neither the desk nor
+the pair structure singles out the planted rows
+(:mod:`~risk_copilot.generation.desk`). The payer's side is not booked: a
+counter deposit says nothing about where the cash came from, and posting the
+payer's withdrawal too would leave every genuine deposit with an equal-amount
+twin that no planted deposit has (measured: 598/598 vs 0/98 on dev).
+
 Conversion is :class:`~decimal.Decimal` end to end. Rates come from
 ``fx.rates_to_inr``. A currency with no rate or ISO code, or a payment format
 with no channel when ``channel_default`` is null, fails rather than being
@@ -33,6 +43,8 @@ from typing import Any
 import pyarrow as pa
 
 from risk_copilot.generation import GenerationError
+from risk_copilot.generation.desk import CashDesk
+from risk_copilot.generation.draws import branch_region
 from risk_copilot.generation.graph import Subgraph, pair_content_key
 from risk_copilot.generation.source import SRC_ROW_NUMBER
 from risk_copilot.ids import derived_rng, stable_hash, txn_leg_id, txn_pair_id
@@ -164,37 +176,36 @@ class ReskinConfig:
 def reskin_pairs(subgraph: Subgraph, generation: Mapping[str, Any]) -> pa.Table:
     """Two legs per sampled pair, in :data:`LEG_SCHEMA`, sorted by ``order_key``."""
     cfg = ReskinConfig.from_config(generation)
+    desk = CashDesk.from_config(generation)
     ids = subgraph.account_ids
+    owner = {k: e for e, keys in subgraph.accounts_by_entity.items() for k in keys}
     records: list[dict[str, Any]] = []
     for row in subgraph.pairs.to_pylist():
         content = pair_content_key(row)
         foreign = cfg.retains_foreign(content)
         fmt = row["payment_format"]
         channel = cfg.channel(fmt)
-        payer = ids[(row["from_bank"], row["from_account"])]
-        payee = ids[(row["to_bank"], row["to_account"])]
+        payee_key = (row["to_bank"], row["to_account"])
+        payee = ids[payee_key]
         ref = source_pair_ref(row[SRC_ROW_NUMBER])
+        received = (row["amount_received"], row["receiving_currency"])
+        if fmt in desk.routed_formats:
+            # A counter deposit at an Indian branch credits rupees, like every
+            # planted one: a retained foreign currency here marked 35 of 598 dev
+            # (338 of 7,822 demo) genuine cash deposits as never planted (D31).
+            foreign = False
+            credit_type = cfg.txn_type(fmt, "credit")
+            payer = desk.account(branch_region(owner[payee_key], generation))
+            paid, debit_type = received, credit_type
+        else:
+            payer = ids[(row["from_bank"], row["from_account"])]
+            paid = (row["amount_paid"], row["payment_currency"])
+            debit_type, credit_type = cfg.txn_type(fmt, "debit"), cfg.txn_type(fmt, "credit")
         sides = (
-            (
-                "D",
-                payer,
-                payee,
-                row["amount_paid"],
-                row["payment_currency"],
-                cfg.debit_sign,
-                "debit",
-            ),
-            (
-                "C",
-                payee,
-                payer,
-                row["amount_received"],
-                row["receiving_currency"],
-                cfg.credit_sign,
-                "credit",
-            ),
+            ("D", payer, payee, paid, cfg.debit_sign, "debit", debit_type),
+            ("C", payee, payer, received, cfg.credit_sign, "credit", credit_type),
         )
-        for side, account, counterparty, amount, currency, sign, role in sides:
+        for side, account, counterparty, (amount, currency), sign, role, txn_type in sides:
             inr = cfg.money(amount * cfg.rate(currency))
             if foreign:
                 leg_currency = cfg.iso(currency)
@@ -213,7 +224,7 @@ def reskin_pairs(subgraph: Subgraph, generation: Mapping[str, Any]) -> pa.Table:
                     "amount": sign * leg_amount,
                     "currency": leg_currency,
                     "amount_inr": sign * inr,
-                    "txn_type": cfg.txn_type(fmt, role),
+                    "txn_type": txn_type,
                     "channel": channel,
                     "reference_text": None,
                 }

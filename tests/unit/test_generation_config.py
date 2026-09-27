@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from risk_copilot.config import Settings, load_settings
+from risk_copilot.generation.graph import reserved_injection_legs
 from risk_copilot.ids import normalise_bank_id
 from risk_copilot.pipeline.deploy import Deployer, split_statements
 
@@ -233,17 +234,31 @@ def test_dev_seeds_from_the_slice_hosts_and_demo_from_the_patterns(repo_root: Pa
     assert demo["subgraph"]["seed_source"] == "laundering_patterns"
 
 
-def test_dev_cohort_is_sized_for_the_illicit_rate_band(repo_root: Path) -> None:
-    dev = load_settings(repo_root=repo_root, profile="dev").generation
-    cohort = dev["injection"]["structuring"]
-    worst_case_legs = (
-        cohort["cohort_parties"]
-        * cohort["accounts_per_party_max"]
-        * cohort["deposits_per_account_max"]
-        * 2
-    )
-    ceiling = dev["validation"]["illicit_rate_pct"]["max"]
-    assert 100 * worst_case_legs / dev["subgraph"]["max_transactions"] <= ceiling
+@pytest.mark.parametrize("profile", ["dev", "demo"])
+def test_worst_case_reserve_fits_the_leg_budget(repo_root: Path, profile: str) -> None:
+    """What the old cohort-sizing test's division really checked.
+
+    It divided the worst-case injected legs by ``max_transactions`` and compared
+    that with the illicit-rate ceiling -- optimistic, because induced samples are
+    far sparser than the budget (M18). The rate itself is the blocking
+    ``illicit_rate_pct`` gate, over the real legs; this checks only that the
+    reserve leaves room for source legs at all.
+    """
+    generation = load_settings(repo_root=repo_root, profile=profile).generation
+    assert reserved_injection_legs(generation) < generation["subgraph"]["max_transactions"]
+    assert generation["validation"]["illicit_rate_pct"]["fail_build"] is True
+
+
+def test_desk_routed_cash_posts_like_an_injected_deposit(settings: Settings) -> None:
+    """D27: genuine and planted cash deposits must share one shape at the desk."""
+    generation = settings.generation
+    cohort = generation["injection"]["structuring"]
+    routed = generation["internal_accounts"]["cash_desk"]["routes_payment_formats"]
+    assert routed
+    for fmt in routed:
+        assert generation["channel_map"][fmt] == cohort["channel"]
+        assert generation["txn_types"]["by_format"][fmt]["credit"] == cohort["txn_type"]
+    assert cohort["debit_side"] == "cash_desk"
 
 
 # --------------------------------------------------------------------------- #
@@ -279,6 +294,7 @@ def test_deferred_amount_table_lives_in_ground_truth(settings: Settings) -> None
     gt_section = rendered.split(f"USE SCHEMA {settings.fq('ground_truth')};", 1)
     assert len(gt_section) == 2
     assert "CREATE TABLE IF NOT EXISTS INJECTED_TXN_PENDING" in gt_section[1]
-    assert "amount_ctr_ratio" in table_columns(settings, "04_audit_and_ground_truth.sql")[
-        "INJECTED_TXN_PENDING"
-    ]
+    assert (
+        "amount_ctr_ratio"
+        in table_columns(settings, "04_audit_and_ground_truth.sql")["INJECTED_TXN_PENDING"]
+    )

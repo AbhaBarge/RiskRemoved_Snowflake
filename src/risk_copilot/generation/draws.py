@@ -43,6 +43,18 @@ def draw(key: object, *, seed: int, namespace: str, options: Sequence[tuple[str,
     return weighted_choice(derived_rng(key, seed=seed, namespace=namespace), options)
 
 
+def branch_region(entity_key: str, generation: Mapping[str, Any]) -> str:
+    """The branch region of AMLworld entity ``entity_key`` (``entities.branch_regions``).
+
+    Shared by the entity builder and by reskin, which must post a cash leg to
+    the payer's or payee's regional cash desk before any party record exists.
+    """
+    options = weighted_options(generation["entities"]["branch_regions"], "entities.branch_regions")
+    return draw(
+        entity_key, seed=int(generation["seed"]), namespace="branch_region", options=options
+    )
+
+
 def account_type(account_id_value: str, generation: Mapping[str, Any]) -> str:
     """The account type of ``account_id_value`` (``entities.account_types``)."""
     options = weighted_options(generation["entities"]["account_types"], "entities.account_types")
