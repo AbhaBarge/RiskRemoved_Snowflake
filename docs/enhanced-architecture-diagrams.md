@@ -36,7 +36,7 @@
 
 # BUILD STATUS — read this before the diagrams
 
-**Last updated:** 2026-09-23
+**Last updated:** 2026-09-27
 
 The 18 diagrams below remain the **design intent**. This section is the **build
 truth**, and where the two disagree, this section wins. Diagram-level
@@ -49,16 +49,17 @@ corrections are listed in §S4.
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Repo scaffold, three-tier config, CLI, `doctor`, idempotent SQL deployer | **Done** |
-| 1 | Bootstrap + full DDL — 28 tables across 7 schemas | **Done, deployed** |
-| 2 | Data synthesis — subgraph sampling, ID maps, reskin, injection, labels, validation gates | Next |
-| 3 | Load, dynamic tables, streams/tasks, replay harness | Pending |
+| 1 | Bootstrap + full DDL — 38 tables across 7 schemas | **Done, deployed** |
+| 2 | Data synthesis — subgraph sampling, ID maps, reskin, injection, labels, validation gates | **Done for the dev slice** — `riskcopilot --profile dev generate` passes every blocking gate on the real HI-Small files, byte-identical per seed. Demo blocked on two decisions (illicit rate 5.44% > 2.50%; the 09-11..09-18 tail) and on its unbuilt rapid-credit / device-cluster cohorts. Detail: `docs/build-log.md` |
+| 3 | Load, dynamic tables, streams/tasks, replay harness | Next |
 | 4 | Policy ingestion, Cortex Search, semantic view, agent, 8 procedures | **Blocked** — see §S2 |
 | 5 | Governance, ML, eval suites, automations, Streamlit | **Partly blocked** — see §S3 |
 
-Verified: `mypy --strict` clean, `ruff` clean, 105 unit tests passing, all SQL
-templates rendering for both profiles, `deploy --stage bootstrap` idempotent
-across two consecutive runs (24 + 105 statements), key-pair auth working
-unattended with no interactive prompt.
+Verified: `mypy --strict` clean, `ruff` clean, 365 unit tests passing, all SQL
+templates rendering for both profiles, `deploy --stage ddl` idempotent across two
+consecutive runs, key-pair auth working unattended with no interactive prompt.
+The measured facts (M#) and decisions (D#) referenced below are in
+`docs/build-log.md`.
 
 ### Repository facts a developer needs
 
@@ -72,8 +73,10 @@ src/risk_copilot/
   doctor.py      preflight: config, datasets, connection, capabilities, models
   cli.py         single entry point -- doctor | config | deploy | generate | load | replay | eval
   pipeline/      SQL deployer + offline template lint
+  generation/    Phase 2: source readers, Patterns parser, sampler, reskin, labels,
+                 entities, relationships, injection, eval grain, gates, writer
 sql/             Jinja templates, 12 ordered stages -- see sql/README.md
-tests/unit/      105 offline tests
+tests/unit/      365 offline tests; tests/fixtures/amlworld_mini is a hand-built slice
 data/MANIFEST.yml  dataset registry with SHA-256; payloads gitignored
 ```
 
@@ -282,7 +285,10 @@ and it lights up unchanged on a non-trial account.
 | Diagram | Stated | Correction |
 |---|---|---|
 | 2 | L2 is an "Agent-Based Simulator"; L3 via `AI_COMPLETE` | L2 is deterministic subgraph sampling + reskin + injection — no simulation. L3 is template-based until Cortex is available. |
-| 2 | "5.1K labelled laundering txns" | Actual: 3,209 illicit of 5,078,345 = **0.063%**, which is *below* the stated 0.1% band, not within it. Subgraph sampling raises it; `conf/generation.yml` asserts a 0.10–1.50% band. |
+| 2 | "5.1K labelled laundering txns" | Measured (M5): **5,177** illicit of 5,078,345 = **0.102%**. The Patterns file attributes **3,209** of them to 370 attempts across 8 typologies (M3); the other **1,968** are illicit with no attempt and stay labelled with a NULL typology. The earlier 0.063% counted the attributed rows only. The build gate band is 0.10–2.50% (D6); dev measures **1.99%**, demo **5.44%** (open decision). §25.1's figures are superseded. |
+| 2 | 18-day ledger treated as uniform | Measured (M21): **legitimate activity ends on 2022-09-10** — 99.98% of pairs fall on 09-01..09-10, while 09-11..09-18 is 59% laundering. Income is annualised over the measured *legit* span (D19); the structuring window is 7 days (D18). The tail is a temporal label proxy inherited from AMLworld (open decision). |
+| 2 | L1 names via Faker `hi_IN` | `hi_IN` writes Devanagari (M20), which breaks Jaro-Winkler screening against the Latin-script sanctions list. `en_IN` gives Indian names in Latin script. |
+| 3 | Bank ids used as-is | The ledger zero-pads bank ids (`010`), the accounts file does not (`10`): a naive join resolves nothing (M1). Normalised once, in `risk_copilot.ids`; 0 unresolved pairs measured through the generator. |
 | 3 | Snowpipe Streaming, Marketplace PEP share, live HTTP sanctions fetch | All cut. Replay harness uses batched `INSERT`; sanctions pre-loaded from `data/targets.simple.csv`; the demo has no network dependency. |
 | 4 | `DT_TXN_VELOCITY_FEATURES` as a dynamic table with rolling windows | **Not incrementally refreshable.** Decomposed into `DT_TXN_DAILY_AGG` (incremental-safe) + `V_TXN_VELOCITY_FEATURES` (summing view) + `DT_TXN_VELOCITY_1H`. |
 | 4 | One `DT_SIGNALS_FAST` holding 5 rules | Split into `DT_SIGNALS_FAST` (row-level, incremental) and `DT_SIGNALS_AGGREGATE` (aggregate/graph, 60 min). One non-incremental rule would degrade the whole table to full refresh every 5 minutes. |
@@ -295,7 +301,8 @@ and it lights up unchanged on a non-trial account.
 | 12 | 5 test suites | Suite 1 (detection F1) **and Suite 2 (text-to-SQL)** are buildable now — Analyst works, so score on result hash. The deterministic half of Suite 3 (citation resolution) also works. Suite 4 needs `AI_COMPLETE`; Suite 5 needs DMFs. |
 | 13 | Jira / Slack / Drive via MCP, agent-as-MCP-server | External Access Integration is trial-gated (509009). Automations run as Snowflake tasks writing to tables; outbound delivery and MCP exposure are out until the account is converted. |
 | 14 | Hero party `P-10042 / Rajesh Kumar` | Party ids are **generated**, so this is fiction. A selection step picks a party that provably trips every listed rule and pins it to `conf/generated/demo_entity.yml`. |
-| 15 | "16 tables" | Actual count is **28** once staging, ID maps, chunks, templates, proposals, watermark and eval tables are included. |
+| 15 | "16 tables" | Actual count is **38** (`sql/01_ddl`: 13 RAW/landing, 8 governance, 9 evidence chain, 8 audit + ground truth) once staging, ID maps, chunks, templates, proposals, watermark and eval tables are included. |
+| 15 | `RAW_TRANSACTIONS.source_ref` = `amlworld:<n>` / `inject:<cohort>` | **A value-level label leak** the column checks could not see: the prefix separates injected rows, the cohort name is a label, and `<n>` joins to `RAW_AMLWORLD_TRANS.is_laundering`. Now an opaque `UTR<16 hex>` token for every leg; pair ids are allocated in hash order so injected pairs interleave (D16). The leakage gate scans RAW *values* as well as column names. |
 | 18 | Snowpipe Streaming as future scope | Correct, and now also: replay inserts to `RAW_TRANSACTIONS` directly, and `ingested_at` is distinct from `txn_timestamp` so replay does not corrupt the event clock. |
 
 ---
@@ -309,13 +316,13 @@ with this list. Numbering here is independent.
 |---|---|---|
 | 1 | Two contradictory `RAW_TRANSACTIONS` definitions (pair-level AMLworld-shaped vs leg-level signed INR), with `is_laundering` in the table that feeds the semantic view | Three-table split (§S4). The label never enters `CURATED`. |
 | 2 | **L1 generated Faker parties with fresh ids while transactions referenced AMLworld hex accounts.** Every downstream join would return nothing — no income (kills `INCOME_ACTIVITY_MISMATCH`), no device (kills `SHARED_DEVICE_CLUSTER`), no region (kills RLS). | AMLworld keys are authoritative. `RAW.ID_MAP_PARTY` / `ID_MAP_ACCOUNT` derive surrogate ids deterministically from source keys via `risk_copilot.ids`; Faker only *dresses* preserved keys. Referential integrity holds by construction. |
-| 3 | Sampling strategy undefined; 5.08M transactions is unaffordable for a demo | Seed from the 370 laundering attempts' accounts, BFS 2 hops, cut to ~5K entities / ~10K accounts / ~400K legs. A leg is kept only if **both** sides resolve, so `counterparty_account_id` is never an orphan. |
-| 4 | `declared_annual_income` assigned at random makes the income rule fire on everyone or nobody | Derived from each party's observed **legitimate** 12-month inflow with a coverage ratio and lognormal noise; the illicit cohort deliberately under-declares at 35%. |
+| 3 | Sampling strategy undefined; 5.08M transactions is unaffordable for a demo | **Account-level** sampling (M17: accounts per entity are heavy-tailed — 22 entities hold >1,000, max 7,820 — so bringing a party's every account would put demo's seeds alone at 96,886 accounts). `demo` seeds from the surviving attempts' accounts; `dev` seeds from the structuring hosts. BFS 2 hops, hash-ranked, within hard party/account/leg budgets. A pair is kept only if **both** sides resolve; an attempt captured only partly, or touching an excluded pair (Bitcoin, M7; `Country`/`Direct` entities, M8), is dropped whole. Measured: dev 500 parties / 553 accounts / 10,058 legs; demo 5,000 / 10,000 / 133,008 with all 369 surviving attempts. |
+| 4 | `declared_annual_income` assigned at random makes the income rule fire on everyone or nobody | Derived from each party's observed **legitimate** inflow in the window, annualised over the measured legit span (the ledger has 10 legit days, not 12 months — M21), with a floored coverage ratio and lognormal noise; parties holding an illicit leg under-declare at 35%. No ceiling (M12). Measured on dev: legit inflow/declared p50 0.03, max 0.13, far below the 3.0 multiple. |
 | 5 | `device_fingerprint` at "~8% random" yields **zero** `SHARED_DEVICE_CLUSTER` hits, because the rule needs a shared device **and** a fund flow between the accounts | 70% of shared-device clusters are placed on account groups that already transact; the remaining 30% are decoys the rule must correctly *not* fire on — a built-in false-positive control. |
-| 6 | "x83 for INR" across 14 currencies is wrong, and FX conversion cannot create Rs 9.4–9.8L clusters against a Rs 10L trigger | Per-currency rate table; structuring is a **separate labelled injection cohort** with amounts drawn as a fraction of the CTR threshold resolved from `POLICY_CLAUSE`. |
-| 7 | Illicit rate claimed "within the 0.1% band" at 0.063% | Band asserted as a build gate (0.10–1.50%), not claimed in prose. |
+| 6 | "x83 for INR" across 14 currencies is wrong, and FX conversion cannot create Rs 9.4–9.8L clusters against a Rs 10L trigger | Per-currency rate table, exact `Decimal` arithmetic. AMLworld has no structuring (M6: 3,208 of 3,209 attributed rows are ACH), so it is a **separate labelled injection cohort** on real clean hosts: cash deposits into 2–4 of each host's deposit accounts, in one 7-day burst inside the legit window, in branch hours, debited from a per-region cash desk that exists only in the ID maps. Amounts are stored as a fraction of the CTR threshold and resolved at load from `POLICY_CLAUSE` (D2). |
+| 7 | Illicit rate claimed "within the 0.1% band" at 0.063% | Band asserted as a blocking build gate (0.10–2.50%, D6), computed over every leg including injected ones. Measured: dev 1.99% passes; demo 5.44% fails until the open decision is made. |
 | 8 | Labels are transaction-grain; signals fire at party/account-window grain. "F1 > 0.7" had no denominator | `GROUND_TRUTH.EVAL_GRAIN_PARTY_MONTH` declares **party-month** as the evaluation grain, carrying `expected_rule_ids` per typology so per-rule recall needs no hand-written mapping. |
-| 9 | Patterns file identifies illicit rows only by `(timestamp, from_acct, to_acct, amount)` — not unique — and one pair becomes two legs | Leg-level labels with `match_confidence`; below 1.0 means the source tuple was ambiguous, so uncertainty shows up in the metrics instead of inflating them. |
+| 9 | Patterns file identifies illicit rows only by `(timestamp, from_acct, to_acct, amount)` — not unique — and one pair becomes two legs | Measured (M4): on the **full ten-field key** every one of the 3,209 Patterns rows matches exactly one ledger row, so attribution is 1:1 and `match_confidence` is 1.0. The `label_attribution` gate fails the build if a source revision ever breaks that, rather than letting confidence drop quietly. The Patterns grammar is parsed strictly; the `:` detail suffix is optional (M3), and a parser that required it silently dropped 136 attempts. |
 | 10 | Rolling-window velocity forces full refresh; one non-incremental rule degrades the whole signals table | Velocity decomposed; signals split fast/aggregate (§S4). Channel entropy defined as `-SUM(p*LN(p))` over channel shares — named four times in the original docs, never defined. |
 | 11 | **A dynamic table recomputes its full result set every refresh, so the stream + task inserts duplicate `SIGNAL` and `CASE` rows forever.** The original design had no idempotency story. | Deterministic `signal_business_key` = `rule_id\|party_id\|window_bucket[\|account_id]` with a unique constraint; the router `MERGE`s. Keyed on the observation window, not wall-clock time, so it is stable across refreshes. |
 | 12 | `SANCTIONS_MATCH_NEW` means "added since last check" — not expressible without persisted state | `RAW.SANCTIONS_SCREENING_WATERMARK`, single-row. |
@@ -323,7 +330,7 @@ with this list. Numbering here is independent.
 | 14 | RLS covered 2 dynamic tables; cases and findings were unprotected, and owner's-rights procedures **bypass RLS entirely** | `CASE_RECORD.branch_region` denormalised so policies can filter cases. Procedure rights are an explicit decision, not a default. |
 | 15 | Reviewer re-verification via Time Travel cannot work: `AT(TIMESTAMP=>)` binds per table reference, retention defaults to 1 day, and dynamic tables are not freely time-travellable. SHA-256 canonicalisation was never defined, so hashes would differ on row order, numeric formatting or null representation. | `EVIDENCE_QUERY_LOG.result_snapshot` + `risk_copilot.hashing`: versioned canonical form, row-order-insensitive, fixed decimal scale, reserved null sentinel, length-prefixed fields. |
 | 16 | FIU-IND assumed to publish an XML schema | It publishes a **form**. Our JSON-Schema transcription lives in `REF_FILING_TEMPLATES` with `schema_authority = INTERNAL_TRANSCRIPTION`. No FINGate conformance is claimed. |
-| 17 | Demo hero party hardcoded but ids generated | Selection step + pinned config (§S4). |
+| 17 | Demo hero party hardcoded but ids generated | Selection step + pinned config (§S4). The hero must have been *constructed* to trip every listed rule, and is pinned `PROVISIONAL_UNTIL_DETECTED` until the post-load check sees each rule fire. Dev: P-754971478708, MUMBAI, 1 of 10 candidates. Demo has no hero until its rapid-credit and device-cluster cohorts exist — `generate` fails rather than pin a party that cannot tell the story. |
 | 18 | No config layer; thresholds, FX rates, warehouse names and endpoints hardcoded across the docs | Three-tier config with enforcement (§S1). |
 | 19 | 30 SQL files, no runner, no ordering, no idempotency | 12 ordered stages, Jinja-templated, `CREATE OR ALTER`/`IF NOT EXISTS` throughout, offline lint, canonical stage ordering regardless of flag order. |
 | 20 | ML absent from the design | Tier 1: `JAROWINKLER_SIMILARITY` fuzzy screening (the original docs *cut* this as too complex — it is one built-in function). Future Scope documented with rationale in `conf/ml.yml`. **Hard boundary:** ML may rank and flag for review, never supply a number in an artifact — enforced by `RULE_DEFINITION.admissible_as_primary_evidence`. |
@@ -1916,10 +1923,10 @@ Not CSV. Structured as blocks delimited by `BEGIN LAUNDERING ATTEMPT - {TYPE}` /
 
 #### Key Metrics for Realism Validation
 
-- **Illicit rate:** 3,209 / 5,078,345 = **0.063%** — within the 0.1% target band
+- **Illicit rate:** ~~3,209 / 5,078,345 = 0.063% — within the 0.1% target band~~ **Superseded (§S4, M5):** 5,177 / 5,078,345 = **0.102%**; 3,209 of those are attributed to attempts, 1,968 are not
 - **Currencies:** US Dollar (dominant), Euro, Yuan, Rupee, UK Pound, Australian Dollar, Canadian Dollar, Swiss Franc, Yen, Mexican Peso, Ruble, Saudi Riyal, Shekel, Brazil Real
 - **Payment formats:** Reinvestment, Credit Card, ACH, Cheque, Cash, Wire
-- **Date range:** Starts 2022/09/01, spans multiple days
+- **Date range:** 2022-09-01 .. 2022-09-18, but **legitimate activity ends on 09-10** (99.98% of pairs; §S4, M21)
 
 #### Re-skinning Required for Indian Context
 
@@ -1929,7 +1936,7 @@ Not CSV. Structured as blocks delimited by `BEGIN LAUNDERING ATTEMPT - {TYPE}` /
 | ACH, Wire, Cheque, etc. | UPI, IMPS, NEFT, RTGS, CASH | Map: ACH→NEFT, Wire→RTGS, Cheque→Cheque, Cash→CASH, Credit Card→UPI, Reinvestment→IMPS |
 | US Dollar, Euro, etc. | INR (primary) + some forex | Majority → INR; keep ~5% as USD/EUR for cross-border signals |
 | Hex account IDs | Indian-style IDs | Prefix with branch codes, or keep hex (synthetic anyway) |
-| Entity Name patterns | Indian names | Use Faker `hi_IN` locale for L1 party generation |
+| Entity Name patterns | Indian names | Use Faker `en_IN` locale for L1 party generation (`hi_IN` produces Devanagari — §S4, M20) |
 
 #### Staging Table DDL (to be created during build)
 

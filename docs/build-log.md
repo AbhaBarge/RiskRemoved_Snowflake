@@ -22,7 +22,7 @@ at each step.
 | 5 | `entities.py` + `relationships.py` | **Done** |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | **Done** |
 | 7 | `validate.py`, writer, `riskcopilot generate` | **Done** |
-| 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+| 8 | Run on dev; record measured facts in BUILD STATUS and memory | **Done** for dev: `generate` passes on the real data. Two user decisions open (demo illicit rate; the 09-11..09-18 tail) |
 
 **Verification at the end of step 7:**
 
@@ -359,6 +359,16 @@ re-asserts them at run time. They are not only recorded here.
   | signal_yield | DEFERRED_TO_LOAD | 10 hosts constructed, each >= 2 accounts in band in window |
   | demo_entity | PASS | P-754971478708 "Kamya Dhar", MUMBAI, PROVISIONAL_UNTIL_DETECTED |
 
+### Step 8 -- the real run, and the design doc brought in line with it
+- `riskcopilot --profile dev generate` on the full HI-Small files: exit 0 at the first attempt, 18 s, every blocking gate passing (table in step 7). Two runs produced byte-identical files and pin.
+- M4 and M5 were confirmed **through the generator itself**: `label_attribution` saw `{1: 3209}`, and the ledger reader counted 5,177 illicit rows. The deferred §S4/§S5 corrections could therefore be made.
+- `docs/enhanced-architecture-diagrams.md` corrections:
+  - BUILD STATUS §S1: date, Phase 2 **Done for the dev slice** (and why demo is blocked), Phase 3 **Next**, 365 tests, the `generation/` package and the fixture
+  - §S1/§S4: table count **28 -> 38**, counted from the `CREATE TABLE` statements in `sql/01_ddl` (13 / 8 / 9 / 8)
+  - §S4: the base rate 0.063% -> **0.102%** (M5), with the 3,209 / 1,968 split and the 0.10-2.50% band (D6); new rows for the 10-day legit window (M21), `en_IN` (M20), bank-id padding (M1), and the `source_ref` value leak (D16)
+  - §S5 #3: account-level sampling (M17) and the measured sizes; #4: legit-span income and the measured ratio; #6: structuring as built (M6, D2/D4/D18/D20/D22); #7: the measured rates; #9: **1:1 attribution on the full key (M4)** replaces the assumed ambiguity, and the Patterns `:` finding (M3); #17: provisional, constructed hero (D24)
+  - §25.1: the 0.063% line struck through with the measured figure; the date range annotated with M21; `hi_IN` -> `en_IN`
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
@@ -393,4 +403,4 @@ re-asserts them at run time. They are not only recorded here.
   - ground-truth files need a stage the service role cannot read
 - **Phase 3 obligation (M14):** `RAW_AMLWORLD_TRANS.amount_received` / `amount_paid` are `NUMBER(20,2)`, so COPY would round Bitcoin's 6 dp values (`0.025852` -> `0.03`) in a table documented as verbatim. Snowflake cannot change a NUMBER column's scale in place, so the fix is `NUMBER(20,6)` in the DDL plus a drop and re-create of the (empty) dev table. That is a destructive step, so it is left for `load` and not applied now. Generated RAW tables are unaffected: Bitcoin is excluded before reskin (D9).
 - **Commits:** everything without a credential is committed at the user's standing request, on `feature/ashwinAnalyze`, not pushed (`b8b94b4`, `85c862c`, then one commit per step). Before each commit, the actual secret values from `.env`, `connections.toml` and the key file are compared against every staged file; counts only are printed. `.env` stays gitignored.
-- **`docs/enhanced-architecture-diagrams.md` §S4/§S5** still state 0.063% and assume label ambiguity. Corrected in step 8, once the dev run confirms M4/M5 through the generator itself.
+- **`docs/enhanced-architecture-diagrams.md` §S4/§S5** corrected in step 8 from the measured facts (see step 8 below).
