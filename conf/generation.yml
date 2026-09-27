@@ -13,7 +13,9 @@ seed: 20260922        # master seed; every sub-generator derives from it
 # one contradicted an assumption in the original design; the generator asserts
 # them at run time rather than trusting this comment.
 #
-#   * Ledger span is 2022-09-01 .. 2022-09-18: 18 days, not 12 months.
+#   * Ledger span is 2022-09-01 .. 2022-09-18: 18 days, not 12 months -- and
+#     LEGITIMATE activity ends on 09-10: 99.98% of pairs fall on 09-01..09-10,
+#     while 09-11..09-18 holds 1,108 pairs, 59% of them illicit (M21).
 #   * 5,078,345 pairs; 5,177 carry is_laundering=1 (0.102%). Only 3,209 of those
 #     are attributed to an attempt in the Patterns file; the other 1,968 are
 #     labelled illicit with no typology.
@@ -201,7 +203,14 @@ labels:
 # party's identity is stable even if the sample changes size.
 # ---------------------------------------------------------------------------
 entities:
-  faker_locale: hi_IN
+  # en_IN, not hi_IN (M20): hi_IN writes names and companies in Devanagari and
+  # formats phone numbers as "+91 0433218196". Core banking records, the
+  # OpenSanctions list and JAROWINKLER_SIMILARITY screening are all Latin-script;
+  # en_IN gives Indian names in Latin script with the same determinism.
+  faker_locale: en_IN
+  # Recorded in the generation manifest: Faker output is only reproducible on
+  # the same Faker version.
+  record_faker_version: true
   # Keyed on the AMLworld entity_name prefix ("Corporation #33520"). Measured
   # mix: Corporation 55,530 / Sole Proprietorship 55,369 / Partnership 55,170 /
   # Individual 134 / Country 2 / Direct 2.
@@ -248,6 +257,54 @@ entities:
     PENDING_REVIEW: 0.09
     EXPIRED: 0.03
 
+  # Dates are drawn relative to the ledger's first observed day (measured from
+  # the sampled legs, never written here), so every record predates the
+  # transactions it explains.
+  dates:
+    individual_age_years: { min: 21, max: 75 }
+    # customer_since is never earlier than this age (or than incorporation).
+    min_customer_age_years: 18
+    incorporation_years_ago: { min: 1, max: 40 }
+    customer_tenure_years: { min: 1, max: 15 }
+    kyc_review_max_days_ago: 730
+  nationality: IN
+  party_status: ACTIVE
+  account_status: ACTIVE
+  branches_per_region: 5
+  # Python str.format over region / index.
+  branch_code_template: "{region}-{index:02d}"
+  # Indian mobile numbers: +91, then a first digit in 6-9, then 9 more digits.
+  phone:
+    country_code: "+91"
+    first_digits: [6, 7, 8, 9]
+    subscriber_digits: 9
+  # Synthetic PAN: 5 letters, 4 digits, 1 letter; the 4th letter encodes the
+  # holder type, as on a real PAN (P = individual, C = company).
+  pan_holder_code:
+    INDIVIDUAL: P
+    LEGAL_PERSON: C
+  source_of_funds:
+    INDIVIDUAL:
+      - { code: SALARY, weight: 0.45 }
+      - { code: BUSINESS_INCOME, weight: 0.35 }
+      - { code: INVESTMENTS, weight: 0.12 }
+      - { code: PENSION, weight: 0.08 }
+    LEGAL_PERSON:
+      - { code: BUSINESS_REVENUE, weight: 0.80 }
+      - { code: INVESTMENT_INCOME, weight: 0.12 }
+      - { code: LOAN_PROCEEDS, weight: 0.08 }
+  # Account balances: a lognormal opening balance plus the account's net INR
+  # flow in the window, floored at zero.
+  balance:
+    opening_lognormal_mu: 11.5        # median ~ Rs 99K
+    opening_lognormal_sigma: 1.2
+  # Credit products carry a limit; everything else has NULL.
+  credit_limit:
+    account_types: [LOAN, CREDIT_CARD]
+    min_inr: 50000
+    max_inr: 2500000
+    round_to_inr: 10000
+
   # -------------------------------------------------------------------------
   # GAP-04 -- declared income MUST correlate with observed legitimate inflow,
   # or INCOME_ACTIVITY_MISMATCH fires on everybody or nobody. Income is
@@ -256,12 +313,13 @@ entities:
   # deliberately under-declares, which is what the rule is supposed to find.
   # -------------------------------------------------------------------------
   #
-  # The ledger spans 18 days, so there is no 12-month inflow to observe. The
-  # window's legit inflow is annualised by annualise_to_days / observed span,
-  # where the span is MEASURED from the sampled legs at run time, never written
-  # here. Measured effect: a legit party at median draws sits at an
-  # inflow-to-declared ratio of ~0.057 against INCOME_MISMATCH_MULTIPLE's 3.0,
-  # so noise alone does not fire the rule.
+  # The ledger spans 18 days, of which legitimate activity occupies 10 (M21), so
+  # there is no 12-month inflow to observe. The window's legit inflow is
+  # annualised by annualise_to_days / observed LEGIT span, where the span is
+  # MEASURED from the sampled legit legs at run time, never written here.
+  # Measured effect (M12, over an 18-day denominator): a legit party at median
+  # draws sits at an inflow-to-declared ratio of ~0.057 against
+  # INCOME_MISMATCH_MULTIPLE's 3.0, so noise alone does not fire the rule.
   #
   # ceiling_inr was REMOVED. Capping declared income below a party's real
   # capacity manufactures a mismatch: at Rs 25 cr it would have flagged 9,755
@@ -273,12 +331,16 @@ entities:
     annualise_to_days: 365
     coverage_ratio_mean: 1.15        # declared ~= annualised legit inflow / 1.15
     coverage_ratio_sigma: 0.28
+    # The coverage draw is normal, so it is floored: a draw near zero would
+    # declare an absurd income.
+    coverage_ratio_min: 0.30
     noise_lognormal_sigma: 0.22
     floor_inr: 180000
     round_to_inr: 10000
     # UNCALIBRATED for an 18-day window: at 0.35 only 104 of 3,255 AMLworld
     # launderers would fire. Recalibrated when INCOME_ACTIVITY_MISMATCH lands;
-    # it is not a thin-slice rule.
+    # it is not a thin-slice rule. Applied to every party holding an illicit
+    # leg (AMLworld-labelled or an injection host).
     illicit_cohort_under_declare_factor: 0.35
 
   # -------------------------------------------------------------------------
@@ -295,12 +357,18 @@ entities:
     colocate_with_fund_flow_pct: 70.0
     cluster_size_min: 3
     cluster_size_max: 5
+    # A co-located cluster spans accounts of at least this many DIFFERENT
+    # parties ("device sharing across unrelated customers", TM-15).
+    cluster_min_distinct_parties: 2
+    fingerprint_prefix: DFP-
+    fingerprint_hex_digits: 16
 
   relationships:
     shared_phone_pct: 4.0
     beneficial_owner_pct: 6.0
     # FUND_FLOW edges are derived from transactions, not generated.
     fund_flow_min_txn_count: 2
+    relationship_id_prefix: REL-
 
 # ---------------------------------------------------------------------------
 # Institution-owned accounts.
@@ -353,16 +421,23 @@ injection:
     # traffic, or it is an isolated island in the sample.
     host_requires_clean_history: true
     host_min_ledger_pairs: 1
+    # A cash deposit lands in a deposit account. A host qualifies only if at
+    # least accounts_per_party_min of its accounts draw one of these types
+    # (account type is a pure function of the account id, so sampling can check
+    # it), and injection deposits only into them.
+    deposit_account_types: [SAVINGS, CURRENT]
     accounts_per_party_min: 2
     accounts_per_party_max: 4
     deposits_per_account_min: 3
     deposits_per_account_max: 6
     # Asserted to lie within STRUCTURING_BAND by the injection_band gate.
     amount_band_pct_of_ctr: [0.90, 0.985]
-    # Was 21, which does not fit an 18-day ledger. Asserted <= the observed span
-    # and <= STRUCTURING_WINDOW_DAYS by the injection_window gate, so injected
-    # legs stay inside the real event clock.
-    window_days: 14
+    # 21 -> 14 (D8) -> 7 (D18). The ledger's LEGITIMATE activity spans 10 days
+    # (2022-09-01..09-10, M21); 09-11..09-18 is 59% laundering. Deposits are
+    # placed inside the measured legit window, and the injection_window gate
+    # asserts window_days <= that span and <= STRUCTURING_WINDOW_DAYS. A week-long
+    # burst leaves the placement room to vary per host.
+    window_days: 7
     channel: CASH
     txn_type: DEPOSIT
     debit_side: cash_desk            # see internal_accounts

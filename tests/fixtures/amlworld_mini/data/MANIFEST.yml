@@ -14,8 +14,10 @@
 #   * Sole Proprietorship hosts with 2-3 accounts
 #   * account number 8000A0070 at two banks, owned by different entities
 #   * one illicit ledger row no attempt attributes (2022/09/04 07:35)
-#   * one clean SoleProp entity (800A0000A, 2 accounts, legit pairs only): the
-#     only fixture entity that qualifies as a structuring host
+#   * one clean SoleProp entity (800A0000A, 3 accounts, legit pairs only): the
+#     only fixture entity that qualifies as a structuring host. Its accounts'
+#     hashed types are SAVINGS / LOAN / SAVINGS, so exactly 2 are deposit
+#     accounts; 10/8000A0102 has no ledger pairs.
 # ===========================================================================
 
 manifest_version: 1
@@ -29,7 +31,7 @@ datasets:
   amlworld_accounts:
     path: data/Kaggle/HI-Small_accounts.csv
     required: true
-    rows: 17
+    rows: 18
 
   amlworld_patterns:
     path: data/Kaggle/HI-Small_Patterns.txt

@@ -19,10 +19,12 @@ at each step.
 | 2 | `patterns.py` + positional ledger reader | **Done** |
 | 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | **Done** -- illicit-rate calibration open (M18) |
 | 4 | `reskin.py` + `labels.py` | **Done** |
-| 5 | `entities.py` + `relationships.py` | Pending |
+| 5 | `entities.py` + `relationships.py` | **Done** |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | Pending |
 | 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+
+**Verification at the end of step 5:** `pytest -q` 317 passed in 43 s; ruff, mypy (20 files) clean.
 
 **Verification at the end of step 4:** `pytest -q` 295 passed; ruff, mypy (17 files) and lint clean. Step 4 changed only SQL comments.
 
@@ -70,6 +72,8 @@ re-asserts them at run time. They are not only recorded here.
 | M17 | Accounts per entity are **heavy-tailed**: median 1; 102,689 entities have 1 account, 37,015 have 2-4, 22 have >1,000 (max 7,820). The launderers are the mega-entities: demo's 2,838 surviving seed parties own **96,886** accounts, while the attempts themselves touch only 3,156 | Group-by over the accounts file; seed set via `patterns.py` + `EntityOwnership` | Party-closed inclusion is impossible within a 10,000-account budget. Sampling is **account-level** (D13) |
 | M18 | Induced samples are far sparser than `max_transactions` assumes. **dev**: BFS saturates at 2 hops with no budget skip (450 parties / 502 accounts / 9,328 legs, 4 AMLworld illicit legs); 3 hops gives 687 accounts / 12,148 legs; 4 gives 857 / 13,634. **demo**: hits its budgets exactly (5,000 / 10,000) with all 369 surviving attempts captured, but only 66,223 pairs, **4.87% of them illicit before any injection** | `sample_subgraph` on the real files, per profile and hop count | Projected illicit rate vs the 2.50% ceiling. dev: expected 2.85% / worst 4.93% at 2 hops, 2.21% / 3.83% at 3, 1.97% / 3.43% at 4. demo: above the ceiling before injection. `test_dev_cohort_is_sized_for_the_illicit_rate_band` divides by `max_transactions` and is therefore optimistic. **Needs a decision** (open items) |
 | M19 | **3,701 of 490,891 legit AMLworld Cash pairs (0.75%)** convert to 90-99.9% of the CTR threshold; 110,458 are at or above it; 108 Cash pairs are illicit | Each Cash credit converted at `fx.rates_to_inr`, then divided by the `CTR_CASH_THRESHOLD` seed and compared with the `STRUCTURING_BAND` seed | Legit in-band cash deposits exist and form a natural false-positive control for `STRUCTURING_CROSS_ACCOUNT`. They must post as DEPOSIT (D17). Whether one host's legit deposits alone ever satisfy the rule is measured after load (D7) |
+| M20 | Faker `hi_IN` writes names and companies in **Devanagari** (`हर्शद कुमारजी`) and formats phones as `+91 0433218196` (leading 0, not a mobile). `en_IN` gives Latin-script Indian names with the same per-seed determinism (Faker 40.39.0) | Seeded provider calls on both locales | Locale switched to `en_IN`; phones generated from a configured mobile format. Devanagari names would make JAROWINKLER screening against the Latin-script OpenSanctions list meaningless |
+| M21 | **Legitimate activity ends on 2022-09-10.** 99.98% of the 5,078,345 pairs fall on 09-01..09-10; 09-11..09-18 holds 1,108 pairs, **655 illicit (59%)**. 109 of 370 attempts (29%) run into the tail. dev's sample has no pair after 09-10; demo's has 452 legit / 652 illicit pairs there | Pair counts per calendar day over the ledger; per-attempt last-row day; the same over each profile's sample | The usable legit window is **10 days**, not 18. The income span is measured over legit legs (D19) and the structuring window goes 14 -> 7 (D18). The tail is itself a temporal label proxy inherited from AMLworld (open items) |
 
 ---
 
@@ -94,6 +98,10 @@ re-asserts them at run time. They are not only recorded here.
 | D15 | 09-26 | The worst-case injected legs are reserved from `max_transactions` before sampling. An attempt captured only partly is dropped whole (`partial_attempts: drop`). The leg cut ranks legitimate pairs by a hash of their **content**, protecting attempt and host pairs | Build | Keeps the leg budget hard, applies D9's reasoning to sampling truncation, and keeps the sample independent of the ledger's row order |
 | D16 | 09-26 | `RAW_TRANSACTIONS.source_ref` is an **opaque** `UTR<16 hex>` token for every leg, source and injected alike, replacing the DDL's documented `amlworld:<n>` / `inject:<cohort>`. `txn_pair_id`s are allocated once, over source and injected pairs together, in hash order | Build | The documented format was a value-level label leak that the column-name gate cannot see: the prefix separates injected rows, the cohort is a label, and `<n>` joins to `RAW_AMLWORLD_TRANS.is_laundering`. Sequential ids would expose injected pairs as the tail. Provenance stays in `TXN_LABELS` |
 | D17 | 09-26 | AMLworld Cash pairs post as `WITHDRAWAL` (debit) / `DEPOSIT` (credit) on channel CASH; Credit Card as `PAYMENT`; everything else `TRANSFER` (`txn_types` in config) | Build | M19: legit cash credits land in `STRUCTURING_BAND` and must look like deposits, or the rule's false-positive control is meaningless |
+| D18 | 09-26 | Structuring `window_days` 14 -> **7**; deposits are placed inside the measured legit window | Build | M21. 14 days does not fit a 10-day legit window, and injected deposits in the illicit tail would be recognisable by timing alone |
+| D19 | 09-26 | Income annualisation (D1) and all date anchors use the span of **legitimate** sampled legs | Build | M21. Measured over all legs, demo's illicit tail stretches the span to 18 days and understates legit income by 10/18 |
+| D20 | 09-26 | A host needs at least `accounts_per_party_min` **deposit** accounts (`deposit_account_types: [SAVINGS, CURRENT]`). Account type is a pure function of the account id (`draws.account_type`), shared by sampler and entity builder | Build | A cash deposit into a LOAN or FD account is not a structuring pattern a bank would recognise |
+| D21 | 09-26 | Faker locale `hi_IN` -> `en_IN`; Indian mobile numbers from a configured format | Build | M20 |
 
 ---
 
@@ -226,6 +234,41 @@ re-asserts them at run time. They are not only recorded here.
 
   `source_ref` is unique in both.
 
+### Step 5 -- entities + relationships
+- `src/risk_copilot/generation/draws.py`: shared weighted draws from config distributions; `account_type()` used by both sampler and builder (D20).
+- `src/risk_copilot/generation/entities.py`, `build_entities()`:
+  - `RAW_PARTY_CBS`, `RAW_PARTY_KYC`, `RAW_ACCOUNTS` for every sampled party and account
+  - every attribute drawn per AMLworld key; Faker re-seeded per entity
+  - dates anchored to the first legit day (D19) and asserted to predate the window (`customer_since` respects `min_customer_age_years`; `opened_date` and `kyc_last_reviewed` fall between `customer_since` and the window start)
+  - PAN encodes the holder type; Aadhaar and occupation for individuals only; `kyc_note` NULL
+  - balance = lognormal opening + net window flow, floored at 0; credit limit only for credit products
+  - **declared income** (GAP-04, D1): legit window inflow x 365 / legit span / floored-normal coverage x lognormal noise, under-declared for parties holding an illicit leg and for hosts, floored, rounded, no ceiling
+  - exposes `legit_inflow_inr` for the `income_calibration` gate
+- `src/risk_copilot/generation/relationships.py`, `build_relationships()`:
+  - SHARED_PHONE pairs (the phone is copied)
+  - BENEFICIAL_OWNER (legal person -> sampled individual)
+  - SHARED_DEVICE clusters (GAP-05): co-located clusters grown along account flow edges with at least `fund_flow_min_txn_count` pairs; decoys whose parties never transact; both span >= 2 parties; unclustered accounts keep unique fingerprints
+  - edge ids are hashed and asserted unique
+- `conf/generation.yml`: locale (D21), `record_faker_version`, `dates`, `nationality`, statuses, branch template, `phone`, `pan_holder_code`, `source_of_funds`, `balance`, `credit_limit`, `income.coverage_ratio_min`, device cluster settings, `relationship_id_prefix`, `deposit_account_types`, `window_days: 7` (D18).
+- Fixture: host `800A0000A` gained a third account (`10/8000A0102`, SAVINGS, no pairs) so it qualifies under D20. Its original LOAN account was left in place; a new account number was appended.
+- Tests: `tests/unit/test_generation_entities.py` (21) + 1 graph test (deposit-account qualification). They cover:
+  - one record per sampled key; no label column in any output
+  - attribute stability across sample sizes
+  - PAN / phone / Aadhaar shapes; Latin-script names (M20)
+  - date ordering; legit-only window (M21)
+  - income floor, rounding, monotonicity in inflow, and under-declaration of exactly the illicit set
+  - phone copy; BO direction
+  - co-located clusters connected by flow; decoys with no party-level flow; unique solo fingerprints
+  - deterministic, unique edge ids; config guards
+- **Real data** (sample windows measured before D19; the dev window is 09-01..09-10):
+
+  | Profile | Time | Parties / accounts | Device clusters (co-located / decoy) | Shared-device accounts | Edges |
+  |---|---|---|---|---|---|
+  | dev | 0.2 s | 500 / 553 | 9 / 3 | 43 of 44 targeted | 60 device, 10 phone, 20 BO |
+  | demo | 2.4 s | 5,000 / 10,000 | 153 / 60 | 800 of 800 | 1,138 device, 100 phone, 197 BO |
+
+  Every record predates its window. Declared income: dev median Rs 7.7 cr, p90 Rs 291 cr; demo median Rs 3.7 cr. That is AMLworld's amount scale annualised, not a bug. It is recorded for the income rule's recalibration.
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
@@ -247,6 +290,8 @@ re-asserts them at run time. They are not only recorded here.
 
   The levers are hops, cohort size, budgets, or the ceiling itself. The ceiling is a user decision (D6), so it is not changed here. Steps 4-7 do not depend on the answer; the gate measures the real rate in step 7.
 - **Demo illicit rate:** the D6 estimate of ~2% assumed a ~400K-leg demo sample; the measured sample is 132K legs and 4.87% illicit before injection (M18). Superseded by the decision item above.
+- **DECISION NEEDED -- the illicit tail (M21).** Days 09-11..09-18 are 59% laundering, so "active after 09-10" is a label proxy any rule or model could exploit, inherited from AMLworld. The options are to trim the tail, which drops the illicit rows there and the 109 attempts that reach into it, or to keep it and document the proxy. This is asked together with the illicit-rate item once injection gives real numbers.
+- **Income scale.** AMLworld amounts annualised give median declared incomes of Rs 3.7-7.7 crore, implausible for a retail book. They are consistent with the ledger, so `INCOME_ACTIVITY_MISMATCH` is unaffected in ratio terms, but a demo audience will notice. Revisit with the income rule's recalibration.
 - **Income under-declare factor** is uncalibrated for 18 days (M12). Recalibrate when `INCOME_ACTIVITY_MISMATCH` lands.
 - **ML velocity baseline** needs 45 days; the source has 18 (M2). This needs a decision before Phase 5.
 - **Dormant reactivation** needs 180 days of dormancy (M2). It needs synthesised history or a redefinition before that cohort is built.

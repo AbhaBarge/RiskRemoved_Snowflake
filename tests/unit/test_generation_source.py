@@ -201,7 +201,7 @@ def test_required_total_must_be_declared(copy_root: Path) -> None:
 
 def test_accounts_carry_the_entity_prefix(amlworld_mini: Path, generation: dict[str, Any]) -> None:
     table = load_accounts(amlworld_mini, generation)
-    assert table.num_rows == 17
+    assert table.num_rows == 18
     assert set(table[ENTITY_PREFIX].to_pylist()) == {
         "Corporation",
         "Sole Proprietorship",
@@ -235,7 +235,7 @@ def test_ownership_groups_accounts_by_entity(
     amlworld_mini: Path, generation: dict[str, Any]
 ) -> None:
     ownership = EntityOwnership(load_accounts(amlworld_mini, generation))
-    assert len(ownership) == 17
+    assert len(ownership) == 18
     assert ownership.entity_count == 10
     assert ownership.accounts_of("800A00002") == (
         ("1", "8000A0021"),

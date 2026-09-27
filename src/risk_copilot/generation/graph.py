@@ -14,7 +14,9 @@ Order of operations:
    its pairs (D9).
 2. **Hosts.** The structuring cohort's host entities are selected here, because a
    host outside the sample cannot be injected. They are ranked by
-   :func:`~risk_copilot.ids.stable_hash` among entities that qualify.
+   :func:`~risk_copilot.ids.stable_hash` among entities that qualify: the
+   configured party type, 2-4 accounts of which enough are deposit accounts, a
+   clean ledger history and some real traffic.
 3. **Seeds.** ``laundering_patterns``: every account in a surviving attempt,
    plus every account of every host. ``injection_hosts``: the hosts' accounts
    only. Hosts are seeded whole because the structuring rule is cross-account.
@@ -49,6 +51,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from risk_copilot.generation import GenerationError
+from risk_copilot.generation.draws import account_type
 from risk_copilot.generation.patterns import AttemptLocation, Patterns
 from risk_copilot.generation.source import (
     ENTITY_PREFIX,
@@ -148,6 +151,7 @@ class HostCriteria:
     accounts_max: int
     clean_history: bool
     min_ledger_pairs: int
+    deposit_account_types: tuple[str, ...] = ()
 
     @classmethod
     def from_config(cls, generation: Mapping[str, Any]) -> HostCriteria:
@@ -163,6 +167,7 @@ class HostCriteria:
                 accounts_max=int(spec["accounts_per_party_max"]),
                 clean_history=bool(spec["host_requires_clean_history"]),
                 min_ledger_pairs=int(spec["host_min_ledger_pairs"]),
+                deposit_account_types=tuple(spec["deposit_account_types"]),
             )
         except KeyError as exc:
             raise SamplingError(f"injection.structuring: missing setting {exc}") from exc
@@ -389,6 +394,15 @@ def sample_subgraph(
             *eligible_edges["to_entity"].to_pylist(),
         ):
             pair_count[e] += 1
+
+        def deposit_accounts(keys: list[str]) -> int:
+            return sum(
+                1
+                for k in keys
+                if account_type(account_id(*_split(k), seed=cfg.seed), generation)
+                in host_cfg.deposit_account_types
+            )
+
         qualifying = [
             e
             for e, keys in accounts_of.items()
@@ -396,6 +410,7 @@ def sample_subgraph(
             and host_cfg.accounts_min <= len(keys) <= host_cfg.accounts_max
             and not (host_cfg.clean_history and e in tainted)
             and pair_count.get(e, 0) >= host_cfg.min_ledger_pairs
+            and deposit_accounts(keys) >= host_cfg.accounts_min
         ]
         stats["qualifying_hosts"] = len(qualifying)
         if len(qualifying) < host_cfg.cohort_parties:

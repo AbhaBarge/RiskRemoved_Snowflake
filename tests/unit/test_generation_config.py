@@ -107,8 +107,8 @@ def test_injection_window_fits_the_detection_window(settings: Settings) -> None:
 
 
 def test_injection_window_fits_the_measured_ledger_span(settings: Settings) -> None:
-    """The ledger spans 18 days. The generator re-asserts this against the data."""
-    assert structuring(settings)["window_days"] <= 18
+    """Legit activity spans 10 days, 09-01..09-10 (M21). Re-asserted against the data."""
+    assert structuring(settings)["window_days"] <= 10
 
 
 def test_every_host_can_satisfy_the_minimum_account_clause(settings: Settings) -> None:

@@ -20,9 +20,10 @@ The fixture's topology, traced by hand (entity letters as in the fixture MANIFES
      15  EAa -> E3   Cheque            clean host
      16  EAb -> E7   Credit Card       clean host
 
-EA (Sole Proprietorship #10, two accounts, legit only) is the only entity that
+EA (Sole Proprietorship #10, three accounts, legit only) is the only entity that
 qualifies as a structuring host: E2, E4 and E6 are individuals with an illicit
-history.
+history. Two of EA's accounts draw a deposit type (SAVINGS), which is the
+minimum; 10/8000A0102 has no ledger pairs.
 """
 
 from __future__ import annotations
@@ -145,7 +146,23 @@ def test_hosts_are_seeded_with_all_their_accounts(
 ) -> None:
     for mode in ("injection_hosts", "laundering_patterns"):
         sg = run(source, base, subgraph={"seed_source": mode})
-        assert sg.accounts_by_entity[HOST] == (("20", "8000A0101"), ("21174", "8000A0100"))
+        assert sg.accounts_by_entity[HOST] == (
+            ("10", "8000A0102"),
+            ("20", "8000A0101"),
+            ("21174", "8000A0100"),
+        )
+
+
+def test_host_needs_enough_deposit_accounts(source: dict[str, Any], base: dict[str, Any]) -> None:
+    """EA has exactly two deposit accounts; asking for three disqualifies it."""
+    with pytest.raises(SamplingError, match="Only 0 entities qualify"):
+        run(
+            source,
+            base,
+            injection={
+                "structuring": {"deposit_account_types": ["SAVINGS"], "accounts_per_party_min": 3}
+            },
+        )
 
 
 def test_too_few_hosts_fails(source: dict[str, Any], base: dict[str, Any]) -> None:
