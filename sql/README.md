@@ -35,6 +35,10 @@ or `BRANCH_ANALYST_*` as a literal.
 | `{{ policy_seed.clauses }}` `.typologies` `.rules` `.channels` | `conf/detection.yml` as rows of `{column: typed SQL literal}` (`src/risk_copilot/policy.py`). **Only `05_policy` may use it**: it is how threshold values enter Snowflake, as POLICY_CLAUSE rows. A test fails if any other stage renders a threshold |
 | `{{ rule.<RULE_ID>.id }}` `.version` `.clause.<role>` `.anchor` `.dynamic_table` | Per registered rule, for `sql/rules/<RULE_ID>.sql`: the rule id and each role's clause id as literals, the window anchor as a DATE literal. Names only -- the SQL joins each clause id to `V_POLICY_CLAUSE_CURRENT` for its value |
 | `{{ internal.bank_id }}` | `internal_accounts.src_bank_id` as a literal: identifies the bank's own (cash desk) accounts in CURATED |
+| `{{ stream_task.signals_stream }}` `.route_signals_procedure` `.route_signals_task` | `SIGNALS_STREAM_DEV` / `ROUTE_SIGNALS_DEV` / `ROUTE_SIGNALS_TASK_DEV` |
+| `{{ stream_task.resume_route_task }}` | `false` in dev: whether the deploy leaves the routing task running |
+| `{{ routing.severity_order }}` `.min_severity_for_case` `.open_case_statuses` `.cross_domain_min_distinct_rules` `.case_type_by_rule` | `conf/detection.yml` `routing` as typed literals (arrays, an OBJECT for the case types), for ROUTE_SIGNALS |
+| `{{ routed_id.signal_prefix }}` `.case_prefix` `.hex` | The `ids.signal_id` / `ids.case_id` format, so SQL and Python derive the same ids |
 
 **`sql/rules/`** holds one detection SELECT per registered rule, included by the
 signal dynamic table its `dynamic_table` names. Each file is one SELECT (no `;`),
@@ -67,7 +71,7 @@ empty identifier and creating the wrong object.
 | 1 | `bootstrap` | `00_bootstrap` | database, schemas, warehouses, roles, grants, stages, file formats |
 | 2 | `ddl` | `01_ddl` | all tables and base views |
 | 3 | `dynamic_tables` | `02_dynamic_tables` | the DT graph |
-| 4 | `streams_tasks` | `03_streams_tasks` | `SIGNALS_STREAM`, `ROUTE_SIGNALS` |
+| 4 | `streams_tasks` | `03_streams_tasks` | `SIGNALS_STREAM`, the `ROUTE_SIGNALS` procedure, `ROUTE_SIGNALS_TASK` |
 | 5 | `governance` | `04_governance` | row access + masking policies, DMFs |
 | 6 | `policy` | `05_policy` | policy seed, `AI_PARSE_DOCUMENT` ingestion |
 | 7 | `search` | `06_search` | Cortex Search service |

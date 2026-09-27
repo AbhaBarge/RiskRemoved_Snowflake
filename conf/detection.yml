@@ -385,5 +385,9 @@ routing:
   min_severity_for_case: MEDIUM
   severity_order: [LOW, MEDIUM, HIGH, CRITICAL]
   # Two or more distinct rule families on one party escalate to CROSS_DOMAIN,
-  # which is the cross-silo narrative.
+  # which is the cross-silo narrative. A "family" is a rule_id.
   cross_domain_min_distinct_rules: 2
+  # CASE_RECORD.case_type of a case whose rules stay below that count. Every
+  # registered rule (the `rules` block) must have one; the load refuses a gap.
+  case_type_by_rule:
+    STRUCTURING_CROSS_ACCOUNT: AML

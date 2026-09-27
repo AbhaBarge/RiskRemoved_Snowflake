@@ -99,6 +99,7 @@ re-asserts them at run time. They are not only recorded here.
 | M28 | **Not every pair balances in INR, and correctly so.** 122 of 4,931 dev pairs have a non-zero `amount_inr` sum; all 122 are AMLworld rows whose payment and receiving currencies differ (0 same-currency), so each side's real amount converts at our rate to a different rupee value. The plan's "every pair sums to 0" was wrong as stated | Local join of the unbalanced pairs to the source ledger; re-asserted in Snowflake by `load` (0 unexplained) | Post-load check is "every unbalanced pair is a cross-currency source row" |
 | M29 | **Snowflake reads a Parquet `timestamp[ms]` as epoch milliseconds.** Without logical types, `$1:col` is an INTEGER (`1662650340000`); `::TIMESTAMP_NTZ` reads it as seconds and gives year **54657**. `TO_TIMESTAMP_NTZ(n, 3)` gives the right `2022-09-08 15:19`. `decimal128` reads exactly (sum of `amount_inr` equal to the paisa), `date32` reads as DATE, `list<string>` as ARRAY, JSON text as VARCHAR | Probe on the real dev files on a scratch stage path, removed after | `load` builds each timestamp cast from the file's own time unit |
 | M30 | **STRUCTURING_CROSS_ACCOUNT fires on exactly the planted hosts.** `DT_SIGNALS_FAST_DEV` holds **10** signals, all in bucket `2022-08-26`: **10 of 10** on injected hosts, none elsewhere. Their **101** evidence legs are all injected deposits (101 illicit, 0 genuine). The one genuine in-band deposit (P6) does not fire, being a single account. metric_value is 2 distinct accounts for 9 hosts and 3 for one, against the clause's 2 | SQL on the refreshed tables, joined as admin to INJECTED_TXN_PENDING and TXN_LABELS | Precision and recall are formalised in step 7 |
+| M31 | **Routing is idempotent under a full re-feed.** On a new, empty `SIGNALS_STREAM_DEV` (DELTA, not stale), `CALL ROUTE_SIGNALS_DEV(TRUE)` wrote **10 signals, 10 cases, 10 links** (0 updated, 0 escalated). A second identical call wrote **0 / 0 / 0 and updated 0**, so the unchanged-evidence guard holds on the ARRAY/VARIANT columns too. `EXECUTE TASK` twice: both **SKIPPED** (`0040003`, WHEN evaluated false, stream empty), +0 rows. Row checks: 0 SIGNAL-vs-DT differences (evidence ids, metric, threshold, detail, fired_at = last_txn_at); every `signal_id` / `case_id` equals `ids.signal_id` / `ids.case_id`; all rows `rule_version` 1 / `HIGH` = RULE_DEFINITION; one case per party, all `AML` / `OPEN`, `branch_region` = DT_DIM_PARTY (DELHI, MUMBAI, PUNE); sla_deadline, suspicion and priority NULL on all 10; the hero has `CASE-4399c4c86db5c6ea`. The task body block, run by hand, returns the router's counts (stream mode, all 0) | Live on RISK_COPILOT_DEV as the admin role, after two deploys of the stage | The stream's delta path and `SYSTEM$SET_RETURN_VALUE` run only in a triggered run: proven in step 8, when replay changes the table |
 
 ---
 
@@ -141,6 +142,9 @@ re-asserts them at run time. They are not only recorded here.
 | D33 | 09-27 | The policy seed is **insert-only for versioned governed rows** (POLICY_CLAUSE, RULE_DEFINITION): a live row that differs from `conf/detection.yml` fails the deploy before anything is written. TYPOLOGY and REF_CHANNEL are unversioned reference data and upserted. RULE_DEFINITION lists only rules whose SQL is built (STRUCTURING_CROSS_ACCOUNT) | Build | Editing the seed and redeploying must not be a way round the clause-versioning gate. A registry row for an unbuilt rule would let a finding cite logic nobody wrote |
 | D34 | 09-27 | `party_relationship` gets a real lag (60 min) instead of `DOWNSTREAM` | Build | Its only designed consumer, DT_SIGNALS_AGGREGATE, is not built; a `DOWNSTREAM` table with no deployed consumer never refreshes. D32 checks the design graph, so a test now checks the deployed one |
 | D35 | 09-27 | **Each rule's detection SQL is one file, `sql/rules/<rule_id>.sql`**, included by its signal table; `RULE_DEFINITION.rule_sql_hash` is the SHA-256 of that source (line endings normalised), bound once while NULL. A changed file then fails the policy stage until `rule_version` is bumped; a registered rule without a file fails the render. Rules name their clauses by role (`ctr`, `band`, ...) so the SQL reads clause ids from config | Build | Makes "a silent logic change is visible" (the column's purpose) and "only built rules are registered" (D33) mechanical rather than a matter of discipline |
+| D36 | 09-27 | **`ROUTE_SIGNALS(full_scan BOOLEAN DEFAULT FALSE)`**: the stream's INSERT rows normally, the whole `DT_SIGNALS_FAST` when TRUE. The full scan is run once after the first deploy, by the replay harness, and to recover a stale stream. It reads the stream as well, so it also consumes it | **User** (after the "doorbell fitted to a full house" explanation) | A stream on a dynamic table cannot take `SHOW_INITIAL_ROWS` or `AT/BEFORE` (CREATE STREAM reference), so rows already in the table never reach a new stream. Per-run work stays proportional to change |
+| D37 | 09-27 | **A re-fire refreshes the evidence**: metric, threshold, evidence ids, detail, fired_at, rule_version, severity, as_of_ts and last_seen_at; `signal_id` and `first_seen_at` are kept. A row whose evidence is unchanged is not written, so `last_seen_at` is the last time the evidence *changed* | **User** | The row always shows the latest evaluation, and step 8's replay-vs-batch equivalence can hold. Findings cite their own query snapshots (GAP-12), so they do not depend on SIGNAL staying frozen |
+| D38 | 09-27 | **`ROUTE_SIGNALS_TASK` is triggered** (`WHEN SYSTEM$STREAM_HAS_DATA`, no SCHEDULE); `route_signals_schedule` is deleted. `resume_route_task` (base and dev false, demo true) decides whether a deploy leaves it running | **User** | It runs within about 30 s of a refresh that changed a signal and never otherwise, and Snowflake's 12-hourly health check keeps the stream from going stale. A leftover schedule key now fails the config load |
 
 ---
 
@@ -449,8 +453,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | 3 | `policy` seed stage | **Done** |
 | 4 | `riskcopilot load` | **Done** |
 | 5 | Dynamic tables for the structuring slice | **Done** |
-| 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | Next |
-| 7 | Post-load verify: signal_yield, hero promotion | |
+| 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | **Done** |
+| 7 | Post-load verify: signal_yield, hero promotion | Next |
 | 8 | Replay harness, docs | |
 
 ## Findings made while planning (P1-P7)
@@ -736,3 +740,54 @@ In `test_policy_seed.py`: the rule row is unchanged by the role keys; the hash e
 **Credits:** the five tables are ACTIVE on dev lags (DIM_PARTY on demand, the rest hourly). With no new RAW data, a scheduled refresh has nothing to process.
 
 **Verification:** 460 passed; ruff, mypy (29 files), lint (dev + demo, 13 templates each) clean; `doctor --profile dev` exit 0, 0 failed.
+
+## Step 6 -- signal routing (D36-D38)
+
+**Found before building:** the CREATE STREAM reference gives the dynamic-table form with neither `SHOW_INITIAL_ROWS` nor `AT/BEFORE`. A new stream therefore starts empty, and the 10 signals already in `DT_SIGNALS_FAST_DEV` would never reach it. That is the reason for D36.
+
+**What changed**
+- New `sql/03_streams_tasks/01_route_signals.sql` (4 statements in dev, 5 in demo):
+  - `SIGNALS_STREAM` in CURATED: `CREATE STREAM IF NOT EXISTS ... ON DYNAMIC TABLE`. Never `OR REPLACE`, which would reset the offset and drop unrouted changes on every deploy.
+  - `ROUTE_SIGNALS(full_scan)` in EVIDENCE_CHAIN: Snowflake Scripting, owner's rights, **one transaction** (any error rolls back and re-raises, leaving the stream unconsumed). It:
+    1. refuses a batch row whose rule has no active RULE_DEFINITION row (-20003);
+    2. MERGEs into SIGNAL on `signal_business_key`, taking `rule_version` and `severity` from the highest active registry version and refreshing the evidence only when it changed (D37). `fired_at` = the latest evidence transaction, `as_of_ts` = the routing run;
+    3. opens one case per party that is owed one and holds no case in `open_case_statuses`. "Owed" means a signal at or above `min_severity_for_case` that is on no case yet. `branch_region` comes from DT_DIM_PARTY (NOT NULL, so a missing party fails the run); `sla_deadline`, suspicion and priority stay NULL;
+    4. attaches every owed signal to its party's open case, and raises (-20004) if any is left unattached;
+    5. re-types open cases: `CROSS_DOMAIN` at `cross_domain_min_distinct_rules` distinct rule_ids (or rules of two types), otherwise `case_type_by_rule`;
+    6. returns the counts.
+
+    Cases are derived from SIGNAL state rather than the batch, so a later run completes anything an earlier one did not.
+  - `ROUTE_SIGNALS_TASK` in EVIDENCE_CHAIN: suspended, then `CREATE OR ALTER TASK` on `{{ wh.pipeline }}` with `WHEN SYSTEM$STREAM_HAS_DATA` and no schedule (D38). The body calls the router and passes its counts to `SYSTEM$SET_RETURN_VALUE`, which puts them in TASK_HISTORY. It is resumed only if `resume_route_task`.
+- `config.py`:
+  - `streams_tasks` is a typed `StreamsTasks` model (a YAML boolean did not fit `dict[str, str]`, and the old name mapper would have turned `false` into `FALSE_DEV`);
+  - `_check_routing` refuses: duplicate or empty severities, an unknown `min_severity_for_case`, empty open statuses, a cross-domain minimum that is not an integer >= 2, and a registered rule without a `FRAUD` / `AML` case type;
+  - `sql_context` gains `stream_task`, `routing` (typed literals via `policy.routing_context`) and `routed_id`.
+- `ids.py`: `signal_id(key)` = `SIG-` + the first 16 hex characters of SHA-256; `case_id(party, opening key)` = `CASE-` + the same over `party|key`. The SQL uses the same prefixes and width from `sql_context`.
+- `conf/base.yml`: `route_signals_procedure: ROUTE_SIGNALS`, `route_signals_task: ROUTE_SIGNALS_TASK`, `resume_route_task: false`; `route_signals_schedule` deleted from base, dev and demo. `demo.yml`: `resume_route_task: true`. `conf/detection.yml`: `routing.case_type_by_rule` (`STRUCTURING_CROSS_ACCOUNT: AML`).
+
+**Live, on RISK_COPILOT_DEV:** the stage was deployed twice, 4 statements ok each time; the second deploy exits 0 (the first try failed on `COMMENT` placed after `EXECUTE AS`, which CREATE PROCEDURE does not accept). The task is `suspended` with a NULL schedule, the WHEN on the stream, and the pipeline warehouse. The proof is M31.
+
+**Tests:** 485 passed (460 before). New `tests/unit/test_streams_tasks.py` (5 tests run for dev and demo, plus 12 profile-independent cases):
+- the stream is `IF NOT EXISTS ON DYNAMIC TABLE <signals_fast>`, and no stream statement replaces or alters;
+- the task is triggered by that stream on the pipeline warehouse, with no SCHEDULE;
+- it is suspended before the alter, and resumed iff configured (dev no, demo yes);
+- a leftover `route_signals_schedule` fails the load;
+- version and severity are read from the registry;
+- the SQL derives ids with the `ids.py` prefixes and width;
+- changing each routing value changes the rendered procedure;
+- 9 routing refusals.
+
+`test_ids.py`: the routed-id formulas, and refusal of empty inputs.
+
+**Departures from the plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| "`EXECUTE TASK` twice, the second run adds 0 rows" | `CALL ROUTE_SIGNALS(TRUE)` twice (10, then 0), then `EXECUTE TASK` twice (both SKIPPED, +0) | A new stream is empty (above), so an executed task has nothing to route. The full-scan pair is the stronger test: the same 10 signals are fed twice |
+| A task on a schedule (`route_signals_schedule`) | Triggered task, schedule key deleted | D38 |
+| One `ROUTE_SIGNALS` name for task and procedure | Procedure `ROUTE_SIGNALS`, task `ROUTE_SIGNALS_TASK` | Two object types sharing one name is ambiguous in history and grants |
+| "A case appears for each detected host" | 10 cases, one per host, hero included (M31) | -- |
+
+**Not proven yet:** the stream's delta path and the task's `SYSTEM$SET_RETURN_VALUE` run only when a refresh changes signals. Step 8's replay changes them and records the triggered runs.
+
+**Verification:** 485 passed; ruff, mypy (29 files), lint (dev + demo, 14 templates each) clean; `doctor --profile dev` exit 0, 0 failed.

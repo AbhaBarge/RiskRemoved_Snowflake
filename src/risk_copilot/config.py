@@ -32,6 +32,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from risk_copilot import ids
+
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
@@ -436,6 +438,60 @@ def _check_lag_graph(specs: dict[str, DynamicTableSpec]) -> None:
                 )
 
 
+class StreamsTasks(_Frozen):
+    """Signal routing: the stream on DT_SIGNALS_FAST, the router and its task.
+
+    The task is triggered (``WHEN SYSTEM$STREAM_HAS_DATA``, no schedule, D38),
+    so there is no interval to configure. ``resume_route_task`` decides whether
+    the deploy leaves it running: a resumed task spends warehouse credits every
+    time a refresh changes a signal, which dev does not need.
+    """
+
+    signals_stream: str
+    route_signals_procedure: str
+    route_signals_task: str
+    resume_route_task: bool
+
+    @field_validator("signals_stream", "route_signals_procedure", "route_signals_task")
+    @classmethod
+    def _identifier(cls, v: str) -> str:
+        return validate_identifier(v, what="Stream/task object name")
+
+
+#: CASE_RECORD.case_type values a single rule can map to; CROSS_DOMAIN is derived.
+CASE_TYPES = ("FRAUD", "AML")
+
+
+def _check_routing(detection: dict[str, Any]) -> None:
+    """Refuse a routing block ROUTE_SIGNALS could not apply as written."""
+    routing = detection.get("routing") or {}
+    order = [str(s).upper() for s in routing.get("severity_order") or []]
+    if not order or len(set(order)) != len(order):
+        raise ConfigError(
+            "conf/detection.yml: routing.severity_order must list distinct severities"
+        )
+    if str(routing.get("min_severity_for_case") or "").upper() not in order:
+        raise ConfigError(
+            "conf/detection.yml: routing.min_severity_for_case must be one of "
+            f"routing.severity_order {order}"
+        )
+    if not routing.get("open_case_statuses"):
+        raise ConfigError("conf/detection.yml: routing.open_case_statuses is empty")
+    minimum = routing.get("cross_domain_min_distinct_rules")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 2:
+        raise ConfigError(
+            "conf/detection.yml: routing.cross_domain_min_distinct_rules must be an integer >= 2"
+        )
+    case_types = routing.get("case_type_by_rule") or {}
+    for rule in detection.get("rules") or []:
+        value = str(case_types.get(rule.get("rule_id")) or "").upper()
+        if value not in CASE_TYPES:
+            raise ConfigError(
+                f"conf/detection.yml: routing.case_type_by_rule must give rule "
+                f"{rule.get('rule_id')!r} one of {list(CASE_TYPES)}"
+            )
+
+
 class CortexObjects(_Frozen):
     search_service: str
     search_source_table: str
@@ -478,7 +534,7 @@ class Settings(BaseModel):
     retention_clamp: RetentionClamp | None = None
     dynamic_tables: dict[str, DynamicTableSpec]
     views: dict[str, str]
-    streams_tasks: dict[str, str]
+    streams_tasks: StreamsTasks
     cortex: CortexObjects
     # Domain configs are kept as plain mappings: they are large, mostly
     # data-shaped, and consumed by the generators that own their semantics.
@@ -533,6 +589,8 @@ class Settings(BaseModel):
                     f"conf/detection.yml assigns severities not present in "
                     f"routing.severity_order: {sorted(unknown)}"
                 )
+        if self.detection.get("rules"):
+            _check_routing(self.detection)
         return self
 
     # ------------------------------------------------------------------ #
@@ -664,7 +722,7 @@ class Settings(BaseModel):
                     k: validate_identifier(v, what="View name")
                     for k, v in (merged.get("views") or {}).items()
                 },
-                streams_tasks=dict(merged.get("streams_tasks") or {}),
+                streams_tasks=StreamsTasks(**merged["streams_tasks"]),
                 cortex=CortexObjects(**merged["cortex"]),
                 generation=domains["generation"],
                 detection=domains["detection"],
@@ -795,8 +853,20 @@ class Settings(BaseModel):
             },
             "view": {key: self.obj(name) for key, name in self.views.items()},
             "stream_task": {
-                key: (self.obj(value) if _IDENTIFIER_RE.match(str(value)) else value)
-                for key, value in self.streams_tasks.items()
+                "signals_stream": self.obj(self.streams_tasks.signals_stream),
+                "route_signals_procedure": self.obj(self.streams_tasks.route_signals_procedure),
+                "route_signals_task": self.obj(self.streams_tasks.route_signals_task),
+                "resume_route_task": self.streams_tasks.resume_route_task,
+            },
+            # conf/detection.yml `routing` as typed SQL literals, for ROUTE_SIGNALS.
+            # Operational settings, not POLICY_CLAUSE thresholds.
+            "routing": _routing_context(self.detection),
+            # ids.signal_id / ids.case_id, so ROUTE_SIGNALS derives the same ids
+            # in SQL as Python does (the live proof compares them).
+            "routed_id": {
+                "signal_prefix": _sql_literal(ids.SIGNAL_ID_PREFIX, "VARCHAR"),
+                "case_prefix": _sql_literal(ids.CASE_ID_PREFIX, "VARCHAR"),
+                "hex": ids.ROUTED_ID_HEX,
             },
             "cortex": {
                 "search_service": self.obj(self.cortex.search_service),
@@ -837,6 +907,12 @@ def _rule_context(detection: dict[str, Any]) -> dict[str, dict[str, Any]]:
     from risk_copilot.policy import rule_context
 
     return rule_context(detection)
+
+
+def _routing_context(detection: dict[str, Any]) -> dict[str, str]:
+    from risk_copilot.policy import routing_context
+
+    return routing_context(detection)
 
 
 def _sql_literal(value: Any, sql_type: str) -> str:

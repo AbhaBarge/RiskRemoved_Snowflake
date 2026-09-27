@@ -231,6 +231,43 @@ def signal_business_key(
     return "|".join(parts)
 
 
+#: Hex digits of SHA-256 kept in a routed id: 64 bits, so a collision among the
+#: few thousand signals a profile can hold (validation.signal_yield) is ~1e-13.
+ROUTED_ID_HEX = 16
+SIGNAL_ID_PREFIX = "SIG-"
+CASE_ID_PREFIX = "CASE-"
+
+
+def _sha256_prefix(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:ROUTED_ID_HEX]
+
+
+def signal_id(business_key: str) -> str:
+    """Return SIGNAL.signal_id for a business key.
+
+    A pure function of the key, so a replay and a batch run name the same signal
+    the same way. ROUTE_SIGNALS computes it in SQL as
+    ``'SIG-' || LEFT(SHA2(key, 256), 16)``; the live proof checks both agree.
+    """
+    if not business_key or not business_key.strip():
+        raise ValueError("business_key must be non-empty")
+    return f"{SIGNAL_ID_PREFIX}{_sha256_prefix(business_key)}"
+
+
+def case_id(party_id_value: str, opening_business_key: str) -> str:
+    """Return CASE_RECORD.case_id for a party's case, from the signal that opened it.
+
+    The opening key is the smallest business key among the signals that opened
+    the case. A party's next case (after this one closes) opens on a signal not
+    yet attached to any case, so it gets a different id. SQL:
+    ``'CASE-' || LEFT(SHA2(party_id || '|' || key, 256), 16)``.
+    """
+    for name, value in (("party_id", party_id_value), ("business_key", opening_business_key)):
+        if not value or not value.strip():
+            raise ValueError(f"{name} must be non-empty")
+    return f"{CASE_ID_PREFIX}{_sha256_prefix(f'{party_id_value}|{opening_business_key}')}"
+
+
 def weighted_choice(rng: random.Random, options: Sequence[tuple[T, float]]) -> T:
     """Pick one option by weight using ``rng``.
 

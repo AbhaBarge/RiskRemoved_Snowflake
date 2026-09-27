@@ -284,6 +284,36 @@ def window_bucket_expr(rule: Mapping[str, Any], clauses: Mapping[str, Any]) -> s
     )
 
 
+def routing_context(detection: Mapping[str, Any]) -> dict[str, str]:
+    """``conf/detection.yml`` ``routing`` as SQL literals for ROUTE_SIGNALS.
+
+    Validated by :func:`risk_copilot.config._check_routing` when the settings
+    load; this only renders. ``case_type_by_rule`` becomes an OBJECT keyed by
+    rule id, so the procedure looks a rule's case type up rather than listing it.
+    """
+    routing = detection.get("routing") or {}
+    case_types = routing.get("case_type_by_rule") or {}
+    pairs = ", ".join(
+        f"{sql_literal(str(rule), 'VARCHAR')}, {sql_literal(str(kind).upper(), 'VARCHAR')}"
+        for rule, kind in sorted(case_types.items())
+    )
+    return {
+        "severity_order": sql_literal(
+            [str(s).upper() for s in routing.get("severity_order") or []], "ARRAY"
+        ),
+        "min_severity_for_case": sql_literal(
+            str(routing.get("min_severity_for_case") or "").upper(), "VARCHAR"
+        ),
+        "open_case_statuses": sql_literal(
+            [str(s).upper() for s in routing.get("open_case_statuses") or []], "ARRAY"
+        ),
+        "cross_domain_min_distinct_rules": sql_literal(
+            routing.get("cross_domain_min_distinct_rules"), "NUMBER(10,0)"
+        ),
+        "case_type_by_rule": f"OBJECT_CONSTRUCT({pairs})",
+    }
+
+
 def rule_context(detection: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """What a rule's detection SQL may reference, as SQL literals.
 

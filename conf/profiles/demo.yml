@@ -18,7 +18,8 @@ dynamic_tables:
   signals_aggregate:     { target_lag: 60 minutes }
 
 streams_tasks:
-  route_signals_schedule: 1 minute
+  # The "watch a case appear" beat needs the router running.
+  resume_route_task: true
 
 retention:
   landing_days: 14

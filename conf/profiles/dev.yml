@@ -21,7 +21,8 @@ dynamic_tables:
   signals_aggregate:     { target_lag: 24 hours }
 
 streams_tasks:
-  route_signals_schedule: 60 minutes
+  # Suspended: dev routes by CALLing the procedure (or EXECUTE TASK) on demand.
+  resume_route_task: false
 
 retention:
   # Capped at 1 day because the dev account is Standard edition, where 1 day is

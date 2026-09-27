@@ -14,18 +14,22 @@ integrity hold by construction rather than by convention:
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from risk_copilot.ids import (
     ACCOUNT_ID_WIDTH,
     PARTY_ID_WIDTH,
     account_id,
+    case_id,
     derived_rng,
     is_account_id,
     is_party_id,
     normalise_bank_id,
     party_id,
     signal_business_key,
+    signal_id,
     stable_hash,
     txn_leg_id,
     txn_pair_id,
@@ -221,6 +225,28 @@ def test_business_key_separates_windows() -> None:
 def test_business_key_requires_every_component(rule: str, party: str, window: str) -> None:
     with pytest.raises(ValueError):
         signal_business_key(rule, party, window)
+
+
+def test_routed_ids_are_the_sha256_prefix_sql_computes() -> None:
+    # ROUTE_SIGNALS derives the same strings in SQL; the live proof (M31)
+    # compares the two on every routed row. These pin the Python side.
+    key = "STRUCTURING_CROSS_ACCOUNT|P-000000000001|2022-08-26"
+    assert signal_id(key) == "SIG-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    assert case_id("P-000000000001", key) == (
+        "CASE-" + hashlib.sha256(f"P-000000000001|{key}".encode()).hexdigest()[:16]
+    )
+    assert signal_id(key) != signal_id(key.replace("08-26", "09-25"))
+    assert case_id("P-1", key) != case_id("P-2", key)
+
+
+@pytest.mark.parametrize("bad", ["", "  "])
+def test_routed_ids_require_their_inputs(bad: str) -> None:
+    with pytest.raises(ValueError):
+        signal_id(bad)
+    with pytest.raises(ValueError):
+        case_id(bad, "K")
+    with pytest.raises(ValueError):
+        case_id("P-1", bad)
 
 
 # --------------------------------------------------------------------------- #

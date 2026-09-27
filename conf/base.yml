@@ -121,10 +121,16 @@ views:
   # Pair-level transaction view over the leg-level physical table (GAP-03).
   transaction_pairs: V_TRANSACTION_PAIRS
 
+# Signal routing (step 6). The task is TRIGGERED by the stream (D38): it runs
+# within about 30 s of a DT_SIGNALS_FAST refresh that changed a signal, and
+# never otherwise, so there is no schedule to configure. resume_route_task
+# decides whether a deploy leaves it running; off by default because a running
+# task spends warehouse credits. The profile that needs live routing turns it on.
 streams_tasks:
   signals_stream: SIGNALS_STREAM
-  route_signals_task: ROUTE_SIGNALS
-  route_signals_schedule: 1 minute
+  route_signals_procedure: ROUTE_SIGNALS
+  route_signals_task: ROUTE_SIGNALS_TASK
+  resume_route_task: false
 
 cortex:
   search_service: REGULATORY_SEARCH_SVC
