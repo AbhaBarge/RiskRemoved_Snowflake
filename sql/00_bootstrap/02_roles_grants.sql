@@ -75,6 +75,23 @@ GRANT OWNERSHIP ON DATABASE {{ db }} TO ROLE {{ role.admin }} COPY CURRENT GRANT
 GRANT OWNERSHIP ON SCHEMA {{ fq[key] }} TO ROLE {{ role.admin }} COPY CURRENT GRANTS;
 {% endfor %}
 
+-- Stages and file formats too. 01_account_objects.sql creates them as
+-- ACCOUNTADMIN, and ownership of a schema does not carry to the objects inside
+-- it: measured on the dev account, all four stages and all four file formats
+-- were still owned by ACCOUNTADMIN, so the admin role could PUT to a stage only
+-- through a human session's secondary roles -- never from a task (build log M27).
+{% for schema_key, stage_key in [('raw', 'data'), ('raw', 'generated'), ('governance', 'policy_docs'), ('governance', 'scripts'), ('ground_truth', 'ground_truth')] %}
+GRANT OWNERSHIP ON STAGE {{ fq[schema_key] }}.{{ stage[stage_key] }} TO ROLE {{ role.admin }} COPY CURRENT GRANTS;
+{% endfor %}
+{% for file_format in ['FF_CSV_HEADER', 'FF_CSV_SEMICOLON_MULTIVALUE', 'FF_PARQUET', 'FF_NDJSON'] %}
+GRANT OWNERSHIP ON FILE FORMAT {{ fq.raw }}.{{ file_format }} TO ROLE {{ role.admin }} COPY CURRENT GRANTS;
+{% endfor %}
+
+-- ROUTE_SIGNALS and the automations are tasks owned by the admin role. Running
+-- a task needs this account-level privilege on the owner, and only ACCOUNTADMIN
+-- can grant it.
+GRANT EXECUTE TASK ON ACCOUNT TO ROLE {{ role.admin }};
+
 USE ROLE {{ role.admin }};
 
 -- --------------------------------------------------------------------------

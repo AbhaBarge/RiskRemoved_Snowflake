@@ -26,7 +26,7 @@ or `BRANCH_ANALYST_*` as a literal.
 | `{{ wh_spec.pipeline.size }}` | `XSMALL` |
 | `{{ role.admin }}` `{{ role.service }}` `{{ role.compliance_officer }}` | `RC_ADMIN_DEV` |
 | `{{ role.branch_analysts.MUMBAI }}` | `BRANCH_ANALYST_MUMBAI_DEV` |
-| `{{ stage.data }}` `{{ stage.policy_docs }}` `{{ stage.generated }}` `{{ stage.scripts }}` | stage name |
+| `{{ stage.data }}` `{{ stage.policy_docs }}` `{{ stage.generated }}` `{{ stage.scripts }}` `{{ stage.ground_truth }}` | stage name (`ground_truth` lives in `{{ fq.ground_truth }}` and is granted to no role) |
 | `{{ retention.landing_days }}` | `3` |
 | `{{ dt.signals_fast.name }}` / `.target_lag` | `DT_SIGNALS_FAST_DEV` / `60 minutes` |
 | `{{ view.txn_velocity_features }}` | `V_TXN_VELOCITY_FEATURES_DEV` |

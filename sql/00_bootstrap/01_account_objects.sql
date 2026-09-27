@@ -110,6 +110,14 @@ CREATE STAGE IF NOT EXISTS {{ fq.governance }}.{{ stage.scripts }}
     ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
     COMMENT = 'Python payloads for stored procedures.';
 
+-- Ground-truth generator files (labels, eval grain, pending injected legs) are
+-- staged apart from the RAW files, in the schema no consumer role can use, and
+-- the stage itself is granted to nobody (02_roles_grants.sql). A label must not
+-- be readable from a staged file any more than from a table.
+CREATE STAGE IF NOT EXISTS {{ fq.ground_truth }}.{{ stage.ground_truth }}
+    ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
+    COMMENT = 'Generator ground truth, staged for COPY INTO GROUND_TRUTH. Admin only; never granted.';
+
 -- --------------------------------------------------------------------------
 -- File formats.  Defined once here rather than inline in each COPY INTO, so the
 -- duplicate-header handling for the AMLworld transaction file cannot drift

@@ -16,6 +16,7 @@ project:
 # costs credits.
 dynamic_tables:
   transactions_enriched: { target_lag: 60 minutes }
+  txn_daily_agg:         { target_lag: 60 minutes }
   signals_fast:          { target_lag: 60 minutes }
   signals_aggregate:     { target_lag: 24 hours }
 

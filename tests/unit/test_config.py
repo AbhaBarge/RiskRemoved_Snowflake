@@ -168,7 +168,67 @@ def test_invalid_target_lag_is_rejected(repo_root) -> None:
 
 def test_downstream_target_lag_is_accepted(repo_root) -> None:
     settings = load_settings(repo_root=repo_root, profile="demo")
-    assert settings.dt("txn_daily_agg").target_lag == "DOWNSTREAM"
+    assert settings.dt("dim_party").target_lag == "DOWNSTREAM"
+
+
+@pytest.mark.parametrize("profile", ["dev", "demo"])
+def test_configured_lag_graph_is_one_snowflake_accepts(repo_root, profile: str) -> None:
+    """Loading succeeds only if no table is fresher than an upstream (P2)."""
+    settings = load_settings(repo_root=repo_root, profile=profile)
+    for key, spec in settings.dynamic_tables.items():
+        for up in spec.upstream:
+            lag, up_lag = spec.lag_seconds, settings.dt(up).lag_seconds
+            if lag is not None and up_lag is not None:
+                assert lag >= up_lag, f"{key} is fresher than {up}"
+
+
+def test_table_fresher_than_its_upstream_is_rejected(repo_root) -> None:
+    """The original base.yml bug: a 1-day DIM_PARTY under a 1-minute ENRICHED."""
+    with pytest.raises(ConfigError, match="cannot be fresher than its upstream"):
+        Settings.load(
+            repo_root=repo_root,
+            profile="demo",
+            overrides={"dynamic_tables": {"dim_party": {"target_lag": "1 day"}}},
+        )
+
+
+def test_downstream_table_nobody_reads_is_rejected(repo_root) -> None:
+    """The original DT_TXN_DAILY_AGG: DOWNSTREAM, read only by a view."""
+    with pytest.raises(ConfigError, match="would never refresh"):
+        Settings.load(
+            repo_root=repo_root,
+            profile="demo",
+            overrides={"dynamic_tables": {"txn_daily_agg": {"target_lag": "DOWNSTREAM"}}},
+        )
+
+
+def test_downstream_lag_is_judged_at_its_consumers_rate(repo_root) -> None:
+    """A DOWNSTREAM table reading a 1-day table is still too fresh if a 1-minute
+    table reads it in turn."""
+    with pytest.raises(ConfigError, match="dim_party"):
+        Settings.load(
+            repo_root=repo_root,
+            profile="demo",
+            overrides={
+                "dynamic_tables": {
+                    "party_relationship": {"target_lag": "1 day"},
+                    "dim_party": {"target_lag": "DOWNSTREAM", "upstream": ["party_relationship"]},
+                }
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("upstream", "message"),
+    [(["no_such_table"], "unknown table"), (["signals_fast"], "cycle")],
+)
+def test_bad_upstream_references_are_rejected(repo_root, upstream, message) -> None:
+    with pytest.raises(ConfigError, match=message):
+        Settings.load(
+            repo_root=repo_root,
+            profile="demo",
+            overrides={"dynamic_tables": {"dim_party": {"upstream": upstream}}},
+        )
 
 
 # --------------------------------------------------------------------------- #

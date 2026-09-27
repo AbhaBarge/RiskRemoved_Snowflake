@@ -95,6 +95,7 @@ re-asserts them at run time. They are not only recorded here.
 | M24 | **Booking both halves of a cash pair leaves a twin.** With payer -> desk + desk -> payee (the first D27 build), **598/598** dev and **7,822/7,822** demo genuine deposits have a same-minute, equal-INR customer withdrawal; **0/98** and **0/405** planted deposits do -- nor does any planted amount equal *any* withdrawal in the window (0/98, 0/405), so moving the withdrawal in time would not help | Self-join of desk deposits on (timestamp, amount) against customer debits, both profiles | D30 |
 | M25 | **The fixed branch-hours window was a tell.** AMLworld spreads cash over all 24 hours: **25.6%** (dev) / **24.2%** (demo) of genuine desk deposits fall in 10:00-16:00, against **100%** of planted ones under D22. With times drawn from the genuine deposits: planted **28.7%** / **23.2%**, and 23 / 24 distinct hours | Hour histogram of desk-deposit credit legs, before and after D29 | D29 |
 | M26 | **A retained foreign currency marked genuine cash deposits.** `fx.retain_foreign_pct` kept a foreign currency on **35 of 598** dev / **338 of 7,822** demo genuine desk deposits; no planted deposit is ever foreign. After D31: 0 / 0 (all legs: 3.61% / 4.49% foreign) | Currency of desk-deposit credit legs | D31 |
+| M27 | **The stages and file formats were owned by ACCOUNTADMIN.** `01_account_objects.sql` creates them under that role and `02_roles_grants.sql` handed over only the database and schemas: all 4 stages and all 4 file formats on dev had owner ACCOUNTADMIN. The admin role could list a stage only through a human session's secondary roles, which a task does not have | `SHOW STAGES` / `SHOW FILE FORMATS IN DATABASE` as the admin role | Ownership handed to the admin role in bootstrap; verified live after the change |
 
 ---
 
@@ -133,6 +134,7 @@ re-asserts them at run time. They are not only recorded here.
 | D29 | 09-27 | Planted deposits take their **clock time from the sample's genuine cash deposits** (`deposit_time_of_day: genuine_cash_deposits`, the empirical times, drawn per deposit); no clock window is configured | Build, within the approved step-1 residual-tell scan | M25 |
 | D30 | 09-27 | **Cash is a deposit only:** a Cash pair becomes the single pair *payee's desk -> payee*, both legs DEPOSIT. The payer's side is not booked. Supersedes D27's first build (payer -> desk + desk -> payee) | **User** ("we genuinely don't know where that cash came from") | M24: booking the payer's withdrawal left a perfect twin. The payer-to-payee link survives only via `TXN_LABELS.src_row_number` -> `RAW_AMLWORLD_TRANS`; costs listed in step 1 below |
 | D31 | 09-27 | Desk-routed deposits are always in INR (`retain_foreign_pct` does not apply to them) | Build, within the residual-tell scan | M26; an over-the-counter deposit at an Indian branch credits rupees |
+| D32 | 09-27 | Dynamic-table lags: `dim_party`, `party_relationship` -> `DOWNSTREAM`; `txn_daily_agg` gets a real lag equal to `signals_fast` (dev 60 min, demo 5 min). Each table declares `upstream`, and the config refuses to load a graph with a table fresher than its upstream, a `DOWNSTREAM` table nobody reads, a cycle or an unknown name | Build (plan P2, P3) | Snowflake rejects the first at CREATE and never refreshes the second, silently. A check at load keeps the next edit from reintroducing either |
 
 ---
 
@@ -420,7 +422,7 @@ re-asserts them at run time. They are not only recorded here.
   - `load` must run after the `policy` seed stage (D2)
   - `DT_PARTY_RELATIONSHIP` must exclude `internal_accounts.src_bank_id` from FUND_FLOW (D4)
   - ground-truth files need a stage the service role cannot read
-- **Phase 3 obligation (M14):** `RAW_AMLWORLD_TRANS.amount_received` / `amount_paid` are `NUMBER(20,2)`, so COPY would round Bitcoin's 6 dp values (`0.025852` -> `0.03`) in a table documented as verbatim. Snowflake cannot change a NUMBER column's scale in place, so the fix is `NUMBER(20,6)` in the DDL plus a drop and re-create of the (empty) dev table. That is a destructive step, so it is left for `load` and not applied now. Generated RAW tables are unaffected: Bitcoin is excluded before reskin (D9).
+- **Phase 3 obligation (M14) -- DONE in Phase 3 step 2 (D28).** `RAW_AMLWORLD_TRANS.amount_received` / `amount_paid` were `NUMBER(20,2)`, so COPY would have rounded Bitcoin's 6 dp values (`0.025852` -> `0.03`) in a table documented as verbatim. Now `NUMBER(20,6)`; the empty dev table was dropped and re-created. Generated RAW tables are unaffected: Bitcoin is excluded before reskin (D9).
 - **Commits:** everything without a credential is committed at the user's standing request, on `feature/ashwinAnalyze`, not pushed (`b8b94b4`, `85c862c`, then one commit per step). Before each commit, the actual secret values from `.env`, `connections.toml` and the key file are compared against every staged file; counts only are printed. `.env` stays gitignored.
 - **`docs/enhanced-architecture-diagrams.md` §S4/§S5** corrected in step 8 from the measured facts (see step 8 below).
 
@@ -437,8 +439,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | Step | Scope | State |
 |---|---|---|
 | 1 | Close the cash-desk tell in the generator (D27, D30), residual-tell scan (D29, D31), M18 test | **Done** |
-| 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | Next |
-| 3 | `policy` seed stage | |
+| 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | **Done** |
+| 3 | `policy` seed stage | Next |
 | 4 | `riskcopilot load` | |
 | 5 | Dynamic tables for the structuring slice | |
 | 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | |
@@ -510,3 +512,40 @@ Tests that had counted the desk as a customer were corrected: the eval-grain leg
 | Scan and fix the hour tell only | Hour (D29) and currency (D31) | The scan found both |
 
 **Verification:** 378 passed; ruff, mypy (27 files), lint (dev + demo, 6 templates each) clean; `doctor --profile dev` exit 0, 0 failed. No SQL changed.
+
+## Step 2 -- contracts: lags, stages, grants, scale-6 ledger
+
+**What changed**
+- `conf/base.yml`: the lag fixes and `upstream` graph (D32); `stages.ground_truth: GROUND_TRUTH_STAGE`. `conf/profiles/dev.yml`: `txn_daily_agg` 60 minutes, matching dev's `signals_fast`.
+- `config.py`: `DynamicTableSpec.upstream` and `.lag_seconds`; `_check_lag_graph` runs in `Settings._check_consistency`; `Stages.ground_truth`.
+- `sql/00_bootstrap/01_account_objects.sql`: the ground-truth stage in `{{ fq.ground_truth }}` (SSE, no directory).
+- `sql/00_bootstrap/02_roles_grants.sql`:
+  - ownership of all 5 stages and 4 file formats handed to the admin role (M27);
+  - `GRANT EXECUTE TASK ON ACCOUNT` to the admin role, which the routing task needs in step 6.
+- `sql/01_ddl/01_raw_landing.sql`: `amount_received` / `amount_paid` `NUMBER(20,6)` (M14); the `src_row_number` comment now states the M16 contract.
+- `sql/README.md`: `{{ stage.ground_truth }}`.
+- **Moved to later steps** (from the plan's step-2 list, so no config lands before something reads it): the seed rows and routing settings in `sql_context` -> step 3; the `replay` block -> step 8; `snowflake_timestamp_format` -> step 4; `streams_tasks.resume_route_task` -> step 6.
+
+**Live, on RISK_COPILOT_DEV**
+1. `RAW_AMLWORLD_TRANS` re-checked: 0 rows. Dropped (D28), and nothing else.
+2. `deploy --stage bootstrap --stage ddl` run twice: every file ok both times (bootstrap 25 + 115 statements, ddl 14 / 10 / 10 / 10).
+3. Verified afterwards:
+   - amounts `NUMBER(20,6)`;
+   - all 5 stages and 4 file formats owned by `RC_ADMIN_DEV`;
+   - `GROUND_TRUTH_STAGE_DEV` carries only its OWNERSHIP grant;
+   - `EXECUTE TASK` held by `RC_ADMIN_DEV`;
+   - the service role has no grant on anything in GROUND_TRUTH;
+   - 38 base tables.
+
+**Tests:** 387 passed (378 before). New:
+- the configured lag graph is valid for both profiles;
+- the original bugs are rejected: a table fresher than its upstream (the 1-day `DT_DIM_PARTY`), and a `DOWNSTREAM` table nobody reads (the old `DT_TXN_DAILY_AGG`);
+- a `DOWNSTREAM` table is judged at its consumers' rate;
+- unknown upstream and cycles are rejected;
+- the ground-truth stage is created once and owned by the admin role, and no GRANT in any stage names GROUND_TRUTH except ownership to the admin role;
+- every stage and file format is handed to the admin role;
+- the idempotency test now covers `dynamic_tables`, `streams_tasks` and `policy`, and also rejects DROP / TRUNCATE / DELETE statements.
+
+**Departures:** the plan's step-2 config additions were moved to the steps that consume them (above). M27 was not in the plan; found by inspecting the live stage owners before `load` depends on them.
+
+**Verification:** 387 passed; ruff, mypy (27 files), lint clean; `doctor --profile dev` exit 0, 0 failed.

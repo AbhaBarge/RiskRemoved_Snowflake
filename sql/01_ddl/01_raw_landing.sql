@@ -29,15 +29,15 @@ USE SCHEMA {{ fq.raw }};
 -- drops one of them.
 -- --------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS RAW_AMLWORLD_TRANS (
-    src_row_number      NUMBER(38,0)    NOT NULL COMMENT 'File line number. Stable natural key for the source row.',
+    src_row_number      NUMBER(38,0)    NOT NULL COMMENT '1-based data-row ordinal: METADATA$FILE_ROW_NUMBER under SKIP_HEADER = 1, which does not count the header (M16). Joins GROUND_TRUTH.TXN_LABELS.src_row_number.',
     txn_timestamp       TIMESTAMP_NTZ   NOT NULL COMMENT 'Source format YYYY/MM/DD HH:MI.',
     from_bank           VARCHAR         NOT NULL,
     from_account        VARCHAR         NOT NULL COMMENT 'CSV column 3 (hex). Unique only within from_bank.',
     to_bank             VARCHAR         NOT NULL,
     to_account          VARCHAR         NOT NULL COMMENT 'CSV column 5 (hex). Unique only within to_bank.',
-    amount_received     NUMBER(20,2)    NOT NULL COMMENT 'Credited to the beneficiary, in receiving_currency.',
+    amount_received     NUMBER(20,6)    NOT NULL COMMENT 'Credited to the beneficiary, in receiving_currency. Scale 6: Bitcoin carries 6 dp, every other currency 2 (M14); scale 2 would round a verbatim table.',
     receiving_currency  VARCHAR         NOT NULL,
-    amount_paid         NUMBER(20,2)    NOT NULL COMMENT 'Debited from the originator, in payment_currency.',
+    amount_paid         NUMBER(20,6)    NOT NULL COMMENT 'Debited from the originator, in payment_currency. Scale 6, as amount_received.',
     payment_currency    VARCHAR         NOT NULL,
     payment_format      VARCHAR         NOT NULL COMMENT 'ACH | Wire | Cheque | Cash | Credit Card | Reinvestment.',
     is_laundering       NUMBER(1,0)     NOT NULL COMMENT 'Source ground truth. Routed to GROUND_TRUTH; never propagated to CURATED.',

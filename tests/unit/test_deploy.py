@@ -11,6 +11,7 @@ render time and expensive at execution time:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -124,15 +125,55 @@ def test_unknown_stage_is_rejected(deployer: Deployer) -> None:
 def test_all_ddl_statements_are_idempotent(deployer: Deployer) -> None:
     # Re-running a stage is the normal way to apply a change, so it must never be
     # a destructive act.
-    for stage in ("bootstrap", "ddl"):
+    for stage in ("bootstrap", "ddl", "dynamic_tables", "streams_tasks", "policy"):
         for path in deployer.stage_files(stage):
             for statement in split_statements(deployer.render(path)):
                 head = " ".join(statement.split()).upper()
+                if head.startswith(("DROP ", "TRUNCATE ", "DELETE ")):
+                    raise AssertionError(f"{path.name}: destructive statement: {head[:110]}")
                 if not head.startswith("CREATE"):
                     continue
                 assert "IF NOT EXISTS" in head or "OR REPLACE" in head or "OR ALTER" in head, (
                     f"{path.name}: non-idempotent CREATE: {head[:110]}"
                 )
+
+
+def test_ground_truth_stage_is_granted_to_nobody(deployer: Deployer) -> None:
+    """Obligation 4: a label must not be readable from a staged file.
+
+    The stage is created, and its ownership handed to the admin role; no other
+    GRANT may name it, nor the GROUND_TRUTH schema's objects, in any stage.
+    """
+    ctx = deployer.settings.sql_context()
+    stage = f"{ctx['fq']['ground_truth']}.{ctx['stage']['ground_truth']}"
+    created = owned = 0
+    for key, _ in STAGE_ORDER:
+        for path in deployer.stage_files(key):
+            for statement in split_statements(deployer.render(path)):
+                head = " ".join(
+                    line for line in statement.splitlines() if not line.strip().startswith("--")
+                ).upper()
+                head = " ".join(head.split())
+                if head.startswith("CREATE STAGE") and stage in head:
+                    created += 1
+                elif head.startswith("GRANT") and ctx["fq"]["ground_truth"] in head:
+                    # Only ownership handed to the admin role may name it.
+                    assert head.startswith("GRANT OWNERSHIP "), f"{path.name}: {head[:120]}"
+                    assert head.endswith(f"TO ROLE {ctx['role']['admin']} COPY CURRENT GRANTS")
+                    owned += stage in head
+    assert (created, owned) == (1, 1)
+
+
+def test_every_stage_and_file_format_is_handed_to_the_admin_role(deployer: Deployer) -> None:
+    """M27: objects created as ACCOUNTADMIN must not stay owned by it."""
+    ctx = deployer.settings.sql_context()
+    rendered = " ".join(
+        " ".join(deployer.render(p).split()).upper() for p in deployer.stage_files("bootstrap")
+    )
+    for name in ctx["stage"].values():
+        assert re.search(rf"GRANT OWNERSHIP ON STAGE \S+\.{name} TO ROLE ", rendered), name
+    for created in re.findall(r"CREATE FILE FORMAT IF NOT EXISTS (\S+)", rendered):
+        assert f"GRANT OWNERSHIP ON FILE FORMAT {created} TO ROLE" in rendered, created
 
 
 # --------------------------------------------------------------------------- #

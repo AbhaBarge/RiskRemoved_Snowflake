@@ -48,6 +48,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 #: ``TARGET_LAG`` accepts either a duration or the literal ``DOWNSTREAM``.
 _TARGET_LAG_RE = re.compile(r"^(DOWNSTREAM|\d+\s+(second|minute|hour|day)s?)$", re.IGNORECASE)
+_LAG_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
 _DOMAIN_FILES = {
     "generation": "generation.yml",
@@ -293,6 +294,8 @@ class Stages(_Frozen):
     policy_docs: str
     generated: str
     scripts: str
+    #: In the GROUND_TRUTH schema, granted to no role (obligation 4).
+    ground_truth: str
 
     @field_validator("*")
     @classmethod
@@ -356,6 +359,8 @@ class RetentionClamp(_Frozen):
 class DynamicTableSpec(_Frozen):
     name: str
     target_lag: str
+    #: Config keys of the dynamic tables this one reads. See ``_check_lag_graph``.
+    upstream: tuple[str, ...] = ()
 
     @field_validator("name")
     @classmethod
@@ -371,6 +376,64 @@ class DynamicTableSpec(_Frozen):
                 "'<n> second|minute|hour|day(s)'"
             )
         return v.strip().upper() if v.strip().upper() == "DOWNSTREAM" else v.strip().lower()
+
+    @property
+    def lag_seconds(self) -> int | None:
+        """The lag in seconds, or ``None`` for ``DOWNSTREAM``."""
+        if self.target_lag == "DOWNSTREAM":
+            return None
+        count, unit = self.target_lag.split()
+        return int(count) * _LAG_UNIT_SECONDS[unit.rstrip("s")]
+
+
+def _check_lag_graph(specs: dict[str, DynamicTableSpec]) -> None:
+    """Reject a dynamic-table lag graph Snowflake would refuse or never refresh.
+
+    Two rules, both from Snowflake's scheduler: a table cannot be fresher than
+    a table it reads (CREATE fails), and a ``DOWNSTREAM`` table that no other
+    dynamic table reads never refreshes (silently -- a view as its only consumer
+    does not count). A ``DOWNSTREAM`` table refreshes as often as its most
+    demanding consumer, so that is the lag it is compared at.
+    """
+    consumers: dict[str, list[str]] = {key: [] for key in specs}
+    for key, spec in specs.items():
+        for up in spec.upstream:
+            if up not in specs:
+                raise ConfigError(f"dynamic_tables.{key}.upstream names unknown table {up!r}")
+            if up == key:
+                raise ConfigError(f"dynamic_tables.{key} lists itself as upstream")
+            consumers[up].append(key)
+
+    def visit(key: str, path: tuple[str, ...]) -> None:
+        if key in path:
+            raise ConfigError(f"dynamic_tables: upstream cycle {' -> '.join((*path, key))}")
+        for up in specs[key].upstream:
+            visit(up, (*path, key))
+
+    for key in specs:
+        visit(key, ())
+
+    def effective(key: str) -> int:
+        own = specs[key].lag_seconds
+        if own is not None:
+            return own
+        if not consumers[key]:
+            raise ConfigError(
+                f"dynamic_tables.{key} is DOWNSTREAM but no dynamic table lists it as "
+                "upstream, so it would never refresh. Give it a lag."
+            )
+        return min(effective(c) for c in consumers[key])
+
+    for key, spec in specs.items():
+        lag = effective(key)
+        for up in spec.upstream:
+            up_lag = specs[up].lag_seconds
+            if up_lag is not None and lag < up_lag:
+                raise ConfigError(
+                    f"dynamic_tables.{key} (lag {spec.target_lag}) reads {up} (lag "
+                    f"{specs[up].target_lag}): a dynamic table cannot be fresher than its "
+                    "upstream, and Snowflake rejects the CREATE."
+                )
 
 
 class CortexObjects(_Frozen):
@@ -435,6 +498,8 @@ class Settings(BaseModel):
         for required in ("dev", "pipeline", "demo"):
             if required not in self.warehouses:
                 raise ConfigError(f"Missing required warehouse definition: {required!r}")
+
+        _check_lag_graph(self.dynamic_tables)
 
         # A branch analyst role whose region is never generated silently makes
         # the RLS demo return an empty result instead of a filtered one -- a

@@ -60,8 +60,12 @@ roles:
 stages:
   data: DATA_STAGE               # source datasets (AMLworld, OpenSanctions)
   policy_docs: POLICY_DOCS       # regulatory PDFs for AI_PARSE_DOCUMENT
-  generated: GENERATED_STAGE     # L1/L2/L3 generator output
+  generated: GENERATED_STAGE     # L1/L2/L3 generator output (RAW files only)
   scripts: SCRIPTS_STAGE         # Python stored-procedure payloads
+  # Generator ground-truth files (labels, eval grain, pending injected legs). It
+  # lives in the GROUND_TRUTH schema and is granted to no role, so the service
+  # role cannot read a label from a staged file either.
+  ground_truth: GROUND_TRUTH_STAGE
 
 # ---------------------------------------------------------------------------
 # Time Travel retention.
@@ -81,18 +85,32 @@ retention:
 # GAP-09/10 fix: velocity is decomposed into an incremental-safe daily
 # aggregate plus a narrow 1h table, instead of one full-refresh rolling-window
 # table. See conf/profiles/*.yml to override per environment.
+#
+# `upstream` names the dynamic tables each one reads, and is checked when the
+# config loads (config.py): Snowflake rejects a table whose lag is shorter than
+# an upstream's, and a DOWNSTREAM table that no other table reads never
+# refreshes at all. Both were true of the original values here (1-day
+# DT_DIM_PARTY under a 1-minute DT_TRANSACTIONS_ENRICHED; DT_TXN_DAILY_AGG read
+# only by a view, which cannot sit between two dynamic tables anyway).
+# The lists are the design graph; a table's SQL may read fewer while its rules
+# are still unbuilt, never more.
 # ---------------------------------------------------------------------------
 dynamic_tables:
-  dim_party:              { name: DT_DIM_PARTY,              target_lag: 1 day }
-  transactions_enriched:  { name: DT_TRANSACTIONS_ENRICHED,  target_lag: 1 minute }
-  txn_daily_agg:          { name: DT_TXN_DAILY_AGG,          target_lag: DOWNSTREAM }
-  txn_velocity_1h:        { name: DT_TXN_VELOCITY_1H,        target_lag: DOWNSTREAM }
-  party_relationship:     { name: DT_PARTY_RELATIONSHIP,     target_lag: 1 day }
-  sanctions_consolidated: { name: DT_SANCTIONS_CONSOLIDATED, target_lag: DOWNSTREAM }
+  # Refreshed on demand by ENRICHED: its sources (CBS/KYC) change rarely, so an
+  # incremental refresh is nearly free, and a fixed 1-day lag is not allowed
+  # upstream of a 1-minute table.
+  dim_party:              { name: DT_DIM_PARTY,              target_lag: DOWNSTREAM, upstream: [] }
+  transactions_enriched:  { name: DT_TRANSACTIONS_ENRICHED,  target_lag: 1 minute, upstream: [dim_party] }
+  # A real lag, not DOWNSTREAM: its consumer is V_TXN_VELOCITY_FEATURES, a view.
+  # Matches signals_fast so the features and the signals agree in time.
+  txn_daily_agg:          { name: DT_TXN_DAILY_AGG,          target_lag: 5 minutes, upstream: [transactions_enriched] }
+  txn_velocity_1h:        { name: DT_TXN_VELOCITY_1H,        target_lag: DOWNSTREAM, upstream: [transactions_enriched] }
+  party_relationship:     { name: DT_PARTY_RELATIONSHIP,     target_lag: DOWNSTREAM, upstream: [] }
+  sanctions_consolidated: { name: DT_SANCTIONS_CONSOLIDATED, target_lag: DOWNSTREAM, upstream: [] }
   # Row-level, incremental-safe rules only.
-  signals_fast:           { name: DT_SIGNALS_FAST,           target_lag: 5 minutes }
+  signals_fast:           { name: DT_SIGNALS_FAST,           target_lag: 5 minutes, upstream: [transactions_enriched, txn_velocity_1h, sanctions_consolidated] }
   # Aggregate + graph rules that cannot refresh incrementally.
-  signals_aggregate:      { name: DT_SIGNALS_AGGREGATE,      target_lag: 60 minutes }
+  signals_aggregate:      { name: DT_SIGNALS_AGGREGATE,      target_lag: 60 minutes, upstream: [transactions_enriched, party_relationship] }
 
 views:
   # Non-materialised rolling windows summed from DT_TXN_DAILY_AGG buckets.
