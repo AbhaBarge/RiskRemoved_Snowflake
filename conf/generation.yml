@@ -53,6 +53,11 @@ source:
   # File-format facts, measured 2026-09-26 (build log M14-M16).
   ledger:
     timestamp_format: "%Y/%m/%d %H:%M"
+    # The same format in Snowflake's notation, for the positional COPY into
+    # RAW_AMLWORLD_TRANS (`riskcopilot load`). Must describe the same strings as
+    # timestamp_format; the post-load check joins every labelled leg back to its
+    # ledger row on txn_timestamp, so a mismatch fails the load.
+    snowflake_timestamp_format: "YYYY/MM/DD HH24:MI"
     # Every non-Bitcoin amount carries exactly 2 decimal places; Bitcoin carries
     # 6 (148,151 received / 146,066 paid values). Parsed at scale 6 so nothing is
     # rounded on read -- the reader FAILS rather than rescale if a later revision

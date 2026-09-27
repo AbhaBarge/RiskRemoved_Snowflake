@@ -372,15 +372,85 @@ def generate(
 
 
 # --------------------------------------------------------------------------- #
-# Stubs -- implemented in later phases, declared now so the surface is stable.
+# load
 # --------------------------------------------------------------------------- #
 
 
 @app.command()
-def load() -> None:
-    """Upload generated data to a stage and COPY INTO the landing tables."""
-    console.print("[yellow]Not yet implemented[/yellow] -- Phase 3 (load).")
-    raise typer.Exit(code=2)
+def load(
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Generated dataset. Default: output.root/<profile>."),
+    ] = None,
+    data_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--data-root", help="Directory holding data/MANIFEST.yml. Default: repo root."
+        ),
+    ] = None,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace",
+            help="Delete and reload the tables this load writes, if they hold rows. "
+            "Without it a non-empty target refuses the load.",
+        ),
+    ] = False,
+    source: Annotated[
+        bool,
+        typer.Option(
+            "--source/--no-source",
+            help="Also load the AMLworld ledger and accounts into RAW_AMLWORLD_*.",
+        ),
+    ] = True,
+) -> None:
+    """Upload a generated dataset and COPY it into RAW and GROUND_TRUTH.
+
+    Refuses a dataset whose manifest failed a gate, or whose files changed since
+    generation. Everything after the upload runs in one transaction and is
+    rolled back if any post-load check fails.
+    """
+    from risk_copilot.pipeline.load import LoadError, open_bundle
+    from risk_copilot.pipeline.load import load as run_load
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    try:
+        bundle = open_bundle(settings, out_dir)
+        with open_session(settings, unattended=True) as session:
+            report = run_load(
+                settings,
+                session,
+                bundle=bundle,
+                data_root=data_root,
+                replace=replace,
+                source=source,
+            )
+    except (LoadError, SessionError, ConfigError) as exc:
+        console.print(f"[red]Load failed; nothing was committed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+
+    rows = Table(title=f"Loaded -- profile '{settings.profile}', run {report.run_key}")
+    rows.add_column("Table", style="cyan")
+    rows.add_column("Rows", justify="right")
+    for table, count in report.rows.items():
+        rows.add_row(table, f"{count:,}")
+    console.print(rows)
+    checks = Table(title="Post-load checks")
+    checks.add_column("Check", style="cyan")
+    checks.add_column("Status")
+    checks.add_column("Value")
+    checks.add_column("Detail", overflow="fold")
+    for c in report.checks:
+        checks.add_row(
+            c.name, "[green]OK[/green]" if c.ok else "[red]FAIL[/red]", c.value, c.detail
+        )
+    console.print(checks)
+
+
+# --------------------------------------------------------------------------- #
+# Stubs -- implemented in later phases, declared now so the surface is stable.
+# --------------------------------------------------------------------------- #
 
 
 @app.command()

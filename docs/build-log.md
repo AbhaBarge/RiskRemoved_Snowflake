@@ -96,6 +96,8 @@ re-asserts them at run time. They are not only recorded here.
 | M25 | **The fixed branch-hours window was a tell.** AMLworld spreads cash over all 24 hours: **25.6%** (dev) / **24.2%** (demo) of genuine desk deposits fall in 10:00-16:00, against **100%** of planted ones under D22. With times drawn from the genuine deposits: planted **28.7%** / **23.2%**, and 23 / 24 distinct hours | Hour histogram of desk-deposit credit legs, before and after D29 | D29 |
 | M26 | **A retained foreign currency marked genuine cash deposits.** `fx.retain_foreign_pct` kept a foreign currency on **35 of 598** dev / **338 of 7,822** demo genuine desk deposits; no planted deposit is ever foreign. After D31: 0 / 0 (all legs: 3.61% / 4.49% foreign) | Currency of desk-deposit credit legs | D31 |
 | M27 | **The stages and file formats were owned by ACCOUNTADMIN.** `01_account_objects.sql` creates them under that role and `02_roles_grants.sql` handed over only the database and schemas: all 4 stages and all 4 file formats on dev had owner ACCOUNTADMIN. The admin role could list a stage only through a human session's secondary roles, which a task does not have | `SHOW STAGES` / `SHOW FILE FORMATS IN DATABASE` as the admin role | Ownership handed to the admin role in bootstrap; verified live after the change |
+| M28 | **Not every pair balances in INR, and correctly so.** 122 of 4,931 dev pairs have a non-zero `amount_inr` sum; all 122 are AMLworld rows whose payment and receiving currencies differ (0 same-currency), so each side's real amount converts at our rate to a different rupee value. The plan's "every pair sums to 0" was wrong as stated | Local join of the unbalanced pairs to the source ledger; re-asserted in Snowflake by `load` (0 unexplained) | Post-load check is "every unbalanced pair is a cross-currency source row" |
+| M29 | **Snowflake reads a Parquet `timestamp[ms]` as epoch milliseconds.** Without logical types, `$1:col` is an INTEGER (`1662650340000`); `::TIMESTAMP_NTZ` reads it as seconds and gives year **54657**. `TO_TIMESTAMP_NTZ(n, 3)` gives the right `2022-09-08 15:19`. `decimal128` reads exactly (sum of `amount_inr` equal to the paisa), `date32` reads as DATE, `list<string>` as ARRAY, JSON text as VARCHAR | Probe on the real dev files on a scratch stage path, removed after | `load` builds each timestamp cast from the file's own time unit |
 
 ---
 
@@ -442,8 +444,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | 1 | Close the cash-desk tell in the generator (D27, D30), residual-tell scan (D29, D31), M18 test | **Done** |
 | 2 | Contracts: DT lags, stages, config, `RAW_AMLWORLD_TRANS` at scale 6 (D28) | **Done** |
 | 3 | `policy` seed stage | **Done** |
-| 4 | `riskcopilot load` | Next |
-| 5 | Dynamic tables for the structuring slice | |
+| 4 | `riskcopilot load` | **Done** |
+| 5 | Dynamic tables for the structuring slice | Next |
 | 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | |
 | 7 | Post-load verify: signal_yield, hero promotion | |
 | 8 | Replay harness, docs | |
@@ -592,3 +594,73 @@ Tests that had counted the desk as a customer were corrected: the eval-grain leg
 **Departure:** `window_clause_id` was added to the rule, so the bucket expression names its clause explicitly instead of the code guessing which of the four it is.
 
 **Verification:** 417 passed; ruff, mypy (28 files), lint (dev + demo, 7 templates each) clean; `doctor --profile dev` exit 0, 0 failed.
+
+## Step 4 -- `riskcopilot load`
+
+**What changed**
+- New `src/risk_copilot/pipeline/load.py`:
+  - `open_bundle` runs the offline refusals **before any connection**: `passed: false`, a profile mismatch, and any file whose rows or content hash differ from the manifest.
+  - `Loader.preflight` runs the live refusals:
+    - `RAW_AMLWORLD_TRANS` amounts not at `source.ledger.amount_scale`;
+    - an injected CTR clause not in force;
+    - an injected leg not in the base currency;
+    - a ground-truth stage granted beyond ownership;
+    - any non-empty target table, unless `--replace` is given.
+  - `upload` routes files by zone:
+    - RAW to `GENERATED_STAGE/<profile>/<manifest hash>/raw`;
+    - ground truth to `GROUND_TRUTH_STAGE/<profile>/<manifest hash>/ground_truth` only;
+    - the AMLworld CSVs, gzipped, to `DATA_STAGE/amlworld/<sha256>/`.
+
+    All paths are content-addressed, so re-uploading the same content is skipped by name.
+  - `run` does everything else in **one transaction**, rolled back on any failure:
+    - `--replace` deletes;
+    - COPY every table (`FORCE = TRUE`, since COPY's load history must not silently skip a re-load);
+    - promote the pending legs;
+    - verify.
+  - Parquet COPY takes its column list and casts from the live `INFORMATION_SCHEMA`, and refuses a file column the table lacks (the shape of a leak). Timestamps are cast from the file's time unit (M29); JSON text going into a VARIANT is parsed.
+  - The ledger COPY is positional (`$1..$11`) with `METADATA$FILE_ROW_NUMBER` under `FF_CSV_HEADER` (obligation 5, M16), using the new `source.ledger.snowflake_timestamp_format`.
+  - Promotion is `INSERT ... ROUND(amount_sign * amount_ctr_ratio * c.threshold_lower, ?)` joined to `V_POLICY_CLAUSE_CURRENT`, with the decimals bound. It fails unless every pending leg is promoted, then sets `resolved_at` (obligation 3).
+- `cli.py`: the `load` command (`--out-dir`, `--data-root`, `--replace`, `--source/--no-source`). It prints table row counts and the post-load checks.
+- `data/MANIFEST.yml`: `laundering_rows: 5177` (M5), so the post-load check compares against a declared value, not a literal.
+- `pyproject.toml`: S608 ignored for `load.py`, with the reason (identifiers only, all data bound), following the repo's per-file convention.
+
+**Live, on RISK_COPILOT_DEV** (exit 0, 120 s including the 475 MB ledger upload)
+
+| Check | Result |
+|---|---|
+| Row counts, all 13 tables | equal the manifest: RAW_TRANSACTIONS 10,064 (9,862 + 202 promoted), TXN_LABELS 10,064, ID maps 501 / 556, parties 500, accounts 553, KYC 500, edges 90, eval grain 494, pending 202, patterns 370 |
+| Ledger (M5) | 5,078,345 rows, 5,177 laundering, both equal to `data/MANIFEST.yml` |
+| Accounts | 518,581 |
+| Every leg labelled | 0 unlabelled |
+| **M16 in practice** | all 9,862 labelled source legs join `RAW_AMLWORLD_TRANS` on `src_row_number`: 0 missing, 0 timestamp, 0 `is_laundering`, 0 account mismatches (bank ids normalised as in `ids.normalise_bank_id`, desk legs excluded) |
+| Pair balance (M28) | 122 unbalanced, 0 not explained by a cross-currency source row |
+
+Independent checks afterwards:
+- all 202 promoted legs equal `ROUND(sign x ratio x 1,000,000, 2)` read live (0 mismatches), `amount = amount_inr`, amounts Rs 9,00,080.95 to Rs 9,84,700.16;
+- RAW timestamps 2022-09-01 to 09-10;
+- 145,670 ledger `amount_paid` values keep more than 2 dp (M14 holds);
+- 0 `src:` / `inj:` tokens in RAW_TRANSACTIONS, and no ratio or cohort column;
+- no ground-truth file on the generated stage (7 files there, 4 on the ground-truth stage, 2 on the data stage);
+- a second `load` is refused ("Target tables are not empty"), with nothing committed;
+- **obligation 1, live:** `--profile demo load` is refused in 2 s with `passed: False (failed gates: ['demo_entity'])`, before any connection (demo has no database).
+
+**Tests:** 436 passed (417 before). New `tests/unit/test_load.py` (19), against a real bundle written by the generator's writer and a recording fake session:
+- every refusal: failed build, other profile, altered file, scale 2, policy not seeded, stage granted, non-empty without `--replace`;
+- the CLI refuses a failed build without opening a session;
+- millisecond timestamps, JSON text into a VARIANT, an extra column refused;
+- the positional ledger COPY with `METADATA$FILE_ROW_NUMBER`;
+- promotion joins the clause and writes no threshold;
+- ground-truth files go only to the ground-truth stage;
+- rollback on a failed check or an unpromoted leg;
+- the decimals are bound.
+
+**Departures from the plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| "Every pair sums to 0" | Every unbalanced pair must be a cross-currency source row | M28 |
+| `TRUNCATE` under `--replace` | `DELETE` inside the load transaction | A failed replace rolls back to the old data instead of leaving empty tables |
+| Hold back source legs at or after `replay.hold_back_from` | Not in this step | The `replay` config lands with the harness (step 8); load gains the hold-back there |
+| Refusals, then connect | Offline refusals before the session opens | So a failed demo build is refused although demo has no database |
+
+**Verification:** 436 passed; ruff, mypy (29 files), lint clean; `doctor --profile dev` exit 0, 0 failed.

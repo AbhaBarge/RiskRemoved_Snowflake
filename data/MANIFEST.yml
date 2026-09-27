@@ -25,6 +25,9 @@ datasets:
     bytes: 475664283
     sha256: b19d39f515523373f991b689c07e11e7b0b95c17a2c27a87d91584ae16c5b040
     rows: 5078345
+    # is_laundering = 1 rows, measured over the whole file (build log M5).
+    # `riskcopilot load` re-asserts it in Snowflake after COPY.
+    laundering_rows: 5177
     source: IBM AMLworld (HI-Small) via Kaggle
     licence: CDLA-Sharing-1.0
     url: https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
