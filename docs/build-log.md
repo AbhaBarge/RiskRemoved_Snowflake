@@ -18,11 +18,13 @@ at each step.
 | 1 | Contracts: bank-id normalisation, config corrections, typology seed, `INJECTED_TXN_PENDING` DDL, `.gitignore` | **Done** |
 | 2 | `patterns.py` + positional ledger reader | **Done** |
 | 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | **Done** -- illicit-rate calibration open (M18) |
-| 4 | `reskin.py` + `labels.py` | Pending |
+| 4 | `reskin.py` + `labels.py` | **Done** |
 | 5 | `entities.py` + `relationships.py` | Pending |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | Pending |
 | 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+
+**Verification at the end of step 4:** `pytest -q` 295 passed; ruff, mypy (17 files) and lint clean. Step 4 changed only SQL comments.
 
 **Verification at the end of step 3:** `pytest -q` 269 passed in 37 s; ruff, mypy (15 files), lint and doctor (exit 0, 0 failed) clean.
 
@@ -67,6 +69,7 @@ re-asserts them at run time. They are not only recorded here.
 | M16 | `METADATA$FILE_ROW_NUMBER` does **not** count a skipped header: with `SKIP_HEADER = 1` the first data row is 1 | A 3-row CSV on a temporary stage on ASHWINRAVI004, queried with `SKIP_HEADER` 0 and 1 | `src_row_number` = 1-based data-row ordinal, so labels join exactly onto the rows `load` copies into `RAW_AMLWORLD_TRANS` |
 | M17 | Accounts per entity are **heavy-tailed**: median 1; 102,689 entities have 1 account, 37,015 have 2-4, 22 have >1,000 (max 7,820). The launderers are the mega-entities: demo's 2,838 surviving seed parties own **96,886** accounts, while the attempts themselves touch only 3,156 | Group-by over the accounts file; seed set via `patterns.py` + `EntityOwnership` | Party-closed inclusion is impossible within a 10,000-account budget. Sampling is **account-level** (D13) |
 | M18 | Induced samples are far sparser than `max_transactions` assumes. **dev**: BFS saturates at 2 hops with no budget skip (450 parties / 502 accounts / 9,328 legs, 4 AMLworld illicit legs); 3 hops gives 687 accounts / 12,148 legs; 4 gives 857 / 13,634. **demo**: hits its budgets exactly (5,000 / 10,000) with all 369 surviving attempts captured, but only 66,223 pairs, **4.87% of them illicit before any injection** | `sample_subgraph` on the real files, per profile and hop count | Projected illicit rate vs the 2.50% ceiling. dev: expected 2.85% / worst 4.93% at 2 hops, 2.21% / 3.83% at 3, 1.97% / 3.43% at 4. demo: above the ceiling before injection. `test_dev_cohort_is_sized_for_the_illicit_rate_band` divides by `max_transactions` and is therefore optimistic. **Needs a decision** (open items) |
+| M19 | **3,701 of 490,891 legit AMLworld Cash pairs (0.75%)** convert to 90-99.9% of the CTR threshold; 110,458 are at or above it; 108 Cash pairs are illicit | Each Cash credit converted at `fx.rates_to_inr`, then divided by the `CTR_CASH_THRESHOLD` seed and compared with the `STRUCTURING_BAND` seed | Legit in-band cash deposits exist and form a natural false-positive control for `STRUCTURING_CROSS_ACCOUNT`. They must post as DEPOSIT (D17). Whether one host's legit deposits alone ever satisfy the rule is measured after load (D7) |
 
 ---
 
@@ -89,6 +92,8 @@ re-asserts them at run time. They are not only recorded here.
 | D13 | 09-26 | Sampling is **account-level**: a party carries only its sampled accounts. Structuring hosts are the exception, seeded with all 2-4 of their accounts | Build | M17. It is also what §S5 #3 specified ("seed from the attempts' accounts"); a bank sees only the accounts it holds |
 | D14 | 09-26 | Structuring hosts are selected in `graph.py`, not `inject.py`, and are seeded in **both** seed modes. A host must be INDIVIDUAL, own 2-4 accounts, have no `is_laundering=1` pair anywhere in the ledger, and have at least `host_min_ledger_pairs` eligible pairs | Build | A host outside the sample cannot be injected. A tainted host would carry a second, unrelated label; an inactive one is an island. 12,048 entities qualify |
 | D15 | 09-26 | The worst-case injected legs are reserved from `max_transactions` before sampling. An attempt captured only partly is dropped whole (`partial_attempts: drop`). The leg cut ranks legitimate pairs by a hash of their **content**, protecting attempt and host pairs | Build | Keeps the leg budget hard, applies D9's reasoning to sampling truncation, and keeps the sample independent of the ledger's row order |
+| D16 | 09-26 | `RAW_TRANSACTIONS.source_ref` is an **opaque** `UTR<16 hex>` token for every leg, source and injected alike, replacing the DDL's documented `amlworld:<n>` / `inject:<cohort>`. `txn_pair_id`s are allocated once, over source and injected pairs together, in hash order | Build | The documented format was a value-level label leak that the column-name gate cannot see: the prefix separates injected rows, the cohort is a label, and `<n>` joins to `RAW_AMLWORLD_TRANS.is_laundering`. Sequential ids would expose injected pairs as the tail. Provenance stays in `TXN_LABELS` |
+| D17 | 09-26 | AMLworld Cash pairs post as `WITHDRAWAL` (debit) / `DEPOSIT` (credit) on channel CASH; Credit Card as `PAYMENT`; everything else `TRANSFER` (`txn_types` in config) | Build | M19: legit cash credits land in `STRUCTURING_BAND` and must look like deposits, or the rule's false-positive control is meaningless |
 
 ---
 
@@ -199,6 +204,27 @@ re-asserts them at run time. They are not only recorded here.
 
   Exclusions on the full ledger: 149,019 pairs (146,091 format, 148,204 currency, 110,612 party type; they overlap), 1 attempt. 12,048 entities qualify as hosts.
 - **Environment note:** two runs were 25-70x slower than their repeats: a 15.5-minute pytest (36 s on repeat) and a 944 s hop-4 sample (13 s under the profiler). Neither reproduced. Timings in this log are from the fast runs.
+
+### Step 4 -- reskin + labels
+- `src/risk_copilot/generation/reskin.py`:
+  - `reskin_pairs()`: two legs per pair. Side-specific amounts and currencies; Decimal FX at the configured rounding mode (`fx.rounding_mode`). `retain_foreign_pct` is drawn per pair from a content hash, keeping ISO currency codes (`fx.iso_codes`); `amount_inr` is always set. Channels and `txn_types` come from config (D17); `reference_text` is NULL.
+  - Fails on an unknown currency, an unmapped format when `channel_default` is null, a non-negative debit sign, or amounts that would round.
+  - `assign_pair_ids()`: one allocation over all pairs in hash order, giving dense, collision-free `TP-` ids plus opaque `source_ref` tokens (D16).
+- `src/risk_copilot/generation/labels.py`:
+  - `label_source_legs()`: labels from the ledger's `is_laundering`, with attempt, pattern, typology and `match_confidence = 1/n` for captured attempts only
+  - fails on an uncatalogued pattern, a ledger row claimed by two attempts, or an attempt row that is not illicit
+  - `raw_laundering_patterns()`: all attempts verbatim for `RAW_LAUNDERING_PATTERNS`
+- `conf/generation.yml`: `fx.iso_codes`, `fx.rounding_mode`, `txn_types`, `legs.source_ref_prefix` / `source_ref_hex_digits`, `labels.source_injection_method`.
+- DDL: comment-only corrections to `RAW_TRANSACTIONS.source_ref` and `INJECTED_TXN_PENDING.source_ref` (D16). No column changed; `CREATE ... IF NOT EXISTS` leaves deployed comments as they were until the next re-create.
+- Tests: `tests/unit/test_generation_reskin_labels.py` (22), plus 2 config-coherence tests (source label = AMLworld typologies' `injection_label`; every FX currency has an ISO code).
+- **Real data:**
+
+  | Profile | Legs | Reskin | Pairs with a foreign leg | Illicit legs | By typology |
+  |---|---|---|---|---|---|
+  | dev | 9,328 | 0.5 s | 4.1% | 4 | all unattributed |
+  | demo | 132,446 | 7.2 s | 4.9% | 6,446 | all 8 typologies (3,199 attempt pairs) + 24 unattributed pairs |
+
+  `source_ref` is unique in both.
 
 ## Departures from the plan
 

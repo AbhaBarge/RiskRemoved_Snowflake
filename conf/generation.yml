@@ -116,10 +116,31 @@ fx:
     "Saudi Riyal": 22.00
     "Shekel": 24.10
     "Brazil Real": 15.60
-  # Share of legs deliberately retained in foreign currency so cross-border
-  # signals have something to bite on.
+  # ISO 4217 code per AMLworld currency name, for the legs retained in foreign
+  # currency. An unmapped currency FAILS reskin rather than being guessed.
+  iso_codes:
+    "US Dollar": USD
+    "Euro": EUR
+    "UK Pound": GBP
+    "Yen": JPY
+    "Yuan": CNY
+    "Rupee": INR
+    "Australian Dollar": AUD
+    "Canadian Dollar": CAD
+    "Swiss Franc": CHF
+    "Mexican Peso": MXN
+    "Ruble": RUB
+    "Saudi Riyal": SAR
+    "Shekel": ILS
+    "Brazil Real": BRL
+  # Share of PAIRS whose legs keep their source currency, so cross-border signals
+  # have something to bite on. Drawn per pair from a stable hash; a Rupee side
+  # is INR either way. amount_inr is always populated.
   retain_foreign_pct: 5.0
   rounding_decimals: 2
+  # A decimal-module rounding constant. Conversion is Decimal throughout: a
+  # binary float would put sub-paise noise on the amounts the CTR rule compares.
+  rounding_mode: ROUND_HALF_UP
 
 # ---------------------------------------------------------------------------
 # Channel remapping: AMLworld payment formats -> Indian rails.
@@ -133,6 +154,17 @@ channel_map:
   Reinvestment: IMPS
 channel_default: NEFT
 
+# Leg txn_type by AMLworld payment format and leg side. A Cash pair is posted as
+# a cash WITHDRAWAL by the payer and a cash DEPOSIT by the payee -- the same
+# shape as an injected structuring deposit. That matters (M19): 3,701 legit
+# AMLworld cash credits land inside STRUCTURING_BAND after FX, and they must look
+# like deposits for the rule's false-positive control to mean anything.
+txn_types:
+  default: { debit: TRANSFER, credit: TRANSFER }
+  by_format:
+    Cash: { debit: WITHDRAWAL, credit: DEPOSIT }
+    "Credit Card": { debit: PAYMENT, credit: PAYMENT }
+
 # ---------------------------------------------------------------------------
 # GAP-03 -- pair-to-leg conversion.
 # One AMLworld pair row becomes two rows sharing a txn_pair_id: a signed
@@ -145,6 +177,23 @@ legs:
   # AMLworld carries distinct paid/received amounts for FX pairs; each leg
   # keeps its own side's amount so money conservation holds per currency.
   use_side_specific_amounts: true
+  # source_ref is an OPAQUE reference (a UTR-like token) for every leg, source
+  # and injected alike. The DDL once specified "amlworld:<n>" / "inject:<cohort>":
+  # the prefix alone separates injected rows, the cohort name is a label, and
+  # <n> joins back to RAW_AMLWORLD_TRANS.is_laundering. Provenance lives in
+  # GROUND_TRUTH.TXN_LABELS (txn_id -> src_row_number / injection_method).
+  source_ref_prefix: UTR
+  source_ref_hex_digits: 16
+  # reference_text stays NULL for every leg until the L3 narration generator
+  # exists: a template applied to one population only would be a label.
+
+# ---------------------------------------------------------------------------
+# GROUND_TRUTH.TXN_LABELS.injection_method for every leg that came from the
+# AMLworld ledger, illicit or not. Must equal the injection_label of the
+# AMLworld typologies in conf/detection.yml (asserted by a test).
+# ---------------------------------------------------------------------------
+labels:
+  source_injection_method: amlworld_original
 
 # ---------------------------------------------------------------------------
 # L1 -- entity enrichment. These attributes DRESS the preserved AMLworld keys.

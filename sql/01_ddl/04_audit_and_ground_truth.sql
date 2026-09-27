@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS INJECTED_TXN_PENDING (
     txn_type                VARCHAR         NOT NULL,
     channel                 VARCHAR         NOT NULL,
     reference_text          VARCHAR,
-    source_ref              VARCHAR         NOT NULL COMMENT 'inject:<cohort>.',
+    source_ref              VARCHAR         NOT NULL COMMENT 'Opaque UTR-like reference, same format as source legs. Copied to RAW on promotion, so it must not name the cohort.',
     cohort                  VARCHAR         NOT NULL COMMENT 'Injection cohort label, e.g. reskin_structuring.',
     generation_seed         NUMBER(38,0)    NOT NULL,
     resolved_at             TIMESTAMP_NTZ   COMMENT 'Set when load promotes the row. NULL = not yet in RAW_TRANSACTIONS.',

@@ -162,6 +162,19 @@ def test_graph_typologies_assert_no_rule_in_advance(settings: Settings) -> None:
             assert typology["expected_rule_ids"] == [], typology["typology_id"]
 
 
+def test_source_legs_are_labelled_with_the_amlworld_injection_label(settings: Settings) -> None:
+    method = settings.generation["labels"]["source_injection_method"]
+    for typology in settings.detection["typologies"]:
+        if typology["amlworld_pattern"]:
+            assert typology["injection_label"] == method, typology["typology_id"]
+
+
+def test_every_fx_currency_has_an_iso_code(settings: Settings) -> None:
+    fx = settings.generation["fx"]
+    assert set(fx["rates_to_inr"]) == set(fx["iso_codes"])
+    assert fx["iso_codes"]["Rupee"] == fx["base_currency"]
+
+
 # --------------------------------------------------------------------------- #
 # Entities
 # --------------------------------------------------------------------------- #

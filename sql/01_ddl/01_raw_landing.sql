@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS RAW_TRANSACTIONS (
     txn_type                VARCHAR         NOT NULL COMMENT 'DEPOSIT | WITHDRAWAL | TRANSFER | PAYMENT.',
     channel                 VARCHAR         NOT NULL COMMENT 'UPI | IMPS | NEFT | RTGS | CASH | CHEQUE.',
     reference_text          VARCHAR         COMMENT 'Free-text narration. Synthetic.',
-    source_ref              VARCHAR         COMMENT 'Provenance: amlworld:<src_row_number> or inject:<cohort>.',
+    source_ref              VARCHAR         COMMENT 'Opaque UTR-like transfer reference, shared by both legs. Deliberately carries no provenance: a source/injected prefix or a source row number would be a label. Provenance is in GROUND_TRUTH.TXN_LABELS.',
     ingested_at             TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP() NOT NULL
                                             COMMENT 'Arrival time. Differs from txn_timestamp under replay.',
     CONSTRAINT pk_raw_transactions PRIMARY KEY (txn_id),
