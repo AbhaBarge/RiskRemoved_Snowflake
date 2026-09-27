@@ -19,6 +19,7 @@ The fixture's topology, traced by hand (entity letters as in the fixture MANIFES
      14  E9b -> E6b  Cheque            bank 70's 8000A0070 (not E7's)
      15  EAa -> E3   Cheque            clean host
      16  EAb -> E7   Credit Card       clean host
+     17  EAa -> E3   Cheque            clean host, 09-10: the legit window's last day
 
 EA (Sole Proprietorship #10, three accounts, legit only) is the only entity that
 qualifies as a structuring host: E2, E4 and E6 are individuals with an illicit
@@ -105,7 +106,7 @@ def test_exclusions_are_counted_per_reason(source: dict[str, Any], base: dict[st
     assert stats["excluded_pairs_currency"] == 2
     assert stats["excluded_pairs_party_type"] == 3  # rows 5, 12, 13
     assert stats["excluded_pairs"] == 4
-    assert stats["eligible_pairs"] == 11  # 16 - 4 excluded - row 6 (attempt 2)
+    assert stats["eligible_pairs"] == 12  # 17 - 4 excluded - row 6 (attempt 2)
 
 
 def test_attempt_with_an_excluded_pair_is_dropped_whole(
@@ -184,7 +185,7 @@ def test_injection_hosts_bfs_follows_the_hand_trace(
     assert sg.dropped_attempts[1] == "partial_capture"  # E6a was never reached
     assert sg.dropped_attempts[3] == "not_sampled"
     assert sg.captured_attempts == ()
-    assert rows(sg) == [2, 8, 11, 15, 16]  # rows 1, 4 go with attempt 1
+    assert rows(sg) == [2, 8, 11, 15, 16, 17]  # rows 1, 4 go with attempt 1
 
 
 def test_unattributed_illicit_pairs_are_kept(source: dict[str, Any], base: dict[str, Any]) -> None:
@@ -251,7 +252,7 @@ def test_leg_cut_keeps_attempts_and_host_traffic(
 ) -> None:
     reserve = reserved_injection_legs(base)
     full = run(source, base, subgraph={"seed_source": "laundering_patterns"})
-    protected = {1, 3, 4, 9, 10, 15, 16}
+    protected = {1, 3, 4, 9, 10, 15, 16, 17}
     assert protected < set(rows(full))
     cut = run(
         source,

@@ -80,7 +80,7 @@ def test_ledger_reads_every_row_positionally(
     amlworld_mini: Path, generation: dict[str, Any]
 ) -> None:
     table = load_ledger(amlworld_mini, generation)
-    assert table.num_rows == 16
+    assert table.num_rows == 17
     assert table.column_names == [SRC_ROW_NUMBER, *LEDGER_COLUMNS]
 
 
@@ -93,7 +93,7 @@ def test_duplicate_account_header_keeps_both_sides(amlworld_mini: Path, fmt: Led
 def test_src_row_number_is_the_one_based_data_row(amlworld_mini: Path, fmt: LedgerFormat) -> None:
     """Matches METADATA$FILE_ROW_NUMBER under SKIP_HEADER = 1 (measured, M16)."""
     table = read_ledger(_ledger_path(amlworld_mini), fmt)
-    assert table[SRC_ROW_NUMBER].to_pylist() == list(range(1, 17))
+    assert table[SRC_ROW_NUMBER].to_pylist() == list(range(1, 18))
     lines = _ledger_path(amlworld_mini).read_text(encoding="utf-8").splitlines()
     tenth = table.slice(9, 1).to_pylist()[0]
     assert lines[tenth[SRC_ROW_NUMBER]].startswith("2022/09/03 14:22,021174,8000A0060")
@@ -161,7 +161,11 @@ def test_label_outside_zero_one_fails(copy_root: Path, fmt: LedgerFormat) -> Non
 def test_row_count_is_asserted_against_the_manifest(
     copy_root: Path, generation: dict[str, Any]
 ) -> None:
-    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 16", "rows: 99")
+    _rewrite(
+        copy_root / "data" / "MANIFEST.yml",
+        "rows: 17\n\n  amlworld_accounts",
+        "rows: 99\n\n  amlworld_accounts",
+    )
     with pytest.raises(SourceError, match="manifest declares 99"):
         load_ledger(copy_root, generation)
 
@@ -183,7 +187,7 @@ def test_missing_file_fails(copy_root: Path) -> None:
 
 
 def test_declared_size_is_checked(copy_root: Path) -> None:
-    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 16", "rows: 16\n    bytes: 1")
+    _rewrite(copy_root / "data" / "MANIFEST.yml", "rows: 17\n", "rows: 17\n    bytes: 1\n")
     with pytest.raises(SourceError, match="truncated"):
         dataset(copy_root, "amlworld_transactions")
 

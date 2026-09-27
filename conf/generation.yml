@@ -438,6 +438,10 @@ injection:
     # asserts window_days <= that span and <= STRUCTURING_WINDOW_DAYS. A week-long
     # burst leaves the placement room to vary per host.
     window_days: 7
+    # Over-the-counter cash is deposited in branch hours: [start, end) local
+    # time, minute resolution like the AMLworld timestamps. Deposits at 03:00
+    # would be recognisable by their clock alone.
+    deposit_hours: [10, 16]
     channel: CASH
     txn_type: DEPOSIT
     debit_side: cash_desk            # see internal_accounts

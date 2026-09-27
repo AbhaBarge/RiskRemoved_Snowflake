@@ -20,9 +20,11 @@ at each step.
 | 3 | `graph.py`: seeds, exclusions, BFS, budget, ID maps | **Done** -- illicit-rate calibration open (M18) |
 | 4 | `reskin.py` + `labels.py` | **Done** |
 | 5 | `entities.py` + `relationships.py` | **Done** |
-| 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | Pending |
+| 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | **Done** |
 | 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+
+**Verification at the end of step 6:** `pytest -q` 333 passed in 46 s; ruff, mypy (23 files) clean.
 
 **Verification at the end of step 5:** `pytest -q` 317 passed in 43 s; ruff, mypy (20 files) clean.
 
@@ -102,6 +104,9 @@ re-asserts them at run time. They are not only recorded here.
 | D19 | 09-26 | Income annualisation (D1) and all date anchors use the span of **legitimate** sampled legs | Build | M21. Measured over all legs, demo's illicit tail stretches the span to 18 days and understates legit income by 10/18 |
 | D20 | 09-26 | A host needs at least `accounts_per_party_min` **deposit** accounts (`deposit_account_types: [SAVINGS, CURRENT]`). Account type is a pure function of the account id (`draws.account_type`), shared by sampler and entity builder | Build | A cash deposit into a LOAN or FD account is not a structuring pattern a bank would recognise |
 | D21 | 09-26 | Faker locale `hi_IN` -> `en_IN`; Indian mobile numbers from a configured format | Build | M20 |
+| D22 | 09-26 | Structuring deposits fall in branch hours (`deposit_hours: [10, 16]`, minute resolution); one `window_days` burst per host at a hashed offset inside the legit window | Build | Deposits at arbitrary clock times or in the illicit tail would be recognisable without any rule |
+| D23 | 09-26 | `EVAL_GRAIN_PARTY_MONTH.typology_id` = the month's dominant typology (most illicit legs, smallest id on ties); `expected_rule_ids` = the **union** over every typology present | Build | One party can be in two typologies; recall for each rule must count it |
+| D24 | 09-26 | The demo hero must have been **constructed** to trip every `must_trigger_rules` entry (its eval grain expects them all). Otherwise `generate` fails (`fail_if_not_found`) | Build | Demo lists RAPID_CREDIT_VELOCITY and SHARED_DEVICE_CLUSTER, whose cohorts do not exist yet; pinning a party that cannot show the story would repeat GAP-18 |
 
 ---
 
@@ -269,6 +274,37 @@ re-asserts them at run time. They are not only recorded here.
 
   Every record predates its window. Declared income: dev median Rs 7.7 cr, p90 Rs 291 cr; demo median Rs 3.7 cr. That is AMLworld's amount scale annualised, not a bug. It is recorded for the income rule's recalibration.
 
+### Step 6 -- inject + eval grain + demo hero
+- `src/risk_copilot/generation/inject.py`, `inject_structuring()`:
+  - per host: 2-4 of its **deposit** accounts, 3-6 deposits each, in one `window_days` burst inside the legit window during branch hours (D22)
+  - each deposit is Dr cash desk / Cr customer, with `amount_ctr_ratio` drawn in the band at 10 dp (D2); no rupee column exists
+  - writes `INJECTED_TXN_PENDING` rows, TYP_STRUCTURING labels, and cash-desk `ID_MAP_PARTY` / `ID_MAP_ACCOUNT` rows for every configured region (D4)
+  - fails if the window exceeds the legit span
+  - returns a `HostPlan` per host as construction evidence
+- `src/risk_copilot/generation/eval_grain.py`, `build_eval_grain()`: party-month rows over customer legs only (cash desk skipped), dominant typology plus the union of expected rules (D23), unattributed illicit expecting none.
+- `src/risk_copilot/generation/demo_entity.py`, `select_demo_entity()`: constructed candidates only (D24), preferring party type then region, hash-ranked; writes `PROVISIONAL_UNTIL_DETECTED`.
+- `conf/generation.yml`: `injection.structuring.deposit_hours`.
+- Fixture: one legit host pair on 2022-09-10 (row 17), so the fixture's legit window is 10 days like the real ledger's; the graph hand trace was updated.
+- Tests: `tests/unit/test_generation_inject.py` (16). They cover:
+  - deposit-account targeting (the fixture host's LOAN account is never credited)
+  - leg shape and signs; the cash desk on the debit side
+  - band and scale of the ratio
+  - burst and branch-hour timing
+  - no rupee column
+  - complete labels
+  - desk isolation from customer tables
+  - window guard; determinism
+  - host and unattributed eval rows; leg totals; desk exclusion
+  - hero selection, failure and region preference
+- **Real data:**
+
+  | Profile | Legit window | Deposits (hosts) | Total legs | Illicit rate | Hero |
+  |---|---|---|---|---|---|
+  | dev | 09-01..09-10 (10 d) | 98 (10) | 10,058 | **1.99%**, passes the 2.50% gate | P-754971478708, MUMBAI, 1 of 10 candidates |
+  | demo | 09-01..09-18 (18 d) | 394 (40) | 133,008 | **5.44%**, fails | none: RAPID_CREDIT_VELOCITY / SHARED_DEVICE_CLUSTER not constructed (D24) |
+
+  M18's dev projection (2.85%) overstated injection: most hosts own only 2 deposit accounts. Demo's legit window is 18 days because its sample does include 452 legit tail pairs (M21).
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
@@ -284,11 +320,11 @@ re-asserts them at run time. They are not only recorded here.
 
 ## Open items and risks
 
-- **DECISION NEEDED -- illicit-rate calibration (M18).** Both profiles are projected to fail `illicit_rate_pct.max` (2.50%, D6):
-  - dev: expected 2.85% at 2 hops, falling to 2.21% at 3 hops and 1.97% at 4
-  - demo: 4.87% from AMLworld alone, before any injection
+- **DECISION NEEDED -- illicit-rate calibration (M18).** Measured after injection (step 6):
+  - dev: **1.99%**, which passes
+  - demo: **5.44%** (4.87% from AMLworld alone), which fails the 2.50% ceiling
 
-  The levers are hops, cohort size, budgets, or the ceiling itself. The ceiling is a user decision (D6), so it is not changed here. Steps 4-7 do not depend on the answer; the gate measures the real rate in step 7.
+  The levers are demo's hops, budgets, or cohort size, or the ceiling itself. The ceiling is a user decision (D6), so it is not changed here.
 - **Demo illicit rate:** the D6 estimate of ~2% assumed a ~400K-leg demo sample; the measured sample is 132K legs and 4.87% illicit before injection (M18). Superseded by the decision item above.
 - **DECISION NEEDED -- the illicit tail (M21).** Days 09-11..09-18 are 59% laundering, so "active after 09-10" is a label proxy any rule or model could exploit, inherited from AMLworld. The options are to trim the tail, which drops the illicit rows there and the 109 attempts that reach into it, or to keep it and document the proxy. This is asked together with the illicit-rate item once injection gives real numbers.
 - **Income scale.** AMLworld amounts annualised give median declared incomes of Rs 3.7-7.7 crore, implausible for a retail book. They are consistent with the ledger, so `INCOME_ACTIVITY_MISMATCH` is unaffected in ratio terms, but a demo audience will notice. Revisit with the income rule's recalibration.

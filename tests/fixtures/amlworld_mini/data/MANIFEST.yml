@@ -14,6 +14,8 @@
 #   * Sole Proprietorship hosts with 2-3 accounts
 #   * account number 8000A0070 at two banks, owned by different entities
 #   * one illicit ledger row no attempt attributes (2022/09/04 07:35)
+#   * a legit host pair on 2022/09/10, so the legitimate window is 09-01..09-10
+#     -- 10 days, as on the real ledger (build log M21)
 #   * one clean SoleProp entity (800A0000A, 3 accounts, legit pairs only): the
 #     only fixture entity that qualifies as a structuring host. Its accounts'
 #     hashed types are SAVINGS / LOAN / SAVINGS, so exactly 2 are deposit
@@ -26,7 +28,7 @@ datasets:
   amlworld_transactions:
     path: data/Kaggle/HI-Small_Trans.csv
     required: true
-    rows: 16
+    rows: 17
 
   amlworld_accounts:
     path: data/Kaggle/HI-Small_accounts.csv
