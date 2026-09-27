@@ -37,6 +37,13 @@ source:
   # contains a dropped pair is dropped whole -- a truncated cycle is not a
   # cycle, and labelling half of one would corrupt per-typology recall.
   exclusion_policy: whole_pair_and_attempt
+  # Last day of the ledger that is used, inclusive (decision D25, 2026-09-27).
+  # Legitimate activity ends on 2022-09-10 (M21); 09-11..09-18 holds 1,108 pairs,
+  # 59% of them laundering, so "active after 09-10" would be a label proxy any
+  # rule or model could exploit. Pairs after this day are excluded, and under
+  # exclusion_policy every attempt reaching past it is dropped whole (109 of 370).
+  # null keeps the whole ledger.
+  window_end: 2022-09-10
   # data/MANIFEST.yml keys for each source role. Row and attempt totals are
   # asserted against the manifest entries, never against literals in code.
   datasets:
@@ -67,6 +74,16 @@ subgraph:
   #                        The dev thin slice uses this: its one rule is
   #                        cash-based and no AMLworld typology uses cash.
   seed_source: laundering_patterns
+  # laundering_patterns only: how many surviving attempts of EACH typology seed
+  # the sample (decision D26, 2026-09-27). Seeding from all of them made demo 5%
+  # illicit before injection (M18), twice the 2.50% ceiling. Attempts are chosen
+  # per typology by stable_hash of their content, so all 8 typologies stay
+  # represented; the rest are removed with their pairs, like any dropped attempt.
+  # null seeds every surviving attempt. Measured on demo with the 09-10 cut
+  # (build log M22): all 261 -> 3.06% illicit; 30 -> 2.78%; 25 -> 2.51%;
+  # 20 -> 2.06%; 15 -> 1.89%. 20 is the most examples per typology that clears
+  # the ceiling with margin; all 8 typologies keep exactly 20.
+  attempts_per_typology: 20
   expansion_hops: 2                  # BFS hops along the transaction graph
   target_parties: 5000
   target_accounts: 10000

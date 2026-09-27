@@ -22,7 +22,7 @@ at each step.
 | 5 | `entities.py` + `relationships.py` | **Done** |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | **Done** |
 | 7 | `validate.py`, writer, `riskcopilot generate` | **Done** |
-| 8 | Run on dev; record measured facts in BUILD STATUS and memory | **Done** for dev: `generate` passes on the real data. Two user decisions open (demo illicit rate; the 09-11..09-18 tail) |
+| 8 | Run on dev; record measured facts in BUILD STATUS and memory | **Done**. dev passes; the two open decisions were made (D25, D26), and demo passes every data gate at 2.06% |
 
 **Verification at the end of step 7:**
 
@@ -88,7 +88,8 @@ re-asserts them at run time. They are not only recorded here.
 | M18 | Induced samples are far sparser than `max_transactions` assumes. **dev**: BFS saturates at 2 hops with no budget skip (450 parties / 502 accounts / 9,328 legs, 4 AMLworld illicit legs); 3 hops gives 687 accounts / 12,148 legs; 4 gives 857 / 13,634. **demo**: hits its budgets exactly (5,000 / 10,000) with all 369 surviving attempts captured, but only 66,223 pairs, **4.87% of them illicit before any injection** | `sample_subgraph` on the real files, per profile and hop count | Projected illicit rate vs the 2.50% ceiling. dev: expected 2.85% / worst 4.93% at 2 hops, 2.21% / 3.83% at 3, 1.97% / 3.43% at 4. demo: above the ceiling before injection. `test_dev_cohort_is_sized_for_the_illicit_rate_band` divides by `max_transactions` and is therefore optimistic. **Needs a decision** (open items) |
 | M19 | **3,701 of 490,891 legit AMLworld Cash pairs (0.75%)** convert to 90-99.9% of the CTR threshold; 110,458 are at or above it; 108 Cash pairs are illicit | Each Cash credit converted at `fx.rates_to_inr`, then divided by the `CTR_CASH_THRESHOLD` seed and compared with the `STRUCTURING_BAND` seed | Legit in-band cash deposits exist and form a natural false-positive control for `STRUCTURING_CROSS_ACCOUNT`. They must post as DEPOSIT (D17). Whether one host's legit deposits alone ever satisfy the rule is measured after load (D7) |
 | M20 | Faker `hi_IN` writes names and companies in **Devanagari** (`हर्शद कुमारजी`) and formats phones as `+91 0433218196` (leading 0, not a mobile). `en_IN` gives Latin-script Indian names with the same per-seed determinism (Faker 40.39.0) | Seeded provider calls on both locales | Locale switched to `en_IN`; phones generated from a configured mobile format. Devanagari names would make JAROWINKLER screening against the Latin-script OpenSanctions list meaningless |
-| M21 | **Legitimate activity ends on 2022-09-10.** 99.98% of the 5,078,345 pairs fall on 09-01..09-10; 09-11..09-18 holds 1,108 pairs, **655 illicit (59%)**. 109 of 370 attempts (29%) run into the tail. dev's sample has no pair after 09-10; demo's has 452 legit / 652 illicit pairs there | Pair counts per calendar day over the ledger; per-attempt last-row day; the same over each profile's sample | The usable legit window is **10 days**, not 18. The income span is measured over legit legs (D19) and the structuring window goes 14 -> 7 (D18). The tail is itself a temporal label proxy inherited from AMLworld (open items) |
+| M21 | **Legitimate activity ends on 2022-09-10.** 99.98% of the 5,078,345 pairs fall on 09-01..09-10; 09-11..09-18 holds 1,108 pairs, **655 illicit (59%)**. 109 of 370 attempts (29%) run into the tail. dev's sample has no pair after 09-10; demo's has 452 legit / 652 illicit pairs there | Pair counts per calendar day over the ledger; per-attempt last-row day; the same over each profile's sample | The usable legit window is **10 days**, not 18. The income span is measured over legit legs (D19) and the structuring window goes 14 -> 7 (D18). The tail is itself a temporal label proxy inherited from AMLworld; cut at 09-10 (D25) |
+| M22 | With the 09-10 cut, demo's illicit rate falls **5.44% -> 3.06%** (all 261 surviving attempts). Seeding N attempts per typology: 40 -> 3.03%, 30 -> 2.78%, **25 -> 2.51%**, **20 -> 2.06%**, 15 -> 1.89%. At 20, every typology keeps exactly 20 attempts (160 captured) | Full sample -> reskin -> entities -> inject on demo, per N | N = 20 (D26) |
 
 ---
 
@@ -120,6 +121,8 @@ re-asserts them at run time. They are not only recorded here.
 | D22 | 09-26 | Structuring deposits fall in branch hours (`deposit_hours: [10, 16]`, minute resolution); one `window_days` burst per host at a hashed offset inside the legit window | Build | Deposits at arbitrary clock times or in the illicit tail would be recognisable without any rule |
 | D23 | 09-26 | `EVAL_GRAIN_PARTY_MONTH.typology_id` = the month's dominant typology (most illicit legs, smallest id on ties); `expected_rule_ids` = the **union** over every typology present | Build | One party can be in two typologies; recall for each rule must count it |
 | D24 | 09-26 | The demo hero must have been **constructed** to trip every `must_trigger_rules` entry (its eval grain expects them all). Otherwise `generate` fails (`fail_if_not_found`) | Build | Demo lists RAPID_CREDIT_VELOCITY and SHARED_DEVICE_CLUSTER, whose cohorts do not exist yet; pinning a party that cannot show the story would repeat GAP-18 |
+| D25 | 09-27 | **The ledger is cut at 2022-09-10** (`source.window_end`). Later pairs are excluded, and every attempt reaching past the cut is dropped whole (109 of 370) | **User** | M21: after 09-10 activity is 59% laundering, so "active late" would be a label proxy that inflates any detection metric. All 8 typologies survive |
+| D26 | 09-27 | Demo seeds **20 attempts per typology** (`subgraph.attempts_per_typology`), chosen by content hash; the rest leave with their pairs | **User** chose "fewer laundering cases"; 20 set by measurement (M22) | Seeding every attempt put demo at twice the 2.50% ceiling (D6). 20 is the most per typology that clears it with margin |
 
 ---
 
@@ -368,6 +371,15 @@ re-asserts them at run time. They are not only recorded here.
   - §S4: the base rate 0.063% -> **0.102%** (M5), with the 3,209 / 1,968 split and the 0.10-2.50% band (D6); new rows for the 10-day legit window (M21), `en_IN` (M20), bank-id padding (M1), and the `source_ref` value leak (D16)
   - §S5 #3: account-level sampling (M17) and the measured sizes; #4: legit-span income and the measured ratio; #6: structuring as built (M6, D2/D4/D18/D20/D22); #7: the measured rates; #9: **1:1 attribution on the full key (M4)** replaces the assumed ambiguity, and the Patterns `:` finding (M3); #17: provisional, constructed hero (D24)
   - §25.1: the 0.063% line struck through with the measured figure; the date range annotated with M21; `hi_IN` -> `en_IN`
+- **The two open decisions** were put to the user in plain terms and decided: cut at 09-10 (D25), and fewer laundering cases (D26, N = 20 by measurement, M22). Implemented as `source.window_end` and `subgraph.attempts_per_typology`; attempts are dropped with reason `after_window` / `not_selected` and their pairs leave with them. 6 new graph tests (the cut on the fixture, YAML date handling, the production cut leaving the fixture whole, per-typology selection including the unselected attempt's rows leaving, the config guard).
+- **After the decisions, real data:**
+
+  | Profile | Exit | Illicit rate | Parties / accounts / legs | Attempts | Blocking failures |
+  |---|---|---|---|---|---|
+  | dev | 0 | 1.99% (unchanged) | 500 / 553 / 10,058 | n/a (host-seeded) | none |
+  | demo | 1 | **2.06%** | 5,000 / 8,857 / 163,992 | 160 (20 x 8), 109 cut, 101 not selected | `demo_entity` only (D24) |
+
+  Demo's reported gates: benford chi2 565.0 and income ratio max 0.21, both non-blocking. Verification: 371 tests passed; ruff, mypy and lint clean.
 
 ## Departures from the plan
 
@@ -386,13 +398,10 @@ re-asserts them at run time. They are not only recorded here.
 
 ## Open items and risks
 
-- **DECISION NEEDED -- illicit-rate calibration (M18).** Measured after injection (step 6):
-  - dev: **1.99%**, which passes
-  - demo: **5.44%** (4.87% from AMLworld alone), which fails the 2.50% ceiling
-
-  The levers are demo's hops, budgets, or cohort size, or the ceiling itself. The ceiling is a user decision (D6), so it is not changed here.
+- **Illicit-rate calibration (M18) -- DECIDED (D26).** Demo seeds 20 attempts per typology. With the cut (D25) demo measures **2.06%**, inside the 2.50% ceiling; dev is unchanged at 1.99%.
 - **Demo illicit rate:** the D6 estimate of ~2% assumed a ~400K-leg demo sample; the measured sample is 132K legs and 4.87% illicit before injection (M18). Superseded by the decision item above.
-- **DECISION NEEDED -- the illicit tail (M21).** Days 09-11..09-18 are 59% laundering, so "active after 09-10" is a label proxy any rule or model could exploit, inherited from AMLworld. The options are to trim the tail, which drops the illicit rows there and the 109 attempts that reach into it, or to keep it and document the proxy. This is asked together with the illicit-rate item once injection gives real numbers.
+- **The illicit tail (M21) -- DECIDED (D25).** The ledger is cut at 2022-09-10, removing the 09-11..09-18 tail and the 109 attempts that reach into it.
+- **Demo still exits 1, on `demo_entity` only.** Its `must_trigger_rules` include RAPID_CREDIT_VELOCITY and SHARED_DEVICE_CLUSTER, whose cohorts are not built (D24). Every data gate passes. This clears when those cohorts land, or if demo's rule list is narrowed -- a scope decision for that phase.
 - **Income scale.** AMLworld amounts annualised give median declared incomes of Rs 3.7-7.7 crore, implausible for a retail book. They are consistent with the ledger, so `INCOME_ACTIVITY_MISMATCH` is unaffected in ratio terms, but a demo audience will notice. Revisit with the income rule's recalibration.
 - **Income under-declare factor** is uncalibrated for 18 days (M12). Recalibrate when `INCOME_ACTIVITY_MISMATCH` lands.
 - **ML velocity baseline** needs 45 days; the source has 18 (M2). This needs a decision before Phase 5.

@@ -8,10 +8,12 @@ Order of operations:
 
 1. **Exclusions** (``source.exclusion_policy: whole_pair_and_attempt``). A pair is
    excluded if its format or either currency is excluded (Bitcoin, M7), if
-   either side belongs to an excluded party type (EXTERNAL, M8), or if either
-   side does not resolve to an owning entity (never, measured M1). Any
-   laundering attempt containing an excluded pair is dropped whole, with all of
-   its pairs (D9).
+   either side belongs to an excluded party type (EXTERNAL, M8), if either side
+   does not resolve to an owning entity (never, measured M1), or if it falls
+   after ``source.window_end`` (D25). Any laundering attempt containing an
+   excluded pair is dropped whole, with all of its pairs (D9). With
+   ``attempts_per_typology`` set, only that many surviving attempts of each
+   typology are kept, chosen by content hash (D26).
 2. **Hosts.** The structuring cohort's host entities are selected here, because a
    host outside the sample cannot be injected. They are ranked by
    :func:`~risk_copilot.ids.stable_hash` among entities that qualify: the
@@ -42,6 +44,7 @@ transfers.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -52,7 +55,7 @@ import pyarrow.compute as pc
 
 from risk_copilot.generation import GenerationError
 from risk_copilot.generation.draws import account_type
-from risk_copilot.generation.patterns import AttemptLocation, Patterns
+from risk_copilot.generation.patterns import Attempt, AttemptLocation, Patterns
 from risk_copilot.generation.source import (
     ENTITY_PREFIX,
     KEY_SEP,
@@ -92,6 +95,16 @@ def _choice(value: Any, allowed: tuple[str, ...], what: str) -> str:
     return str(value)
 
 
+def _as_date(value: Any) -> dt.date | None:
+    """YAML reads ``2022-09-10`` as a date; a quoted value arrives as a string."""
+    if value is None or isinstance(value, dt.date):
+        return value
+    try:
+        return dt.date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise SamplingError(f"source.window_end {value!r} is not an ISO date") from exc
+
+
 @dataclass(frozen=True)
 class SamplingConfig:
     """``subgraph``, ``source`` and ``entities`` settings the sampler consumes."""
@@ -108,6 +121,8 @@ class SamplingConfig:
     party_type_map: Mapping[str, str]
     party_type_default: str | None
     excluded_party_types: tuple[str, ...]
+    window_end: dt.date | None = None
+    attempts_per_typology: int | None = None
 
     @classmethod
     def from_config(cls, generation: Mapping[str, Any]) -> SamplingConfig:
@@ -122,6 +137,9 @@ class SamplingConfig:
                     "subgraph.require_both_legs_resolvable: only true is implemented; an "
                     "unresolvable counterparty would be an orphan reference in RAW_TRANSACTIONS"
                 )
+            per_typology = sub.get("attempts_per_typology")
+            if per_typology is not None and int(per_typology) < 1:
+                raise SamplingError("subgraph.attempts_per_typology must be >= 1 or null")
             return cls(
                 seed=int(generation["seed"]),
                 seed_source=_choice(sub["seed_source"], SEED_SOURCES, "subgraph.seed_source"),
@@ -135,6 +153,8 @@ class SamplingConfig:
                 party_type_map=dict(ent["party_type_from_entity_name"]),
                 party_type_default=ent.get("party_type_default"),
                 excluded_party_types=tuple(ent.get("excluded_party_types") or ()),
+                window_end=_as_date(src.get("window_end")),
+                attempts_per_typology=None if per_typology is None else int(per_typology),
             )
         except KeyError as exc:
             raise SamplingError(f"conf/generation.yml: missing sampling setting {exc}") from exc
@@ -220,8 +240,9 @@ class Subgraph:
     hosts: tuple[str, ...]
     seed_entities: tuple[str, ...]
     captured_attempts: tuple[int, ...]
-    #: attempt_id -> why it is absent: ``excluded_pair`` (D9), ``unlocated``,
-    #: ``partial_capture`` or ``not_sampled``.
+    #: attempt_id -> why it is absent: ``unlocated``, ``after_window`` (D25),
+    #: ``excluded_pair`` (D9), ``not_selected`` (D26), ``partial_capture`` or
+    #: ``not_sampled``.
     dropped_attempts: Mapping[int, str]
     party_ids: Mapping[str, str]
     account_ids: Mapping[AccountKey, str]
@@ -270,6 +291,14 @@ def _rank_neighbours(account: str, found: Iterable[str], cfg: SamplingConfig) ->
 
 def _is_in(values: Any, members: Iterable[Any], type_: pa.DataType) -> Any:
     return pc.fill_null(pc.is_in(values, value_set=pa.array(sorted(members), type=type_)), False)
+
+
+def _attempt_rank(attempt: Attempt, seed: int) -> tuple[int, int]:
+    """Rank an attempt by the hash of its raw rows: content, not file position."""
+    return (
+        stable_hash(*(r.raw for r in attempt.rows), seed, namespace="attempt-select"),
+        attempt.attempt_id,
+    )
 
 
 def pair_content_key(row: Mapping[str, Any]) -> str:
@@ -346,12 +375,18 @@ def sample_subgraph(
         _is_in(to_type, cfg.excluded_party_types, pa.string()),
     )
     unresolved = pc.invert(resolved)
-    excluded = pc.or_(pc.or_(bad_format, bad_currency), pc.or_(external, unresolved))
+    if cfg.window_end is not None:
+        cutoff = dt.datetime.combine(cfg.window_end + dt.timedelta(days=1), dt.time())
+        late = pc.greater_equal(ledger["txn_timestamp"], pa.scalar(cutoff, type=pa.timestamp("s")))
+    else:
+        late = pc.is_null(ledger["txn_timestamp"])  # never: the reader rejects nulls
+    excluded = pc.or_(pc.or_(pc.or_(bad_format, bad_currency), pc.or_(external, unresolved)), late)
     stats.update(
         unresolved_pairs=pc.sum(unresolved).as_py() or 0,
         excluded_pairs_format=pc.sum(bad_format).as_py() or 0,
         excluded_pairs_currency=pc.sum(bad_currency).as_py() or 0,
         excluded_pairs_party_type=pc.sum(external).as_py() or 0,
+        excluded_pairs_after_window=pc.sum(late).as_py() or 0,
         excluded_pairs=pc.sum(excluded).as_py() or 0,
     )
 
@@ -364,11 +399,30 @@ def sample_subgraph(
         attempt_rows[attempt.attempt_id] = rows
         if any(not location.matches[r.line_number] for r in attempt.rows):
             dropped[attempt.attempt_id] = "unlocated"
+        elif cfg.window_end is not None and any(
+            r.txn_timestamp.date() > cfg.window_end for r in attempt.rows
+        ):
+            dropped[attempt.attempt_id] = "after_window"
         elif any(n in excluded_src for n in rows):
             dropped[attempt.attempt_id] = "excluded_pair"
+    stats["attempts_dropped_by_exclusion"] = len(dropped)
+
+    # Per-typology selection (D26): the unselected attempts leave with their
+    # pairs, exactly like a dropped attempt, so they cannot re-enter via BFS.
+    if cfg.seed_source == "laundering_patterns" and cfg.attempts_per_typology is not None:
+        by_typology: dict[str, list[Attempt]] = defaultdict(list)
+        for attempt in patterns.attempts:
+            if attempt.attempt_id not in dropped:
+                by_typology[attempt.typology].append(attempt)
+        for group in by_typology.values():
+            for attempt in sorted(group, key=lambda a: _attempt_rank(a, cfg.seed))[
+                cfg.attempts_per_typology :
+            ]:
+                dropped[attempt.attempt_id] = "not_selected"
+        stats["attempts_not_selected"] = sum(1 for v in dropped.values() if v == "not_selected")
+
     dropped_src = {n for a in dropped for n in attempt_rows[a]}
     eligible = pc.and_(pc.invert(excluded), pc.invert(_is_in(src_rows, dropped_src, pa.int64())))
-    stats["attempts_dropped_by_exclusion"] = len(dropped)
 
     edges = pa.table(
         {

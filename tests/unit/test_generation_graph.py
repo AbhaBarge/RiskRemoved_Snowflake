@@ -29,6 +29,8 @@ minimum; 10/8000A0102 has no ledger pairs.
 
 from __future__ import annotations
 
+import datetime as dt
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -359,3 +361,98 @@ def test_a_different_seed_changes_the_ids(source: dict[str, Any], base: dict[str
     b = run(source, deep_merge(base, {"seed": base["seed"] + 1}))
     assert a.entities == b.entities  # one qualifying host: the graph cannot move
     assert set(a.party_ids.values()).isdisjoint(b.party_ids.values())
+
+
+# --------------------------------------------------------------------------- #
+# Window cut (D25) and per-typology selection (D26)
+# --------------------------------------------------------------------------- #
+
+
+def test_window_end_excludes_later_pairs_and_their_attempts(
+    source: dict[str, Any], base: dict[str, Any]
+) -> None:
+    """Cutting at 09-02 removes every pair after it; CYCLE (09-03) goes whole.
+
+    The host's pairs are all later than 09-02, so the cohort is switched off here.
+    """
+    sg = run(
+        source,
+        base,
+        source={"window_end": "2022-09-02"},
+        subgraph={"seed_source": "laundering_patterns", "expansion_hops": 0},
+        injection={"structuring": {"enabled": False}},
+    )
+    assert sg.dropped_attempts[3] == "after_window"
+    assert sg.captured_attempts == (1,)
+    assert all(ts.date() <= dt.date(2022, 9, 2) for ts in sg.pairs["txn_timestamp"].to_pylist())
+    assert sg.stats["excluded_pairs_after_window"] == 9  # rows 9-17 fall on/after 09-03
+
+
+def test_window_end_accepts_a_yaml_date(source: dict[str, Any], base: dict[str, Any]) -> None:
+    off = {"injection": {"structuring": {"enabled": False}}}
+    as_text = run(source, base, source={"window_end": "2022-09-02"}, **off)
+    as_date = run(source, base, source={"window_end": dt.date(2022, 9, 2)}, **off)
+    assert as_text.stats == as_date.stats
+
+
+def test_the_configured_cut_keeps_the_fixture_whole(
+    source: dict[str, Any], base: dict[str, Any]
+) -> None:
+    """The production cut (09-10) is the fixture's last legit day: nothing is lost."""
+    assert base["source"]["window_end"] is not None
+    assert run(source, base).stats["excluded_pairs_after_window"] == 0
+
+
+def test_attempts_per_typology_keeps_that_many_of_each(
+    source: dict[str, Any], base: dict[str, Any]
+) -> None:
+    """The fixture has one attempt of each surviving typology, so N=1 keeps both."""
+    kept = run(
+        source,
+        base,
+        subgraph={"seed_source": "laundering_patterns", "attempts_per_typology": 1},
+    )
+    assert kept.captured_attempts == (1, 3)
+    assert "not_selected" not in kept.dropped_attempts.values()
+
+
+def test_unselected_attempts_leave_with_their_pairs(
+    amlworld_mini: Path, source: dict[str, Any], base: dict[str, Any], tmp_path: Path
+) -> None:
+    """Two FAN-OUT attempts, N=1: exactly one is kept and the other's rows are gone."""
+    root = tmp_path / "root"
+    shutil.copytree(amlworld_mini, root)
+    patterns_path = root / "data" / "Kaggle" / "HI-Small_Patterns.txt"
+    extra = (
+        "BEGIN LAUNDERING ATTEMPT - FAN-OUT:  Max 1-degree Fan-Out\n"
+        "2022/09/04 07:35,021174,8000A0090,010,8000A0070,"
+        "19332.59,US Dollar,19332.59,US Dollar,ACH,1\n"
+        "END LAUNDERING ATTEMPT - FAN-OUT\n"
+    )
+    patterns_path.write_text(
+        patterns_path.read_text(encoding="utf-8") + extra, encoding="utf-8", newline=""
+    )
+    manifest = root / "data" / "MANIFEST.yml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        .replace("laundering_attempts: 3", "laundering_attempts: 4")
+        .replace("illicit_transactions: 7", "illicit_transactions: 8"),
+        encoding="utf-8",
+    )
+    patterns = load_patterns(root, base)
+    data = {**source, "patterns": patterns, "location": locate_attempts(patterns, source["ledger"])}
+    sg = run(
+        data, base, subgraph={"seed_source": "laundering_patterns", "attempts_per_typology": 1}
+    )
+    fan_outs = {1, 4}
+    kept = fan_outs & set(sg.captured_attempts)
+    (gone,) = fan_outs - kept
+    assert len(kept) == 1 and sg.dropped_attempts[gone] == "not_selected"
+    gone_rows = {1, 3, 4} if gone == 1 else {11}
+    assert gone_rows.isdisjoint(rows(sg))
+    assert 3 in sg.captured_attempts  # the other typology is untouched
+
+
+def test_invalid_attempts_per_typology_fails(source: dict[str, Any], base: dict[str, Any]) -> None:
+    with pytest.raises(SamplingError, match="attempts_per_typology"):
+        run(source, base, subgraph={"attempts_per_typology": 0})
