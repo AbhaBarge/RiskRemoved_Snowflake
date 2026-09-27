@@ -1,0 +1,14 @@
+# Written by `riskcopilot generate`. PROVISIONAL until the post-load
+# detection check confirms every listed rule fires for this party.
+branch_region: MUMBAI
+candidates_considered: 10
+full_name: Kamya Dhar
+generation_seed: 20260922
+must_trigger_rules:
+- STRUCTURING_CROSS_ACCOUNT
+note: Selected because generation constructed this party to trip every listed rule.
+  Promote to CONFIRMED only after the post-load detection check sees each rule fire.
+party_id: P-754971478708
+party_type: INDIVIDUAL
+profile: dev
+status: PROVISIONAL_UNTIL_DETECTED

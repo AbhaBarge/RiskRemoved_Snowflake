@@ -21,8 +21,21 @@ at each step.
 | 4 | `reskin.py` + `labels.py` | **Done** |
 | 5 | `entities.py` + `relationships.py` | **Done** |
 | 6 | `inject.py` + `eval_grain.py` + `demo_entity.py` | **Done** |
-| 7 | `validate.py`, writer, `riskcopilot generate` | Pending |
+| 7 | `validate.py`, writer, `riskcopilot generate` | **Done** |
 | 8 | Run on dev; record measured facts in BUILD STATUS and memory | Pending |
+
+**Verification at the end of step 7:**
+
+| Check | Result |
+|---|---|
+| `pytest -q` | 365 passed in 52 s |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 26 source files |
+| `risk_copilot.pipeline.lint .` | dev + demo, 6 templates each, all render |
+| `doctor --profile dev` | exit 0, 0 failed |
+| `deploy --stage ddl` on dev | every file ok, run twice, idempotent (steps 4-7 changed DDL comments only) |
+| `riskcopilot --profile dev generate` on the real files | **exit 0, all blocking gates pass, 18 s** |
+| Determinism | two dev runs: all 12 files and the demo pin byte-identical (SHA-256) |
 
 **Verification at the end of step 6:** `pytest -q` 333 passed in 46 s; ruff, mypy (23 files) clean.
 
@@ -305,6 +318,47 @@ re-asserts them at run time. They are not only recorded here.
 
   M18's dev projection (2.85%) overstated injection: most hosts own only 2 deposit accounts. Demo's legit window is 18 days because its sample does include 452 legit tail pairs (M21).
 
+### Step 7 -- gates, writer, `riskcopilot generate`
+- `src/risk_copilot/generation/validate.py`: 15 gates over the final tables. Blocking gates are those with `fail_build: true`; `income_calibration`, `benford` and `degree_distribution` only report. Clause values come from the `conf/detection.yml` seed that `policy` loads. No gate applies a detection rule; `signal_yield` checks construction and reports `DEFERRED_TO_LOAD` (D7).
+- `label_leakage` also scans **values**: every RAW string must not contain a typology id, an injection label, the source label, or `src:` / `inj:` (substring match). The first version matched prefixes only, and the test caught `"note src:12"` slipping through.
+- `src/risk_copilot/generation/writer.py`: Parquet (zstd, fixed row-group size) under `build/generated/<profile>/{raw,ground_truth}/`, plus `manifest.json`. The manifest holds a `result_hash` per table, the seed, source hashes, versions (Faker, pyarrow), the legit window, referenced clause ids, sampling / entity / injection stats, every gate, and `passed`. No wall-clock time is recorded.
+- `src/risk_copilot/generation/pipeline.py`, `run_generation()`:
+  - runs source -> sample -> reskin/labels -> entities -> relationships -> inject
+  - allocates ids once over every pair (D16)
+  - builds the 7 RAW and 4 GROUND_TRUTH tables with their DDL column names
+  - runs the gates, writes the files (also when a gate fails, marked `passed: false`)
+  - writes `conf/generated/demo_entity.<profile>.yml` only on a passing build
+- `src/risk_copilot/cli.py`: `generate` is real (`--out-dir`, `--data-root`). It prints a gate table and exits 1 on any blocking failure or contract error.
+- `conf/generation.yml`: an `output` block; `validation.label_leakage.forbidden_value_prefixes`; `src_row_number` added to the forbidden columns (it joins back to `RAW_AMLWORLD_TRANS.is_laundering`); `budget` and `demo_entity` gates; the base-rate comment corrected to 0.102% (M5).
+- Tests: `tests/unit/test_generation_pipeline.py` (32). They cover:
+  - an end-to-end fixture build, plus the real band blocking it
+  - byte-identical files across runs; seed sensitivity
+  - manifest contents
+  - **every Parquet column set checked against its DDL table** (subset of the DDL columns, all NOT NULL columns without a DEFAULT present)
+  - no label columns in RAW; injected legs kept out of RAW_TRANSACTIONS
+  - **each of the 12 blocking gates violated in turn and shown to block**, with a meta-test that the violation list covers every blocking gate
+  - label values caught inside strings; reporting gates never blocking
+  - CLI exit codes 0/1 by gate state and on a contract error
+- **`riskcopilot --profile dev generate`, real data:**
+
+  | Gate | Status | Value |
+  |---|---|---|
+  | illicit_rate_pct | PASS | 1.988% (200 of 10,058 legs) |
+  | bank_id_resolution | PASS | 0 unresolved legs |
+  | label_attribution | PASS | `{1: 3209}`, 0 legit matches |
+  | id_map_one_to_one | PASS | 501 parties / 556 accounts (incl. cash desk) |
+  | injection_window | PASS | 7 d vs legit span 10 d, clause 30 d |
+  | injection_band | PASS | [0.9, 0.985] within [0.9, 0.999] |
+  | income_calibration | REPORT | ratio p50 0.0297 / p90 0.0487 / p99 0.0960 / max 0.1252 |
+  | money_conservation | PASS | 0 unpaired of 5,029 pairs |
+  | referential_integrity | PASS | 0 orphans |
+  | benford | REPORT | chi2 107.9 (n = 4,929; limit 60, non-blocking) |
+  | degree_distribution | PASS | alpha 1.96 |
+  | label_leakage | PASS | 0 leaks (columns and values) |
+  | budget | PASS | 500 / 553 / 10,058 vs 500 / 1,000 / 40,000 |
+  | signal_yield | DEFERRED_TO_LOAD | 10 hosts constructed, each >= 2 accounts in band in window |
+  | demo_entity | PASS | P-754971478708 "Kamya Dhar", MUMBAI, PROVISIONAL_UNTIL_DETECTED |
+
 ## Departures from the plan
 
 | Plan said | Built | Why |
@@ -315,6 +369,8 @@ re-asserts them at run time. They are not only recorded here.
 | Plan step 7's fixture list included a SoleProp host | Added in step 2 | Costs nothing now, and step 3 needs it |
 | Plan left inclusion granularity open; step 3 first built party-closed inclusion | Account-level (D13) | M17: party-closed cannot fit any budget once launderers are seeded |
 | Plan puts host ranking in `inject.py` | `graph.py` (D14); `inject.py` consumes `Subgraph.hosts` | Sampling must know the hosts to seed them |
+| Gate list in the plan | Adds `budget` and `demo_entity` gates, and a value-level scan in `label_leakage` | Hard budgets and a missing hero must fail through the same path as every other contract; D16 showed a column check cannot see a value leak |
+| "generate fails if a gate fails" | Files are still written, marked `"passed": false`; exit code 1; no demo pin | A failed build must be inspectable. **Phase 3 obligation: `load` refuses a manifest with `passed: false`** |
 
 ---
 

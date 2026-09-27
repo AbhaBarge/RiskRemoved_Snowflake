@@ -479,10 +479,22 @@ injection:
     label: reskin_dormant_reactivation
 
 # ---------------------------------------------------------------------------
+# Output. `riskcopilot generate` writes Parquet under <root>/<profile>/, plus
+# manifest.json. No wall-clock time is recorded anywhere, so the same seed and
+# source give byte-identical files.
+# ---------------------------------------------------------------------------
+output:
+  root: build/generated
+  parquet_compression: zstd
+  parquet_row_group_size: 131072
+  demo_entity_file: "conf/generated/demo_entity.{profile}.yml"
+
+# ---------------------------------------------------------------------------
 # GAP-07 -- realism validation. These are ASSERTED, not claimed. `riskcopilot
 # generate` fails if a gate with fail_build: true is violated.
-# The AMLworld base rate is 0.063%; subgraph sampling seeded from laundering
-# accounts raises it, so the band is stated as a range and enforced.
+# The AMLworld base rate is 0.102% (5,177 of 5,078,345, M5); subgraph sampling
+# seeded from laundering accounts raises it, so the band is stated as a range
+# and enforced.
 # ---------------------------------------------------------------------------
 validation:
   illicit_rate_pct:
@@ -545,6 +557,22 @@ validation:
       - match_confidence
       - amount_ctr_ratio
       - cohort
+      - src_row_number
+    # Value-level scan (D16): no string VALUE in a RAW file may CONTAIN a
+    # typology id, an injection label, the source label, or one of these
+    # internal pair-reference prefixes (substring match, anywhere in the value).
+    # The column check cannot see a label hidden in a value -- which is exactly
+    # what the DDL's old source_ref format did.
+    forbidden_value_prefixes: ["src:", "inj:"]
+    fail_build: true
+  # The subgraph budgets, re-checked on the final RAW tables: parties and
+  # accounts against subgraph.target_*, legs (source + injected) against
+  # subgraph.max_transactions.
+  budget:
+    fail_build: true
+  # demo_entity.fail_if_not_found is reported here as a gate, so a missing hero
+  # fails the build through the same path as every other contract.
+  demo_entity:
     fail_build: true
   # EVALUATED AFTER LOAD, in Snowflake, against the real detection SQL.
   # Re-implementing the rules in Python to fake this offline would put

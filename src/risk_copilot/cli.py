@@ -306,15 +306,74 @@ def deploy(
 
 
 # --------------------------------------------------------------------------- #
-# Stubs -- implemented in later phases, declared now so the surface is stable.
+# generate
 # --------------------------------------------------------------------------- #
+
+_GATE_STYLE = {
+    "PASS": "[green]PASS[/green]",
+    "FAIL": "[red]FAIL[/red]",
+    "REPORT": "[dim]REPORT[/dim]",
+    "DEFERRED_TO_LOAD": "[yellow]DEFERRED[/yellow]",
+}
 
 
 @app.command()
-def generate() -> None:
-    """Build the synthetic dataset and run the realism validation gates."""
-    console.print("[yellow]Not yet implemented[/yellow] -- Phase 2 (data synthesis).")
-    raise typer.Exit(code=2)
+def generate(
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Output directory. Default: output.root/<profile>."),
+    ] = None,
+    data_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--data-root", help="Directory holding data/MANIFEST.yml. Default: repo root."
+        ),
+    ] = None,
+) -> None:
+    """Build the synthetic dataset and run the realism validation gates.
+
+    Exits 1 if any gate with ``fail_build: true`` fails; the files are still
+    written, marked ``"passed": false`` in ``manifest.json``, for inspection.
+    """
+    from risk_copilot.generation import GenerationError
+    from risk_copilot.generation.pipeline import run_generation
+
+    settings = _settings()
+    try:
+        result = run_generation(settings, data_root=data_root, out_dir=out_dir)
+    except GenerationError as exc:
+        console.print(f"[red]Generation failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title=f"Generation gates -- profile '{settings.profile}'")
+    table.add_column("Gate", style="cyan", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Blocks build", justify="center")
+    table.add_column("Value")
+    table.add_column("Detail", overflow="fold")
+    for gate in result.gates:
+        table.add_row(
+            gate.name,
+            _GATE_STYLE.get(gate.status.value, gate.status.value),
+            "yes" if gate.fail_build else "no",
+            gate.value,
+            gate.detail,
+        )
+    console.print(table)
+    console.print(f"Output: {result.out_dir}")
+    if result.demo_entity_path:
+        console.print(f"Demo entity (provisional): {result.demo_entity_path}")
+    if result.passed:
+        console.print("[green]All blocking gates passed.[/green]")
+        return
+    blocking = ", ".join(g.name for g in result.gates if g.blocks)
+    console.print(f"[red]Blocking gate(s) failed:[/red] {blocking}")
+    raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------- #
+# Stubs -- implemented in later phases, declared now so the surface is stable.
+# --------------------------------------------------------------------------- #
 
 
 @app.command()
