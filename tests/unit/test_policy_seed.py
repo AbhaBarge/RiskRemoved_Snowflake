@@ -203,15 +203,15 @@ def test_no_other_template_carries_a_threshold(repo_root: Path) -> None:
                 if len(text.replace(".", "")) >= 4:  # "2" or "30" would match anything
                     values.add(text)
     assert values  # the CTR threshold at least
-    for key, _ in STAGE_ORDER:
-        if key == "policy":
-            continue
-        for path in deployer.stage_files(key):
-            for statement in split_statements(deployer.render(path)):
-                code = " ".join(
-                    line for line in statement.splitlines() if not line.strip().startswith("--")
+    # Every stage but policy, and the verify queries, which join the same view.
+    paths = [p for key, _ in STAGE_ORDER if key != "policy" for p in deployer.stage_files(key)]
+    assert deployer.verify_files()
+    for path in paths + deployer.verify_files():
+        for statement in split_statements(deployer.render(path)):
+            code = " ".join(
+                line for line in statement.splitlines() if not line.strip().startswith("--")
+            )
+            for value in values:
+                assert not re.search(rf"(?<![\w.]){re.escape(value)}(?![\w.])", code), (
+                    f"{path.name} carries threshold {value}"
                 )
-                for value in values:
-                    assert not re.search(rf"(?<![\w.]){re.escape(value)}(?![\w.])", code), (
-                        f"{path.name} carries threshold {value}"
-                    )

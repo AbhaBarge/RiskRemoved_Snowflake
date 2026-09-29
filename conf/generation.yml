@@ -529,6 +529,10 @@ output:
   parquet_compression: zstd
   parquet_row_group_size: 131072
   demo_entity_file: "conf/generated/demo_entity.{profile}.yml"
+  # Written by `riskcopilot verify`, never by generate (D41): the post-load
+  # detection result for the pin above. A sibling file, so generate's pin stays
+  # byte-identical per seed; it is valid only while its party_id and seed match.
+  demo_entity_verified_file: "conf/generated/demo_entity.{profile}.verified.yml"
 
 # ---------------------------------------------------------------------------
 # GAP-07 -- realism validation. These are ASSERTED, not claimed. `riskcopilot

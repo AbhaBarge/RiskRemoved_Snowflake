@@ -7,8 +7,9 @@ expects every rule in ``demo_entity.must_trigger_rules``, i.e. one that was
 branch region, ranked by ``stable_hash`` within that preference.
 
 Whether the rules actually fire is only knowable after load, in Snowflake (D7).
-The pin is therefore written with ``status: PROVISIONAL_UNTIL_DETECTED``; the
-post-load check promotes or rejects it. With ``fail_if_not_found`` a profile
+The pin is therefore written with ``status: PROVISIONAL_UNTIL_DETECTED``;
+``riskcopilot verify`` checks it after load and writes its verdict to a sibling
+file (D41), never over the pin. With ``fail_if_not_found`` a profile
 whose listed rules have no constructed cohort -- demo, until rapid-credit and
 device-cluster cohorts are injected -- fails ``generate`` rather than pinning a
 party that cannot demonstrate the story.

@@ -39,6 +39,15 @@ or `BRANCH_ANALYST_*` as a literal.
 | `{{ stream_task.resume_route_task }}` | `false` in dev: whether the deploy leaves the routing task running |
 | `{{ routing.severity_order }}` `.min_severity_for_case` `.open_case_statuses` `.cross_domain_min_distinct_rules` `.case_type_by_rule` | `conf/detection.yml` `routing` as typed literals (arrays, an OBJECT for the case types), for ROUTE_SIGNALS |
 | `{{ routed_id.signal_prefix }}` `.case_prefix` `.hex` | The `ids.signal_id` / `ids.case_id` format, so SQL and Python derive the same ids |
+| `{{ eval_grain.month_format }}` | `'YYYY-MM'::VARCHAR`: the evaluation grain's month (`eval_grain.MONTH_BUCKET_SQL_FORMAT`), so `verify` puts evidence legs on the grain exactly as generation built it |
+
+**`sql/verify/`** holds the queries `riskcopilot verify` runs as the admin role,
+one statement per file, in file order: refresh the signal tables, signal yield
+(bounds bound as `?`), per-rule detection metrics at party-month, the loaded
+seed, the hero, the `EVAL_RUN` insert. They are rendered and linted like stage
+files but never deployed. `verify/controls/<RULE_ID>.sql` is a rule's optional
+false-positive control, one SELECT included by the metrics query; a rule without
+one gets `controls/_none.sql`.
 
 **`sql/rules/`** holds one detection SELECT per registered rule, included by the
 signal dynamic table its `dynamic_table` names. Each file is one SELECT (no `;`),

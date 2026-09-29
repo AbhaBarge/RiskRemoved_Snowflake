@@ -11,6 +11,7 @@ Subcommands:
 * ``deploy``    render and apply the SQL stages, idempotently
 * ``generate``  build the synthetic dataset and run the validation gates
 * ``load``      stage and COPY INTO the generated data
+* ``verify``    refresh detection and check it against the generated truth
 * ``replay``    drive the replay harness
 * ``eval``      run the evaluation suites
 """
@@ -446,6 +447,106 @@ def load(
             c.name, "[green]OK[/green]" if c.ok else "[red]FAIL[/red]", c.value, c.detail
         )
     console.print(checks)
+
+
+# --------------------------------------------------------------------------- #
+# verify
+# --------------------------------------------------------------------------- #
+
+
+def _ratio(numerator: Any, denominator: Any, value: Any) -> str:
+    return f"{numerator}/{denominator} ({float(value):.3f})" if value is not None else "n/a"
+
+
+@app.command("verify")
+def verify_detection() -> None:
+    """Refresh detection and check it against the generated truth (obligation 7).
+
+    Exits 1 if a rule's signal count is outside validation.signal_yield (when that
+    gate blocks) or the hero pin is not detected; 2 if the pin disagrees with the
+    configuration or the loaded data. Its only writes are the refresh, the
+    verified-pin file and one GROUND_TRUTH.EVAL_RUN row: it never routes signals.
+    """
+    from risk_copilot.pipeline.verify import CONFIRMED, VerifyError, read_pin
+    from risk_copilot.pipeline.verify import verify as run_verify
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    try:
+        pin = read_pin(settings)
+        with open_session(settings, unattended=True) as session:
+            report = run_verify(settings, session, pin)
+    except VerifyError as exc:
+        console.print(f"[red]Verify refused[/red]\n{exc}")
+        raise typer.Exit(code=2) from exc
+    except (SessionError, ConfigError) as exc:
+        console.print(f"[red]Verify failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+
+    lo, hi = report.bounds
+    yields = Table(
+        title=f"Signal yield -- profile '{settings.profile}', bounds [{lo}, {hi}]"
+        + ("" if report.yield_blocks else " (reported, not blocking)")
+    )
+    for column in ("Rule", "Registered", "Signals", "Status"):
+        yields.add_column(column, style="cyan" if column == "Rule" else None)
+    for y in report.yields:
+        yields.add_row(
+            y.rule_id,
+            "yes" if y.registered else "[red]no[/red]",
+            f"{y.signals:,}",
+            "[green]OK[/green]" if y.within_bounds else "[red]FAIL[/red]",
+        )
+    console.print(yields)
+
+    detection = Table(title="Detection at party-month (reported, not gated)")
+    for column in ("Rule", "Recall", "Precision", "FP legit / other / not in grain"):
+        detection.add_column(column, style="cyan" if column == "Rule" else None)
+    detection.add_column("Missed", justify="right")
+    detection.add_column("FP control")
+    detection.add_column("Unresolved evidence", justify="right")
+    for m in report.metrics:
+        control = (
+            f"{m['controls_fired']} of {m['controls']} fired"
+            if m["control_defined"]
+            else "none defined"
+        )
+        detection.add_row(
+            str(m["rule_id"]),
+            _ratio(m["true_positive"], m["expected"], m["recall"]),
+            _ratio(m["true_positive"], m["predicted"], m["precision"]),
+            f"{m['fp_legit']} / {m['fp_other_illicit']} / {m['not_in_grain']}",
+            str(m["missed"]),
+            control,
+            str(m["evidence_unresolved"]),
+        )
+    console.print(detection)
+
+    hero = Table(title=f"Hero {report.party_id}: {report.status}")
+    for column in ("Rule", "Detected", "Signal business key", "Case"):
+        hero.add_column(column, style="cyan" if column == "Rule" else None)
+    for h in report.hero:
+        hero.add_row(
+            h.rule_id,
+            "[green]yes[/green]" if h.detected else "[red]no[/red]",
+            ", ".join(h.signal_business_keys) or "-",
+            ", ".join(h.case_ids) or "-",
+        )
+    console.print(hero)
+    for rule_id in report.unrouted:
+        console.print(
+            f"[yellow]WARN[/yellow] {rule_id} fired for the hero but its signal is on no case "
+            "yet; verify does not route (CALL the routing procedure, or let the task run)."
+        )
+    console.print(f"Hero result: {report.verified_path}")
+    console.print(f"EVAL_RUN: {report.run_id}")
+    if report.passed:
+        console.print("[green]Verify passed.[/green]")
+    else:
+        reasons = ["signal yield"] if not report.yield_ok and report.yield_blocks else []
+        reasons += [] if report.status == CONFIRMED else ["hero not detected"]
+        console.print(f"[red]Verify failed:[/red] {', '.join(reasons)}")
+    raise typer.Exit(code=report.exit_code)
 
 
 # --------------------------------------------------------------------------- #

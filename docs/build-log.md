@@ -100,6 +100,10 @@ re-asserts them at run time. They are not only recorded here.
 | M29 | **Snowflake reads a Parquet `timestamp[ms]` as epoch milliseconds.** Without logical types, `$1:col` is an INTEGER (`1662650340000`); `::TIMESTAMP_NTZ` reads it as seconds and gives year **54657**. `TO_TIMESTAMP_NTZ(n, 3)` gives the right `2022-09-08 15:19`. `decimal128` reads exactly (sum of `amount_inr` equal to the paisa), `date32` reads as DATE, `list<string>` as ARRAY, JSON text as VARCHAR | Probe on the real dev files on a scratch stage path, removed after | `load` builds each timestamp cast from the file's own time unit |
 | M30 | **STRUCTURING_CROSS_ACCOUNT fires on exactly the planted hosts.** `DT_SIGNALS_FAST_DEV` holds **10** signals, all in bucket `2022-08-26`: **10 of 10** on injected hosts, none elsewhere. Their **101** evidence legs are all injected deposits (101 illicit, 0 genuine). The one genuine in-band deposit (P6) does not fire, being a single account. metric_value is 2 distinct accounts for 9 hosts and 3 for one, against the clause's 2 | SQL on the refreshed tables, joined as admin to INJECTED_TXN_PENDING and TXN_LABELS | Precision and recall are formalised in step 7 |
 | M31 | **Routing is idempotent under a full re-feed.** On a new, empty `SIGNALS_STREAM_DEV` (DELTA, not stale), `CALL ROUTE_SIGNALS_DEV(TRUE)` wrote **10 signals, 10 cases, 10 links** (0 updated, 0 escalated). A second identical call wrote **0 / 0 / 0 and updated 0**, so the unchanged-evidence guard holds on the ARRAY/VARIANT columns too. `EXECUTE TASK` twice: both **SKIPPED** (`0040003`, WHEN evaluated false, stream empty), +0 rows. Row checks: 0 SIGNAL-vs-DT differences (evidence ids, metric, threshold, detail, fired_at = last_txn_at); every `signal_id` / `case_id` equals `ids.signal_id` / `ids.case_id`; all rows `rule_version` 1 / `HIGH` = RULE_DEFINITION; one case per party, all `AML` / `OPEN`, `branch_region` = DT_DIM_PARTY (DELHI, MUMBAI, PUNE); sla_deadline, suspicion and priority NULL on all 10; the hero has `CASE-4399c4c86db5c6ea`. The task body block, run by hand, returns the router's counts (stream mode, all 0) | Live on RISK_COPILOT_DEV as the admin role, after two deploys of the stage | The stream's delta path and `SYSTEM$SET_RETURN_VALUE` run only in a triggered run: proven in step 8, when replay changes the table |
+| M32 | **The signal yield is in range, and verify's refresh cascades as documented.** `STRUCTURING_CROSS_ACCOUNT`: **10** signals against dev's `signal_yield` [**1**, **2000**] -> OK (demo's floor is 5). One `ALTER DYNAMIC TABLE DT_SIGNALS_FAST_DEV REFRESH` returned `refreshed_dt_count 0, "No new data"`, and `DYNAMIC_TABLE_REFRESH_HISTORY` shows 3 `MANUAL` / `SUCCEEDED` / `NO_DATA` refreshes at **one** data timestamp: SIGNALS_FAST (645 ms), and its upstream TRANSACTIONS_ENRICHED (1,247 ms) and DIM_PARTY (990 ms). TXN_DAILY_AGG and PARTY_RELATIONSHIP, which are not upstream of it, were not refreshed | `riskcopilot --profile dev verify`, then refresh history as the admin role | `verify` refreshes only the signal tables some registered rule writes to |
+| M33 | **Recall 10/10 and precision 10/10 at party-month; the false-positive control does not fire.** The grain holds **494** party-months, all 2022-09: **14** illicit, **10** expecting the rule, and 4 illicit with no expected rule (AMLworld legs, which count against no rule). The 10 signals map to **10** party-months (D40), all in the grain and all expected: TP 10, FP 0 (legit 0, other typology 0, not in grain 0), missed 0, 0 unresolved evidence ids. Control: **1** party-month with a genuine in-band cash credit (P-600485713464, 2022-09, 1 account), **0** fired. Mapping by the window's start month instead would have scored **0/10** both ways: every signal's bucket is 2022-08-26, every one of its 101 evidence legs is in 2022-09 | `sql/verify/03_detection_metrics.sql` as the admin role; the pre-build probe reproduced the same counts by hand | D40 |
+| M34 | **The hero is confirmed, and the result is deterministic.** P-754971478708: `CONFIRMED_BY_DETECTION` with `STRUCTURING_CROSS_ACCOUNT\|P-754971478708\|2022-08-26` on `CASE-4399c4c86db5c6ea` (M31's case). Two runs wrote a byte-identical `demo_entity.dev.verified.yml` (SHA-256 `C7A1BDD3...`); generate's pin is unchanged (`30EFF57A...`, no git diff). The loaded injected legs carry the pin's seed, 20260922, and no other | Two live runs; file hashes | D41 |
+| M35 | **Verify leaves the pipeline as it found it.** After two runs: `SIGNALS_STREAM_DEV` empty (`SYSTEM$STREAM_HAS_DATA` false, not stale); SIGNAL / CASE_RECORD / CASE_SIGNAL still 10 / 10 / 10, with `MAX(last_seen_at)` unchanged at 2026-09-27 05:02:28; ROUTE_SIGNALS_TASK_DEV still suspended. `GROUND_TRUTH.EVAL_RUN` gained exactly 2 rows (`EVAL-94053aede26b40e8`, `EVAL-c93d61c8badc45b7`): suite DETECTION, passed TRUE, seed 20260922, commit `294265a...-dirty` (the uncommitted step-7 tree). Runs took 12.8 s and 3.2 s | Live, as the admin role | D39, D42 |
 
 ---
 
@@ -145,6 +149,11 @@ re-asserts them at run time. They are not only recorded here.
 | D36 | 09-27 | **`ROUTE_SIGNALS(full_scan BOOLEAN DEFAULT FALSE)`**: the stream's INSERT rows normally, the whole `DT_SIGNALS_FAST` when TRUE. The full scan is run once after the first deploy, by the replay harness, and to recover a stale stream. It reads the stream as well, so it also consumes it | **User** (after the "doorbell fitted to a full house" explanation) | A stream on a dynamic table cannot take `SHOW_INITIAL_ROWS` or `AT/BEFORE` (CREATE STREAM reference), so rows already in the table never reach a new stream. Per-run work stays proportional to change |
 | D37 | 09-27 | **A re-fire refreshes the evidence**: metric, threshold, evidence ids, detail, fired_at, rule_version, severity, as_of_ts and last_seen_at; `signal_id` and `first_seen_at` are kept. A row whose evidence is unchanged is not written, so `last_seen_at` is the last time the evidence *changed* | **User** | The row always shows the latest evaluation, and step 8's replay-vs-batch equivalence can hold. Findings cite their own query snapshots (GAP-12), so they do not depend on SIGNAL staying frozen |
 | D38 | 09-27 | **`ROUTE_SIGNALS_TASK` is triggered** (`WHEN SYSTEM$STREAM_HAS_DATA`, no SCHEDULE); `route_signals_schedule` is deleted. `resume_route_task` (base and dev false, demo true) decides whether a deploy leaves it running | **User** | It runs within about 30 s of a refresh that changed a signal and never otherwise, and Snowflake's 12-hourly health check keeps the stream from going stale. A leftover schedule key now fails the config load |
+| D39 | 09-29 | **`verify` is read-only for the pipeline**: it refreshes the signal tables and reads them, and never calls `ROUTE_SIGNALS`. The hero's case id is read from CASE_SIGNAL; a hero signal on no case is still confirmed, with a warning | **User** (after the "inspector presses the test button, does not phone the fire brigade" explanation) | `ROUTE_SIGNALS` consumes `SIGNALS_STREAM` (D36): a verify run between a replay and the task would swallow the delta step 8 must prove the task routes |
+| D40 | 09-29 | **A signal counts in the calendar month of each of its evidence transactions**, month read from `txn_timestamp` in the grain's own format (`eval_grain.MONTH_BUCKET_SQL_FORMAT`, shared with the Python builder) | **User** | Signals are keyed by a 30-day window bucket and the grain by month. The evidence dates are what generation labelled; the window's start month would score 0 (M33), and "every month the window overlaps" credits months with no evidence |
+| D41 | 09-29 | **The hero result goes to a sibling file**, `conf/generated/demo_entity.<profile>.verified.yml` (`output.demo_entity_verified_file`), written only by `verify` and committed: status, party, seed, per-rule signal keys and case ids, missing rules, no clock time. Generate's pin is never rewritten | **User** | One writer per file: generate's pin stays byte-identical per seed, and the result is deterministic for the same data (M34). The result names the pin's party and seed, so a stale one is recognisable |
+| D42 | 09-29 | **One `GROUND_TRUTH.EVAL_RUN` row per verify run** (suite DETECTION): yield, metrics, hero, refresh result, git commit (`-dirty` when tracked files differ), seed, passed | **User** | "A number without a commit is not a result" (the table's own comment). GROUND_TRUTH is admin-only, which suits metrics computed from labels |
+| D43 | 09-29 | `verify` **refuses with exit 2**, before judging anything, a pin that disagrees with config (status, profile, seed, must-trigger rules) or loaded data built from another seed. A rule's false-positive control is an optional `sql/verify/controls/<rule_id>.sql`; without one the report says "none defined", not "0" | Build | Confirming a pin against another build's data would certify the wrong party. A mandatory control file would block registering a rule whose near-miss is not yet defined |
 
 ---
 
@@ -454,8 +463,8 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | 4 | `riskcopilot load` | **Done** |
 | 5 | Dynamic tables for the structuring slice | **Done** |
 | 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | **Done** |
-| 7 | Post-load verify: signal_yield, hero promotion | Next |
-| 8 | Replay harness, docs | |
+| 7 | Post-load verify: signal_yield, hero promotion | **Done** |
+| 8 | Replay harness, docs | Next |
 
 ## Findings made while planning (P1-P7)
 
@@ -791,3 +800,89 @@ In `test_policy_seed.py`: the rule row is unchanged by the role keys; the hash e
 **Not proven yet:** the stream's delta path and the task's `SYSTEM$SET_RETURN_VALUE` run only when a refresh changes signals. Step 8's replay changes them and records the triggered runs.
 
 **Verification:** 485 passed; ruff, mypy (29 files), lint (dev + demo, 14 templates each) clean; `doctor --profile dev` exit 0, 0 failed.
+
+## Step 7 -- `riskcopilot verify` (obligation 7; D39-D43)
+
+**Found before building** (read-only probe, admin role):
+- the 10 signals all sit in bucket 2022-08-26, while all 101 of their evidence legs and all 494 grain rows are in 2022-09. That grain mismatch is the reason for D40;
+- the docs state that a manual `ALTER DYNAMIC TABLE ... REFRESH` also refreshes every upstream dynamic table (scheduler enabled), and cannot run inside a transaction.
+
+**What changed**
+- New `src/risk_copilot/pipeline/verify.py`. It renders the queries, binds configured values and reads back their verdicts; it compares no count to a bound and reads no label.
+  - `read_pin` refuses, with no connection, a pin whose status, profile, seed or must-trigger rules differ from config (D43).
+  - `Verifier.run`, as the admin role:
+    1. checks the loaded seed against the pin;
+    2. refreshes;
+    3. checks the signal yield;
+    4. computes the metrics;
+    5. checks the hero;
+    6. writes the sibling result file (D41) and one EVAL_RUN row (D42).
+
+    It never routes (D39).
+  - The exit code comes from the SQL's `within_bounds` and `detected` columns. The yield blocks only when `validation.signal_yield.fail_build` is set.
+- New `sql/verify/` (rendered from `sql_context`, linted, never deployed):
+
+  | File | What it does |
+  |---|---|
+  | `01_refresh.sql` | one `ALTER DYNAMIC TABLE ... REFRESH` over the signal tables some registered rule writes to |
+  | `02_signal_yield.sql` | registered rules FULL OUTER JOIN the counts, bounds bound as `?`. A rule with 0 signals is listed and fails; an unregistered rule id in a signal table fails |
+  | `03_detection_metrics.sql` | predicted vs expected party-months per rule: TP, FP split legit / other typology / not in grain, missed, recall, precision, unresolved evidence, and the control |
+  | `04_loaded_seed.sql` | the generation seeds of the loaded injected legs |
+  | `05_hero.sql` | per must-trigger rule: detected, signal keys, case ids |
+  | `06_eval_run.sql` | the EVAL_RUN insert |
+  | `_macros.sql` | the signal tables, their union, and the registered rules, all from the `rule` context |
+  | `controls/STRUCTURING_CROSS_ACCOUNT.sql` | party-months with a genuine (label not illicit) in-band cash credit, band and CTR joined through the rule's clause roles |
+  | `controls/_none.sql` | the marker row picked by Jinja's include-list fallback when a rule has no control file |
+- `generation/eval_grain.py`: `MONTH_BUCKET_FORMAT` / `MONTH_BUCKET_SQL_FORMAT`, the one definition of the grain's month. `config.sql_context()` gains `eval_grain.month_format`.
+- `conf/generation.yml`: `output.demo_entity_verified_file`.
+- `deploy.py`: `verify_files()`. `lint()` renders the verify queries and lints every included fragment directory (`rules/`, `verify/controls/`) and the verify macros. `lint.py` reports the verify count.
+- `cli.py`: the `verify` command. It prints three tables (yield, detection, hero), warns about a hero signal that is not routed yet, and exits 0 / 1 / 2.
+- New committed file `conf/generated/demo_entity.dev.verified.yml`.
+
+**Live, on RISK_COPILOT_DEV:** `riskcopilot --profile dev verify` exited 0, twice. The numbers are M32-M35:
+- yield 10 in [1, 2000];
+- recall and precision 10/10, control 0 of 1 fired;
+- hero `CONFIRMED_BY_DETECTION` on `CASE-4399c4c86db5c6ea`, and the result file is byte-identical across the two runs;
+- the stream, the evidence chain and the task are unchanged; EVAL_RUN gained 2 rows.
+
+**Tests:** 519 passed (485 before). New `tests/unit/test_verify.py` (34 cases), with a recording fake session:
+- **the SQL takes everything from config:**
+  - every query is one statement;
+  - the rules and signal tables come from config, and moving a rule's `dynamic_table` moves every query;
+  - the yield bounds are bound (1/2000 dev, 5/2000 demo) and never rendered;
+  - the control reads band and CTR through the rule's clause roles;
+  - a rule without a control file reports none;
+  - the evidence-month mapping uses the grain's format, the Python and SQL formats agree, and changing the format changes the SQL;
+  - lint covers the verify queries.
+- **Python decides nothing:**
+  - the module's code names no label, grain, clause or threshold, and compares no count;
+  - the exit code follows the SQL's verdict even where Python's arithmetic would disagree (both directions);
+  - an unregistered rule fails;
+  - a non-blocking gate reports without failing;
+  - the SQL lists a zero-signal rule.
+- **The hero:**
+  - confirmed beside the pin, whose bytes are unchanged;
+  - rejected with exit 1 and `passed` false in EVAL_RUN;
+  - an unrouted signal is confirmed with a warning;
+  - the result file is byte-identical for the same data;
+  - 5 kinds of stale pin are refused, as is a missing pin;
+  - data from another seed is refused before the refresh, and nothing is written;
+  - the CLI exits 2 on a stale pin without opening a session.
+- **What verify writes:**
+  - no CALL, EXECUTE TASK, RESUME, MERGE, DELETE or UPDATE, and no stream or router name;
+  - exactly two writes, the refresh and EVAL_RUN;
+  - the EVAL_RUN row carries the run.
+
+`test_policy_seed.py`: the "no threshold outside the seed" check now covers the verify queries too.
+
+**Departures from the plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| "The hero pin becomes CONFIRMED_BY_DETECTION" | The pin is untouched; the result is a sibling file | D41 |
+| Refresh `DT_SIGNALS_FAST` | Refresh every signal table a registered rule writes to (today the same one table) | So a rule assigned to `signals_aggregate` is refreshed without a code change |
+| "The one genuine in-band deposit is the false-positive control" | A per-rule control query, reported as "N of M fired" | The control is rule-specific; the file makes it explicit and optional (D43) |
+| -- | Loaded-seed check, exit 2 | D43: not in the plan; found when asking what "confirmed" would be confirming |
+| -- | One EVAL_RUN row per run | D42 |
+
+**Verification:** 519 passed; ruff, mypy (30 files), lint (dev + demo, 14 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 0 failed, 14 warnings.

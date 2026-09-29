@@ -28,6 +28,12 @@ import pyarrow as pa
 
 from risk_copilot.generation import GenerationError
 
+#: ``month_bucket`` of a leg: its timestamp's calendar month. The SQL form is what
+#: ``riskcopilot verify`` uses to put a signal's evidence legs on the same grain
+#: (D40); the two must stay the same format.
+MONTH_BUCKET_FORMAT = "%Y-%m"
+MONTH_BUCKET_SQL_FORMAT = "YYYY-MM"
+
 EVAL_SCHEMA = pa.schema(
     [
         ("party_id", pa.string()),
@@ -81,7 +87,7 @@ def build_eval_grain(
             party = party_of_account.get(leg["account_id"])
             if party is None:
                 continue
-            key = (party, leg["txn_timestamp"].strftime("%Y-%m"))
+            key = (party, leg["txn_timestamp"].strftime(MONTH_BUCKET_FORMAT))
             row = label.get((leg["pair_ref"], leg["leg_side"]))
             if row is None:
                 raise GenerationError(f"Leg {leg['pair_ref']}/{leg['leg_side']} has no label")

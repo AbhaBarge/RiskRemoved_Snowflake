@@ -893,6 +893,10 @@ class Settings(BaseModel):
                     str(self.generation["internal_accounts"]["src_bank_id"]), "VARCHAR"
                 )
             },
+            # The evaluation grain's month format, so `verify` maps a signal's
+            # evidence legs onto EVAL_GRAIN_PARTY_MONTH exactly as generation
+            # built it (D40).
+            "eval_grain": {"month_format": _sql_literal(_month_bucket_sql_format(), "VARCHAR")},
         }
 
 
@@ -919,6 +923,14 @@ def _sql_literal(value: Any, sql_type: str) -> str:
     from risk_copilot.policy import sql_literal
 
     return sql_literal(value, sql_type)
+
+
+def _month_bucket_sql_format() -> str:
+    # Imported here: generation modules pull in pyarrow, which the CLI's
+    # config-only commands do not need.
+    from risk_copilot.generation.eval_grain import MONTH_BUCKET_SQL_FORMAT
+
+    return MONTH_BUCKET_SQL_FORMAT
 
 
 def load_settings(

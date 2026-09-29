@@ -50,6 +50,14 @@ STAGE_ORDER: tuple[tuple[str, str], ...] = (
     ("procedures", "procedures"),
 )
 
+#: Queries run by ``riskcopilot verify``, rendered like stage files but never
+#: deployed: they read and check, and are linted with the stages.
+VERIFY_DIR = "verify"
+
+#: Fragments included into a statement rather than rendered on their own, so
+#: :meth:`Deployer.render` never sees their source: one SELECT each, no ``;``.
+INCLUDED_DIRS = ("rules", f"{VERIFY_DIR}/controls")
+
 #: Object names that must never appear literally in a template. Catches the
 #: regression where someone pastes working ad-hoc SQL into a file and the
 #: profile suffix stops being applied.
@@ -209,6 +217,11 @@ class Deployer:
             return []
         return sorted(p for p in path.glob("*.sql") if not p.name.startswith("_"))
 
+    def verify_files(self) -> list[Path]:
+        """The ``verify`` queries, in lexical (execution) order."""
+        path = self.sql_root / VERIFY_DIR
+        return sorted(p for p in path.glob("*.sql") if not p.name.startswith("_"))
+
     def _display(self, path: Path) -> str:
         """Return a repo-relative path for messages, falling back to the absolute one.
 
@@ -265,24 +278,33 @@ class Deployer:
         "the template was never rendered" mistakes offline.
         """
         errors: list[str] = []
-        for stage_key, _ in STAGE_ORDER:
-            for path in self.stage_files(stage_key):
-                try:
-                    self.render(path)
-                except ConfigError as exc:
-                    errors.append(str(exc))
-        # Included fragments (sql/rules/) are rendered inside a stage file, so
-        # render() never sees their source; lint it here.
-        for path in sorted((self.sql_root / "rules").glob("*.sql")):
-            source = path.read_text(encoding="utf-8")
-            if match := _FORBIDDEN_LITERALS.search(source):
+        for path in [p for key, _ in STAGE_ORDER for p in self.stage_files(key)] + (
+            self.verify_files()
+        ):
+            try:
+                self.render(path)
+            except ConfigError as exc:
+                errors.append(str(exc))
+        # Included fragments (sql/rules/, the verify controls, macro files) are
+        # rendered inside another file, so render() never sees their source;
+        # lint it here.
+        for directory in INCLUDED_DIRS:
+            for path in sorted((self.sql_root / directory).glob("*.sql")):
+                source = path.read_text(encoding="utf-8")
+                if match := _FORBIDDEN_LITERALS.search(source):
+                    errors.append(
+                        f"{self._display(path)}: contains the literal object name "
+                        f"{match.group(0)!r}"
+                    )
+                if ";" in source:
+                    errors.append(
+                        f"{self._display(path)}: an included fragment is one SELECT inside "
+                        "another statement; a ';' would end that statement early"
+                    )
+        for path in sorted((self.sql_root / VERIFY_DIR).glob("_*.sql")):
+            if match := _FORBIDDEN_LITERALS.search(path.read_text(encoding="utf-8")):
                 errors.append(
                     f"{self._display(path)}: contains the literal object name {match.group(0)!r}"
-                )
-            if ";" in source:
-                errors.append(
-                    f"{self._display(path)}: a rule is one SELECT inside a CREATE; a ';' "
-                    "would end that statement early"
                 )
         return errors
 

@@ -40,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
             failures += len(errors)
         else:
             count = sum(len(deployer.stage_files(key)) for key, _ in STAGE_ORDER)
-            print(f"[{profile}] ok -- {count} template(s) rendered")
+            verify = len(deployer.verify_files())
+            print(f"[{profile}] ok -- {count} template(s) and {verify} verify queries rendered")
 
     return 1 if failures else 0
 

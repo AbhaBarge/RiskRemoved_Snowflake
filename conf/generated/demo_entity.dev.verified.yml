@@ -1,0 +1,17 @@
+# Written by `riskcopilot verify`: the post-load detection result for
+# demo_entity.dev.yml. Valid only while that pin names the same party_id and
+# generation_seed. No clock time is recorded, so the same data gives the same file.
+generation_seed: 20260922
+missing_rules: []
+must_trigger_rules:
+- STRUCTURING_CROSS_ACCOUNT
+party_id: P-754971478708
+profile: dev
+rules:
+  STRUCTURING_CROSS_ACCOUNT:
+    case_ids:
+    - CASE-4399c4c86db5c6ea
+    detected: true
+    signal_business_keys:
+    - STRUCTURING_CROSS_ACCOUNT|P-754971478708|2022-08-26
+status: CONFIRMED_BY_DETECTION
