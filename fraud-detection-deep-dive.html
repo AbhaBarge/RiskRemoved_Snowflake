@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Fraud Detection Deep Dive — Signals, Dynamic Tables &amp; STR Generation</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-09-29",
+    "intent": "End-to-end technical guide: fraud signal creation, dynamic tables, and STR generation for Risk & Compliance Copilot",
+    "dataSources": [
+      { "type": "codebase", "path": "RiskRemoved_Snowflake/", "notes": "All SQL templates, config YAML, and Python pipeline code" }
+    ],
+    "sections": [
+      { "id": "d1", "title": "Acronym Glossary" },
+      { "id": "d2", "title": "Document vs Transaction" },
+      { "id": "d3", "title": "Dynamic Table Dependency Graph" },
+      { "id": "d4", "title": "DT_DIM_PARTY — Customer Dimension" },
+      { "id": "d5", "title": "DT_TRANSACTIONS_ENRICHED — Core Ledger" },
+      { "id": "d6", "title": "DT_TXN_DAILY_AGG — Velocity Base" },
+      { "id": "d7", "title": "DT_PARTY_RELATIONSHIP — The Graph" },
+      { "id": "d8", "title": "DT_SIGNALS_FAST — Signal Table" },
+      { "id": "d9", "title": "Policy-as-Data Architecture" },
+      { "id": "d10", "title": "STRUCTURING_CROSS_ACCOUNT — Full Walkthrough" },
+      { "id": "d11", "title": "Signal Routing & Case Creation" },
+      { "id": "d12", "title": "Severity & Aggregation Logic" },
+      { "id": "d13", "title": "End-to-End System Flow" },
+      { "id": "d14", "title": "STR Agent — 5 Tools" },
+      { "id": "d15", "title": "Evidence Chain Lifecycle" },
+      { "id": "d16", "title": "Worked Example — Rajesh Kumar" },
+      { "id": "d17", "title": "Adversarial Review Deep Dive" },
+      { "id": "d18", "title": "The Human Gate — Attestation" }
+    ]
+  }
+  </script>
+  <script src="/libs/mermaid@10.9.6/mermaid.min.js"></script>
+  <script>
+    if (typeof mermaid === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.6/dist/mermaid.min.js';
+      s.onload = function() {
+        mermaid.initialize({ startOnLoad: true, securityLevel: 'strict',
+          theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+          flowchart: { useMaxWidth: true }, sequence: { useMaxWidth: true, wrap: true }
+        });
+      };
+      document.head.appendChild(s);
+    }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 1060px; width: 100%; margin: 0 auto;
+      padding: clamp(12px, 3vw, 32px);
+      color: light-dark(#1e293b, #e2e8f0);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.55; font-size: 15px;
+    }
+    h1 { font-size: 1.8em; margin-bottom: 2px; color: light-dark(#0f172a, #f8fafc); }
+    .subtitle { color: light-dark(#64748b, #94a3b8); margin-bottom: 20px; }
+    h2 { font-size: 1.25em; margin: 0; color: light-dark(#0f172a, #f1f5f9); }
+    h3 { font-size: 1.05em; margin: 18px 0 6px; color: light-dark(#1e40af, #93c5fd); }
+    h4 { font-size: 0.95em; margin: 14px 0 4px; color: light-dark(#374151, #d1d5db); }
+    p, li { margin-bottom: 6px; }
+    ul, ol { padding-left: 20px; }
+    a { color: light-dark(#2563eb, #60a5fa); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: light-dark(#f1f5f9, #1e293b); padding: 1px 5px; border-radius: 3px; font-size: 0.88em; }
+    pre { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 14px; overflow-x: auto; font-size: 0.85em; line-height: 1.5; margin: 10px 0; }
+    pre code { background: none; padding: 0; }
+    strong { color: light-dark(#0f172a, #f1f5f9); }
+    img, svg { max-width: 100%; height: auto; }
+
+    /* NAV */
+    .nav { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; padding: 14px 18px; margin: 16px 0 28px; }
+    .nav-title { font-weight: 700; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; color: light-dark(#64748b, #94a3b8); margin-bottom: 8px; }
+    .nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 16px; }
+    .nav-grid a { display: block; padding: 3px 0; font-size: 0.88em; }
+    .nav-grid .num { display: inline-block; width: 22px; text-align: right; margin-right: 6px; color: light-dark(#94a3b8, #64748b); font-weight: 600; }
+
+    /* DIAGRAM SECTIONS */
+    details { margin: 12px 0; border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; overflow: hidden; }
+    details[open] { border-color: light-dark(#bfdbfe, #1e40af); }
+    summary { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 12px;
+      background: light-dark(#f8fafc, #1e293b); user-select: none; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: '+'; font-weight: 700; font-size: 1.1em; color: light-dark(#2563eb, #60a5fa); width: 18px; text-align: center; flex-shrink: 0; transition: transform 0.15s; }
+    details[open] > summary::before { content: '\2212'; }
+    summary:hover { background: light-dark(#eff6ff, #0f172a); }
+    .diagram-num { background: light-dark(#2563eb, #1e40af); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 0.8em; font-weight: 700; flex-shrink: 0; }
+    .section-body { padding: 16px 18px; }
+    .section-body p { margin-bottom: 8px; }
+    .mermaid { margin: 12px 0; overflow-x: auto; }
+
+    /* TABLES */
+    .table-wrap { overflow-x: auto; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.88em; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 6px 10px; text-align: left; }
+    th { background: light-dark(#f3f4f6, #1e293b); font-weight: 600; }
+    tr:nth-child(even) td { background: light-dark(#f9fafb, #0f172a80); }
+
+    /* CALLOUT BOXES */
+    .decision { background: light-dark(#f0fdf4, #0a2010); border-left: 4px solid #16a34a; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .decision strong { color: light-dark(#166534, #86efac); }
+    .warn { background: light-dark(#fef3c7, #1a1400); border-left: 4px solid #d97706; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .warn strong { color: light-dark(#92400e, #fcd34d); }
+    .info { background: light-dark(#eff6ff, #0c1a2e); border-left: 4px solid #3b82f6; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .info strong { color: light-dark(#1e40af, #93c5fd); }
+    .danger { background: light-dark(#fef2f2, #1a0505); border-left: 4px solid #dc2626; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .danger strong { color: light-dark(#991b1b, #fca5a5); }
+    .example { background: light-dark(#faf5ff, #1a0a2e); border-left: 4px solid #7c3aed; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .example strong { color: light-dark(#5b21b6, #c4b5fd); }
+
+    /* BADGES */
+    .sev-crit { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .sev-high { background: light-dark(#fed7aa, #431407); color: light-dark(#9a3412, #fdba74); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .sev-med { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .sev-low { background: light-dark(#dbeafe, #172554); color: light-dark(#1e40af, #93c5fd); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .tag-yes { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .tag-no { background: light-dark(#f3f4f6, #1f2937); color: light-dark(#6b7280, #9ca3af); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .tag-draft { background: light-dark(#dbeafe, #172554); color: light-dark(#1e40af, #93c5fd); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .tag-approved { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .tag-reject { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<h1>Fraud Detection Deep Dive</h1>
+<div class="subtitle">Signals, Dynamic Tables &amp; STR Generation &mdash; Risk &amp; Compliance Copilot</div>
+
+<!-- ===== NAV ===== -->
+<div class="nav">
+  <div class="nav-title">Fundamentals</div>
+  <div class="nav-grid">
+    <a href="#d1"><span class="num">1</span> Acronym Glossary</a>
+    <a href="#d2"><span class="num">2</span> Document vs Transaction</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">Data Architecture &amp; Dynamic Tables</div>
+  <div class="nav-grid">
+    <a href="#d3"><span class="num">3</span> Dynamic Table Dependency Graph</a>
+    <a href="#d4"><span class="num">4</span> DT_DIM_PARTY — Customer Dimension</a>
+    <a href="#d5"><span class="num">5</span> DT_TRANSACTIONS_ENRICHED — Core Ledger</a>
+    <a href="#d6"><span class="num">6</span> DT_TXN_DAILY_AGG — Velocity Base</a>
+    <a href="#d7"><span class="num">7</span> DT_PARTY_RELATIONSHIP — The Graph</a>
+    <a href="#d8"><span class="num">8</span> DT_SIGNALS_FAST — Signal Table</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">Signal Creation &amp; Firing Logic</div>
+  <div class="nav-grid">
+    <a href="#d9"><span class="num">9</span> Policy-as-Data Architecture</a>
+    <a href="#d10"><span class="num">10</span> STRUCTURING_CROSS_ACCOUNT — Full Walkthrough</a>
+    <a href="#d11"><span class="num">11</span> Signal Routing &amp; Case Creation</a>
+    <a href="#d12"><span class="num">12</span> Severity &amp; Aggregation Logic</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">End-to-End Flow &amp; STR Agent</div>
+  <div class="nav-grid">
+    <a href="#d13"><span class="num">13</span> End-to-End System Flow</a>
+    <a href="#d14"><span class="num">14</span> STR Agent — 5 Tools Sequence</a>
+    <a href="#d15"><span class="num">15</span> Evidence Chain Lifecycle</a>
+    <a href="#d16"><span class="num">16</span> Worked Example — Rajesh Kumar</a>
+    <a href="#d17"><span class="num">17</span> Adversarial Review Deep Dive</a>
+    <a href="#d18"><span class="num">18</span> The Human Gate — Attestation</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">Stage-by-Stage SQL Execution Guide</div>
+  <div class="nav-grid">
+    <a href="#s1"><span class="num">S1</span> RAW_TRANSACTIONS Schema &amp; Ingest</a>
+    <a href="#s2"><span class="num">S2</span> DT_TRANSACTIONS_ENRICHED — The 5-Join SQL</a>
+    <a href="#s3"><span class="num">S3</span> DT_SIGNALS_FAST — Rule SQL Execution</a>
+    <a href="#s4"><span class="num">S4</span> ROUTE_SIGNALS — The 5-Step MERGE</a>
+    <a href="#s5"><span class="num">S5</span> collect_case_evidence — Assembly</a>
+    <a href="#s6"><span class="num">S6</span> generate_str — LLM Call</a>
+    <a href="#s7"><span class="num">S7</span> review_finding — Adversarial Checks</a>
+    <a href="#s8"><span class="num">S8</span> Parallel vs Serial Execution Map</a>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 1: GLOSSARY ===== -->
+<!-- ================================================================== -->
+<details id="d1" open>
+  <summary><span class="diagram-num">1</span><h2>Acronym Glossary &amp; Fundamentals</h2></summary>
+  <div class="section-body">
+    <p>Every acronym used in this pipeline, with plain-English definitions and why they matter.</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Acronym</th><th>Full Form</th><th>Why It Matters</th></tr></thead>
+      <tbody>
+        <tr><td><strong>STR</strong></td><td>Suspicious Transaction Report</td><td>The mandatory filing a bank sends to FIU-IND when it suspects money laundering. Must be filed within <strong>7 working days</strong> of establishing suspicion (PML Rule 8). This pipeline's end product.</td></tr>
+        <tr><td><strong>SAR</strong></td><td>Suspicious Activity Report</td><td>US equivalent of STR (filed with FinCEN). Same concept, different jurisdiction. This system uses Indian terminology.</td></tr>
+        <tr><td><strong>AML</strong></td><td>Anti-Money Laundering</td><td>The umbrella discipline: detecting structuring, layering, and integration of illicit funds. This pipeline's core purpose.</td></tr>
+        <tr><td><strong>KYC</strong></td><td>Know Your Customer</td><td>Identity verification and risk-rating. <code>RAW_PARTY_KYC</code> holds the live KYC state; <code>DT_DIM_PARTY</code> joins it with CBS for every downstream rule.</td></tr>
+        <tr><td><strong>CTR</strong></td><td>Cash Transaction Report</td><td>Mandatory report for any cash transaction &ge; Rs 10 lakh. The CTR threshold is the anchor: structuring is defined as deliberately splitting deposits <em>below</em> this number.</td></tr>
+        <tr><td><strong>PMLA</strong></td><td>Prevention of Money Laundering Act, 2002</td><td>India's primary AML statute. Every policy clause in this system cites PMLA, the PML Rules, or an RBI Master Direction.</td></tr>
+        <tr><td><strong>FIU-IND</strong></td><td>Financial Intelligence Unit &ndash; India</td><td>National agency that receives STRs. The agent generates drafts in FIU-IND's prescribed format (suspicion codes A&ndash;F, Z).</td></tr>
+        <tr><td><strong>MLRO</strong></td><td>Money Laundering Reporting Officer</td><td>The Principal Officer who bears the legal filing obligation (PML Rule 7). The AI agent <strong>cannot</strong> attest &mdash; only the MLRO can.</td></tr>
+        <tr><td><strong>DT</strong></td><td>Dynamic Table</td><td>Snowflake object that automatically refreshes at a configurable <code>TARGET_LAG</code>. Replaces scheduled ETL jobs. The backbone of near-real-time detection.</td></tr>
+        <tr><td><strong>CBS</strong></td><td>Core Banking System</td><td>System of record for customer master data. Landed into <code>RAW_PARTY_CBS</code>.</td></tr>
+        <tr><td><strong>RBI</strong></td><td>Reserve Bank of India</td><td>India's banking regulator. Issues Master Directions on KYC, monitoring, and sanctions screening.</td></tr>
+        <tr><td><strong>PEP</strong></td><td>Politically Exposed Person</td><td>KYC flag (<code>pep_flag</code>) that escalates risk rating. PEP transactions get heightened monitoring.</td></tr>
+        <tr><td><strong>FATF</strong></td><td>Financial Action Task Force</td><td>Global AML standard-setter. Typologies (fan-out, cycle, scatter-gather) named after FATF catalogues.</td></tr>
+        <tr><td><strong>UPI / IMPS / NEFT / RTGS</strong></td><td>Indian Payment Rails</td><td><code>REF_CHANNEL</code> classifies each as cash/non-cash. Only <code>CASH</code> channel triggers CTR rules.</td></tr>
+        <tr><td><strong>ETL / ELT</strong></td><td>Extract-Transform-Load / Extract-Load-Transform</td><td>This pipeline uses <strong>ELT</strong>: raw data lands first, Snowflake Dynamic Tables transform in-database.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="example">
+      <strong>Example — Why CTR matters:</strong> A customer deposits Rs 12,00,000 in cash at a branch counter. Because 12L &ge; 10L (the <code>CTR_CASH_THRESHOLD</code> clause), the bank <em>must</em> file a CTR &mdash; no suspicion needed. But if the same customer deposits Rs 9,50,000 instead? No CTR is required. A money launderer exploits this gap by <strong>structuring</strong> &mdash; splitting Rs 20L into three deposits of Rs 9.5L, Rs 9.2L, Rs 9.8L across different accounts. Each is below 10L, so no automatic CTR. The <code>STRUCTURING_CROSS_ACCOUNT</code> rule exists to catch exactly this pattern.
+    </div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 2: DOCUMENT vs TRANSACTION ===== -->
+<!-- ================================================================== -->
+<details id="d2">
+  <summary><span class="diagram-num">2</span><h2>Document vs Normal Transaction Classification</h2></summary>
+  <div class="section-body">
+    <p>"Document" = a regulatory filing artifact (STR/CTR). "Transaction" = a financial movement through the ledger. The distinction is <strong>architectural</strong>.</p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph TXN["TRANSACTIONS (Data Layer)"]
+        RT["RAW_TRANSACTIONS\nImmutable, append-only"] --> DTE["DT_TRANSACTIONS_ENRICHED\n1-min refresh"] --> DSF["DT_SIGNALS_FAST\n5-min refresh"]
+    end
+    subgraph DOC["DOCUMENTS (Evidence Layer)"]
+        SIG["SIGNAL"] --> CASE["CASE_RECORD"] --> EVD["EVIDENCE"] --> FND["FINDING"] --> ART["ARTIFACT"] --> ATT["ATTESTATION"]
+    end
+    DSF -.->|"signals reference\ntxn_ids as evidence"| SIG
+    style TXN fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style DOC fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    </pre>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Aspect</th><th>Transaction</th><th>Document (STR Filing)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Origin</strong></td><td>Ingested from core banking via <code>RAW_TRANSACTIONS</code></td><td>Generated by the agent tools (<code>GENERATE_STR</code>, <code>REQUEST_ATTESTATION</code>)</td></tr>
+        <tr><td><strong>Schema</strong></td><td><code>RAW</code> &rarr; <code>CURATED</code></td><td><code>EVIDENCE_CHAIN</code></td></tr>
+        <tr><td><strong>Lifecycle</strong></td><td>Immutable once landed</td><td>Versioned: <span class="tag-draft">DRAFT</span> &rarr; <span class="sev-med">REVIEWED</span> &rarr; <span class="tag-approved">ATTESTED</span></td></tr>
+        <tr><td><strong>Evidence role</strong></td><td><em>Is</em> evidence &mdash; referenced by <code>evidence_txn_ids</code></td><td><em>Cites</em> evidence &mdash; narrative references transactions</td></tr>
+        <tr><td><strong>Who creates</strong></td><td>External systems (ATMs, UPI, branch)</td><td>AI agent drafts; human MLRO attests</td></tr>
+        <tr><td><strong>Downstream</strong></td><td>Feeds DTs, fires signals, opens cases</td><td>Filed with FIU-IND. No further pipeline effect.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="example">
+      <strong>Example:</strong> Transaction <code>TXN-00142</code> is a Rs 9,50,000 cash deposit on 2022-09-01. It lives in <code>RAW_TRANSACTIONS</code> and is enriched into <code>DT_TRANSACTIONS_ENRICHED</code>. When the structuring rule fires, this txn_id appears in the signal's <code>evidence_txn_ids</code> array. Later, the STR <em>document</em> cites this transaction in its narrative: "On 01-Sep-2022, the subject deposited Rs 9,50,000 via cash..." &mdash; but the document lives in <code>EVIDENCE_CHAIN.FINDING</code>, a completely separate schema.
+    </div>
+    <div class="decision"><strong>Design principle:</strong> Detection (DTs, signals) <strong>never reads</strong> from <code>EVIDENCE_CHAIN</code>. Filing <strong>never writes</strong> to <code>RAW</code> or <code>CURATED</code>. This prevents feedback loops where a filing could alter future detection.</div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 3: DT DEPENDENCY GRAPH ===== -->
+<!-- ================================================================== -->
+<details id="d3">
+  <summary><span class="diagram-num">3</span><h2>Dynamic Table Dependency Graph</h2></summary>
+  <div class="section-body">
+    <p>Why Dynamic Tables instead of batch ETL? Three problems solved:</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Problem</th><th>Batch ETL</th><th>Dynamic Tables</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Latency</strong></td><td>Hourly/daily batches. Structuring across a batch boundary is invisible.</td><td>1&ndash;5 minute refresh. Every deposit evaluated within minutes.</td></tr>
+        <tr><td><strong>Orchestration</strong></td><td>Explicit DAG (Airflow/dbt). Missed dependency = stale data.</td><td>Snowflake resolves dependency graph automatically.</td></tr>
+        <tr><td><strong>Idempotency</strong></td><td>Must engineer per job. Failed retry = double-count.</td><td>DTs recompute full result. <code>signal_business_key</code> MERGE = harmless re-fire.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>The full dependency graph &mdash; 7 schemas, 5 dynamic tables, with refresh lags:</p>
+    <pre class="mermaid">
+flowchart TD
+    subgraph RAW["RAW Schema — Immutable Landing"]
+        RT["RAW_TRANSACTIONS\nLeg-level ledger"]
+        CBS["RAW_PARTY_CBS\nCore banking master"]
+        KYC["RAW_PARTY_KYC\nKYC records"]
+        RA["RAW_ACCOUNTS\nAccount registry"]
+        IMA["ID_MAP_ACCOUNT\nAccount-to-party map"]
+        REL["RAW_PARTY_RELATIONSHIP_ATTR\nShared phone/device/BO"]
+    end
+
+    subgraph GOV["GOVERNANCE Schema — Policy-as-Data"]
+        RC["REF_CHANNEL\nCash/instant classification"]
+        PC["V_POLICY_CLAUSE_CURRENT\nLive thresholds"]
+        RD["RULE_DEFINITION\nRule registry + versions"]
+    end
+
+    subgraph CURATED["CURATED Schema — Dynamic Tables"]
+        DIM["DT_DIM_PARTY\nDOWNSTREAM lag"]
+        TXE["DT_TRANSACTIONS_ENRICHED\n1-min lag, INCREMENTAL"]
+        AGG["DT_TXN_DAILY_AGG\n5-min lag, INCREMENTAL"]
+        PRE["DT_PARTY_RELATIONSHIP\n10-min lag, INCREMENTAL"]
+        SIG["DT_SIGNALS_FAST\n5-min lag, INCREMENTAL"]
+    end
+
+    subgraph EVIDENCE["EVIDENCE_CHAIN Schema"]
+        STR["SIGNALS_STREAM"]
+        SIG_T["SIGNAL table"]
+        CASE["CASE_RECORD + CASE_SIGNAL"]
+    end
+
+    CBS --> DIM
+    KYC --> DIM
+    RT --> TXE
+    IMA --> TXE
+    DIM --> TXE
+    RA --> TXE
+    RC --> TXE
+    TXE --> AGG
+    TXE --> PRE
+    RA --> PRE
+    REL --> PRE
+    TXE --> SIG
+    PC --> SIG
+    SIG --> STR
+    STR -->|"ROUTE_SIGNALS\nprocedure"| SIG_T
+    SIG_T --> CASE
+    RD -->|"severity +\nrule_version"| SIG_T
+
+    style RAW fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style GOV fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style CURATED fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style EVIDENCE fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    </pre>
+    <div class="example">
+      <strong>Example — Cascade in action:</strong> A new row lands in <code>RAW_TRANSACTIONS</code> at 10:00:00. Within 1 minute, <code>DT_TRANSACTIONS_ENRICHED</code> refreshes and includes it (enriched with party, branch, channel). Within 5 minutes, <code>DT_SIGNALS_FAST</code> refreshes and evaluates the structuring rule against the new deposit. If it fires, <code>SIGNALS_STREAM</code> captures the change. <code>ROUTE_SIGNALS_TASK</code> triggers and MERGEs the signal into the <code>SIGNAL</code> table. Total time from raw ingest to case creation: <strong>~6 minutes</strong>.
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 4: DT_DIM_PARTY ===== -->
+<details id="d4">
+  <summary><span class="diagram-num">4</span><h2>DT_DIM_PARTY — Customer Dimension</h2></summary>
+  <div class="section-body">
+    <p><strong>Target Lag:</strong> DOWNSTREAM (refreshes only when a downstream DT needs it)</p>
+    <pre class="mermaid">
+flowchart LR
+    CBS["RAW_PARTY_CBS\nfull_name, nationality,\nbranch_region, customer_since"] -->|"LEFT JOIN\nON party_id"| DIM["DT_DIM_PARTY\nConformed customer row"]
+    KYC["RAW_PARTY_KYC\noccupation, income,\nrisk_rating, pep_flag,\nkyc_status"] -->|"LEFT JOIN\nON party_id"| DIM
+    style CBS fill:#dbeafe,stroke:#2563eb
+    style KYC fill:#d1fae5,stroke:#059669
+    style DIM fill:#fef3c7,stroke:#d97706
+    </pre>
+    <p><strong>Why this join:</strong> CBS has identity (name, nationality, branch). KYC has risk assessment (income, PEP, risk rating). The LEFT join ensures a party missing KYC appears with NULLs, not silently dropped.</p>
+    <div class="example">
+      <strong>Example row:</strong>
+      <pre><code>party_id:          PTY-abc123
+full_name:         Rajesh Kumar
+nationality:       IN
+branch_region:     MUMBAI
+risk_rating:       MEDIUM
+declared_annual_income: 800000    (Rs 8 lakh/year)
+pep_flag:          FALSE
+kyc_status:        VERIFIED
+kyc_last_reviewed: 2022-03-15</code></pre>
+      <p>The <code>INCOME_ACTIVITY_MISMATCH</code> rule will compare this <code>declared_annual_income</code> (Rs 8L) against the customer's actual 30-day inflow. If inflow exceeds 3x annual income (Rs 24L in a month), the rule fires.</p>
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 5: DT_TRANSACTIONS_ENRICHED ===== -->
+<details id="d5">
+  <summary><span class="diagram-num">5</span><h2>DT_TRANSACTIONS_ENRICHED — The Core Ledger</h2></summary>
+  <div class="section-body">
+    <p><strong>Target Lag:</strong> 1 minute &nbsp;|&nbsp; <strong>Refresh:</strong> INCREMENTAL &nbsp;|&nbsp; <strong>5 joins</strong></p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph INPUTS["5 Input Sources"]
+        RT["RAW_TRANSACTIONS\ntxn_id, amount, channel,\naccount_id, counterparty"]
+        IMA["ID_MAP_ACCOUNT\naccount_id → party_id"]
+        IMA2["ID_MAP_ACCOUNT (cp)\ncounterparty → party_id"]
+        DIM["DT_DIM_PARTY\nbranch_region, party_type"]
+        RA["RAW_ACCOUNTS\naccount_type"]
+        RC["REF_CHANNEL\nis_cash, is_instant"]
+    end
+    TXE["DT_TRANSACTIONS_ENRICHED\nEvery leg with full context"]
+    RT -->|"JOIN (inner)\nResolve owning party"| TXE
+    IMA -->|"JOIN (inner)\naccount → party"| TXE
+    IMA2 -->|"LEFT JOIN\ncounterparty party"| TXE
+    DIM -->|"LEFT JOIN\nbranch, party_type"| TXE
+    RA -->|"LEFT JOIN\naccount_type"| TXE
+    RC -->|"LEFT JOIN\ncash classification"| TXE
+    style INPUTS fill:#f8fafc,stroke:#94a3b8
+    style TXE fill:#2563eb,color:#fff
+    </pre>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Join</th><th>Type</th><th>Why Needed for Fraud Detection</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><code>ID_MAP_ACCOUNT a</code></td><td>INNER</td><td>Resolves which <strong>party</strong> owns the account. Without this, signals can't be grouped by customer. A structuring pattern needs to know that deposits in ACC-001 and ACC-002 belong to the <em>same</em> person.</td></tr>
+        <tr><td>2</td><td><code>ID_MAP_ACCOUNT cp</code></td><td>LEFT</td><td>Resolves counterparty's party_id for the relationship graph. LEFT because external counterparties may not be bank customers.</td></tr>
+        <tr><td>3</td><td><code>DT_DIM_PARTY p</code></td><td>LEFT</td><td>Adds <code>branch_region</code> (for Row Access Policy) and <code>party_type</code>. LEFT because the cash desk has no party row.</td></tr>
+        <tr><td>4</td><td><code>RAW_ACCOUNTS ra</code></td><td>LEFT</td><td>Adds <code>account_type</code> (savings, current, FD). Different types have different monitoring profiles.</td></tr>
+        <tr><td>5</td><td><code>REF_CHANNEL ch</code></td><td>LEFT</td><td><strong>Critical:</strong> Classifies the channel as <code>is_cash</code>. Only cash channels trigger CTR/structuring rules. This is reference data, not a hardcoded literal.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="example">
+      <strong>Example — One enriched transaction row:</strong>
+      <pre><code>txn_id:                   TXN-00142
+leg_side:                 C               (Credit = deposit)
+account_id:               ACC-001
+counterparty_account_id:  DESK-MUM-001    (cash desk)
+amount_inr:               950000          (Rs 9.5 lakh)
+channel:                  CASH
+is_cash:                  TRUE            ← from REF_CHANNEL
+is_instant:               TRUE            ← from REF_CHANNEL
+party_id:                 PTY-abc123      ← from ID_MAP_ACCOUNT
+is_internal_account:      FALSE           ← ACC-001 ≠ bank's own account
+counterparty_party_id:    BANK-INTERNAL   ← cash desk is the bank
+is_internal_counterparty: TRUE
+branch_region:            MUMBAI          ← from DT_DIM_PARTY
+account_type:             SAVINGS         ← from RAW_ACCOUNTS</code></pre>
+      <p>This row qualifies for the structuring rule because: <code>leg_side='C'</code> AND <code>is_cash=TRUE</code> AND <code>NOT is_internal_account</code> AND <code>950000 BETWEEN 0.90*1000000 AND 0.999*1000000</code>.</p>
+    </div>
+    <div class="warn"><strong>Design decision:</strong> No threshold is joined here. The structuring band test lives in the rule SQL, which reads <code>V_POLICY_CLAUSE_CURRENT</code>. Putting a threshold here would mean a missing clause could silently remove rows from the ledger every other consumer reads.</div>
+  </div>
+</details>
+
+<!-- ===== SECTION 6: DT_TXN_DAILY_AGG ===== -->
+<details id="d6">
+  <summary><span class="diagram-num">6</span><h2>DT_TXN_DAILY_AGG — Velocity Base</h2></summary>
+  <div class="section-body">
+    <p><strong>Target Lag:</strong> 5 minutes &nbsp;|&nbsp; <strong>Grain:</strong> One row per <code>account_id</code> &times; <code>txn_date</code></p>
+    <pre class="mermaid">
+flowchart LR
+    TXE["DT_TRANSACTIONS_ENRICHED\nLeg-level (millions of rows)"] -->|"GROUP BY\naccount_id, txn_date"| AGG["DT_TXN_DAILY_AGG\nDaily buckets per account"]
+    AGG --> ML["SNOWFLAKE.ML\n.ANOMALY_DETECTION\n(series=account, ts=date,\ntarget=credit_amount)"]
+    AGG --> VEL["Velocity rules\n(RAPID_CREDIT_VELOCITY)"]
+    style AGG fill:#059669,color:#fff
+    style ML fill:#7c3aed,color:#fff
+    </pre>
+    <div class="example">
+      <strong>Example — Daily aggregate for ACC-001 on 2022-09-01:</strong>
+      <pre><code>account_id:              ACC-001
+party_id:                PTY-abc123
+txn_date:                2022-09-01
+credit_count:            3          (3 incoming transfers)
+credit_amount_inr:       1450000    (Rs 14.5 lakh total in)
+debit_count:             1          (1 outgoing)
+debit_amount_inr:        200000     (Rs 2 lakh out)
+cash_credit_count:       1          (1 cash deposit)
+cash_credit_amount_inr:  950000     (Rs 9.5 lakh cash)
+distinct_counterparties: 3          (money from 3 different sources)</code></pre>
+      <p>The <code>RAPID_CREDIT_VELOCITY</code> rule sums <code>credit_count</code> over a 3-day window. If it finds 10+ credits from 6+ distinct remitters, the rule fires. The ML anomaly model trains on <code>(account_id, txn_date, credit_amount_inr)</code> to learn each account's normal pattern.</p>
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 7: DT_PARTY_RELATIONSHIP ===== -->
+<details id="d7">
+  <summary><span class="diagram-num">7</span><h2>DT_PARTY_RELATIONSHIP — The Graph</h2></summary>
+  <div class="section-body">
+    <p><strong>Target Lag:</strong> 10 minutes &nbsp;|&nbsp; <strong>3 edge types</strong> via UNION ALL</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph EDGES["Three Edge Types"]
+        E1["OWNS_ACCOUNT\nParty → Account\n(from RAW_ACCOUNTS)"]
+        E2["FUND_FLOW\nPayer → Payee\n(derived from debit legs)\nCash desk EXCLUDED"]
+        E3["SHARED_PHONE\nSHARED_DEVICE\nBENEFICIAL_OWNER\n(generated attribute edges)"]
+    end
+    DT["DT_PARTY_RELATIONSHIP\nOne row per edge"]
+    E1 & E2 & E3 --> DT
+    DT --> MULE["MULE_RING_CANDIDATE\nRecursive CTE, depth-3 cycle"]
+    DT --> SHARED["SHARED_DEVICE_CLUSTER\n3+ accounts, same fingerprint"]
+    style EDGES fill:#f0fdf4,stroke:#059669
+    style DT fill:#059669,color:#fff
+    style MULE fill:#dc2626,color:#fff
+    </pre>
+    <div class="example">
+      <strong>Example — Fund flow edges for PTY-abc123:</strong>
+      <pre><code>| relationship_type | party_a_id  | party_b_id  | txn_count | total_amount_inr |
+|-------------------|-------------|-------------|-----------|------------------|
+| FUND_FLOW         | PTY-abc123  | PTY-def456  | 15        | 2,300,000        |
+| FUND_FLOW         | PTY-abc123  | PTY-ghi789  | 8         | 1,100,000        |
+| SHARED_DEVICE     | PTY-abc123  | PTY-xyz999  | -         | -                |
+| OWNS_ACCOUNT      | PTY-abc123  | ACC-001     | -         | -                |
+| OWNS_ACCOUNT      | PTY-abc123  | ACC-002     | -         | -                |</code></pre>
+      <p>If PTY-abc123 &rarr; PTY-def456 &rarr; PTY-ghi789 &rarr; PTY-abc123 exists (a cycle), the <code>MULE_RING_CANDIDATE</code> agent tool detects it via recursive CTE.</p>
+    </div>
+    <div class="danger"><strong>Cash desk exclusion:</strong> The cash desk is the counterparty of <em>every</em> cash deposit. Including it would create a single-node hub connecting all cash customers. Every graph rule would fire on nothing useful. The filter: <code>NOT is_internal_account AND NOT is_internal_counterparty</code>.</div>
+  </div>
+</details>
+
+<!-- ===== SECTION 8: DT_SIGNALS_FAST ===== -->
+<details id="d8">
+  <summary><span class="diagram-num">8</span><h2>DT_SIGNALS_FAST — The Signal Table</h2></summary>
+  <div class="section-body">
+    <p><strong>Target Lag:</strong> 5 minutes &nbsp;|&nbsp; <strong>Structure:</strong> UNION ALL of every rule assigned to <code>signals_fast</code></p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph RULES["Rule SQL Files (UNION ALL)"]
+        R1["STRUCTURING_CROSS_ACCOUNT\nrules/STRUCTURING_CROSS_ACCOUNT.sql"]
+        R2["Future: RAPID_CREDIT_VELOCITY\nrules/RAPID_CREDIT_VELOCITY.sql"]
+        R3["Future: INCOME_ACTIVITY_MISMATCH\nrules/INCOME_ACTIVITY_MISMATCH.sql"]
+    end
+    DSF["DT_SIGNALS_FAST\nOne row per (rule, party, window)"]
+    R1 --> DSF
+    R2 -.-> DSF
+    R3 -.-> DSF
+    DSF --> STREAM["SIGNALS_STREAM\nCaptures changes"]
+    style RULES fill:#eff6ff,stroke:#2563eb
+    style DSF fill:#2563eb,color:#fff
+    style STREAM fill:#7c3aed,color:#fff
+    </pre>
+    <div class="example">
+      <strong>Example — One signal row from DT_SIGNALS_FAST:</strong>
+      <pre><code>rule_id:              STRUCTURING_CROSS_ACCOUNT
+party_id:             PTY-abc123
+account_id:           NULL           (party-grain rule)
+window_bucket:        2022-08-26     (30-day window start)
+metric_value:         2.0000         (distinct accounts used)
+threshold_value:      2.0000         (STRUCTURING_MIN_ACCOUNTS)
+evidence_txn_ids:     ["TXN-00142", "TXN-00187", "TXN-00203"]
+detail:               {
+                        "deposit_count": 3,
+                        "deposit_total_inr": 2850000,
+                        "accounts": ["ACC-001", "ACC-002"],
+                        "band_lower_inr": 900000,
+                        "band_upper_inr": 999000,
+                        "ctr_threshold_inr": 1000000,
+                        "window_days": 30
+                      }
+signal_business_key:  STRUCTURING_CROSS_ACCOUNT|PTY-ABC123|2022-08-26</code></pre>
+      <p>The <code>signal_business_key</code> is what makes routing idempotent. If the DT refreshes 100 times and this rule keeps firing, the router MERGEs on this key and only updates <code>last_seen_at</code>.</p>
+    </div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 9: POLICY-AS-DATA ===== -->
+<!-- ================================================================== -->
+<details id="d9">
+  <summary><span class="diagram-num">9</span><h2>Policy-as-Data Architecture</h2></summary>
+  <div class="section-body">
+    <p>Every detection threshold is <strong>data, not code</strong>. Changing a threshold is a governed data change with an effective date and audit trail &mdash; not a code deploy.</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph SEED["conf/detection.yml (Seed File)"]
+        S1["15 Policy Clauses\nwith provenance citations"]
+        S2["11 Typologies\n(structuring, fan-out, cycle...)"]
+        S3["Rule Registry\n(version-controlled)"]
+    end
+    subgraph DEPLOY["riskcopilot deploy --stage policy"]
+        D1["Insert-only with drift detection\nFails if live row differs from seed"]
+    end
+    subgraph GOV["GOVERNANCE Schema (Runtime)"]
+        PC["POLICY_CLAUSE\nEffective-dated rows"]
+        VPC["V_POLICY_CLAUSE_CURRENT\nView: clauses in effect today"]
+        TY["TYPOLOGY"]
+        RD["RULE_DEFINITION\nclause_ids, version, is_active"]
+    end
+    subgraph RULES["Detection SQL (Runtime)"]
+        R1["STRUCTURING_CROSS_ACCOUNT\nCROSS JOIN to V_POLICY_CLAUSE_CURRENT\nResolves thresholds at refresh time"]
+    end
+    SEED --> DEPLOY --> GOV
+    VPC --> R1
+    style SEED fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style DEPLOY fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style GOV fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style RULES fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    </pre>
+    <p><strong>All 15 policy clauses:</strong></p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Clause ID</th><th>Metric</th><th>Threshold</th><th>Regulation</th></tr></thead>
+      <tbody>
+        <tr><td><code>CTR_CASH_THRESHOLD</code></td><td>Cash txn amount (INR)</td><td>&ge; Rs 10,00,000</td><td>PML Rules 2005, Rule 3(1)(A)</td></tr>
+        <tr><td><code>STRUCTURING_BAND</code></td><td>Ratio to CTR</td><td>90%&ndash;99.9%</td><td>Internal TM-04</td></tr>
+        <tr><td><code>STRUCTURING_MIN_ACCOUNTS</code></td><td>Distinct accounts</td><td>&ge; 2</td><td>Internal TM-04</td></tr>
+        <tr><td><code>STRUCTURING_WINDOW_DAYS</code></td><td>Window length</td><td>&le; 30 days</td><td>Internal TM-04</td></tr>
+        <tr><td><code>INCOME_MISMATCH_MULTIPLE</code></td><td>30d inflow / income</td><td>&ge; 3.0x</td><td>RBI KYC MD 2016</td></tr>
+        <tr><td><code>INCOME_MISMATCH_MIN_INFLOW</code></td><td>30d inflow</td><td>&ge; Rs 5,00,000</td><td>Internal TM-07</td></tr>
+        <tr><td><code>RAPID_CREDIT_MIN_COUNT</code></td><td>Credits in window</td><td>&ge; 10</td><td>Internal TM-11</td></tr>
+        <tr><td><code>RAPID_CREDIT_MIN_REMITTERS</code></td><td>Distinct remitters</td><td>&ge; 6</td><td>Internal TM-11</td></tr>
+        <tr><td><code>RAPID_CREDIT_WINDOW_DAYS</code></td><td>Window length</td><td>&le; 3 days</td><td>Internal TM-11</td></tr>
+        <tr><td><code>SHARED_DEVICE_MIN_ACCOUNTS</code></td><td>Accounts per device</td><td>&ge; 3</td><td>Internal TM-15</td></tr>
+        <tr><td><code>SANCTIONS_EXACT_MATCH</code></td><td>Name equality</td><td>= 1</td><td>RBI KYC MD 2016 (UAPA)</td></tr>
+        <tr><td><code>SANCTIONS_FUZZY_REVIEW_FLOOR</code></td><td>Jaro-Winkler %</td><td>92%&ndash;99%</td><td>Internal AML Policy</td></tr>
+        <tr><td><code>MULE_RING_MAX_DEPTH</code></td><td>Cycle depth</td><td>&le; 3</td><td>FATF Layering Typologies</td></tr>
+        <tr><td><code>STR_FILING_SLA_DAYS</code></td><td>Working days to file</td><td>&le; 7</td><td>PML Rules 2005, Rule 8</td></tr>
+        <tr><td><code>PRINCIPAL_OFFICER_ATTESTATION</code></td><td>Human required</td><td>= 1</td><td>PML Rules 2005, Rule 7</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="example">
+      <strong>Example — Threshold change without code deploy:</strong> RBI raises the CTR limit from Rs 10L to Rs 15L. An authorized compliance officer updates <code>POLICY_CLAUSE</code>:
+      <pre><code>INSERT INTO GOVERNANCE.POLICY_CLAUSE (
+    clause_id, metric, operator, threshold_lower, effective_from, provenance
+) VALUES (
+    'CTR_CASH_THRESHOLD', 'cash_txn_amount_inr', '>=', 1500000,
+    '2027-01-01', 'RBI Circular dated 2026-11-15'
+);</code></pre>
+      <p>The old row stays (effective_from = 2005-07-01). <code>V_POLICY_CLAUSE_CURRENT</code> now returns 1500000. On the next DT refresh, the structuring band shifts to Rs 13.5L&ndash;14.99L automatically. Past signals retain the old threshold (recorded in <code>SIGNAL.threshold_value</code>).</p>
+    </div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 10: STRUCTURING RULE ===== -->
+<!-- ================================================================== -->
+<details id="d10" open>
+  <summary><span class="diagram-num">10</span><h2>STRUCTURING_CROSS_ACCOUNT — Full Walkthrough</h2></summary>
+  <div class="section-body">
+    <p>The pipeline's fully built detection rule. Step-by-step from data to signal.</p>
+    <pre class="mermaid">
+sequenceDiagram
+    participant TXE as DT_TRANSACTIONS_ENRICHED
+    participant VPC as V_POLICY_CLAUSE_CURRENT
+    participant Rule as STRUCTURING Rule SQL
+    participant DSF as DT_SIGNALS_FAST
+
+    Note over TXE: New deposits land via<br/>1-min incremental refresh
+
+    Rule->>VPC: CROSS JOIN — resolve 4 thresholds
+    Note right of VPC: CTR = 10,00,000<br/>Band = 90%–99.9%<br/>Min Accounts = 2<br/>Window = 30 days
+
+    Rule->>TXE: Filter: leg_side='C'<br/>AND is_cash = TRUE<br/>AND NOT is_internal_account<br/>AND amount BETWEEN 9L and 9.99L
+
+    Note over Rule: Assign tumbling window:<br/>bucket = FLOOR(days_since_epoch / 30)<br/>Epoch anchor = 1970-01-01
+
+    Rule->>Rule: GROUP BY party_id, bucket<br/>HAVING COUNT(DISTINCT account_id) >= 2
+
+    Rule->>DSF: Emit signal row:<br/>signal_business_key<br/>evidence_txn_ids (array)<br/>metric_value = 2<br/>threshold_value = 2<br/>detail JSON
+    </pre>
+
+    <h3>Step 1: Threshold Resolution</h3>
+    <p>The rule SQL does a <code>CROSS JOIN</code> to <code>V_POLICY_CLAUSE_CURRENT</code>, pivoting four clause IDs:</p>
+    <pre><code>SELECT
+  MAX(IFF(clause_id='CTR_CASH_THRESHOLD',    threshold_lower, NULL)) AS ctr_threshold,  -- 1000000
+  MAX(IFF(clause_id='STRUCTURING_BAND',       threshold_lower, NULL)) AS band_lower,     -- 0.90
+  MAX(IFF(clause_id='STRUCTURING_BAND',       threshold_upper, NULL)) AS band_upper,     -- 0.999
+  MAX(IFF(clause_id='STRUCTURING_MIN_ACCOUNTS',threshold_lower,NULL)) AS min_accounts,   -- 2
+  MAX(IFF(clause_id='STRUCTURING_WINDOW_DAYS', threshold_lower, NULL)) AS window_days    -- 30
+FROM V_POLICY_CLAUSE_CURRENT</code></pre>
+
+    <h3>Step 2: Transaction Filtering</h3>
+    <p>From <code>DT_TRANSACTIONS_ENRICHED</code>, select only:</p>
+    <ul>
+      <li><code>leg_side = 'C'</code> &mdash; credit legs (deposits) only</li>
+      <li><code>is_cash = TRUE</code> &mdash; cash channel per <code>REF_CHANNEL</code></li>
+      <li><code>NOT is_internal_account</code> &mdash; exclude bank's own cash desk</li>
+      <li><code>amount_inr BETWEEN 0.90 * 10L AND 0.999 * 10L</code> = Rs 9,00,000 to Rs 9,99,000</li>
+    </ul>
+
+    <h3>Step 3: Tumbling Window</h3>
+    <pre><code>FLOOR(DATEDIFF('day', '1970-01-01', txn_date) / 30) AS bucket
+-- Example: 2022-09-01 → bucket 641 (window: 2022-08-26 to 2022-09-24)</code></pre>
+
+    <h3>Step 4: Aggregation &amp; Firing</h3>
+    <pre><code>GROUP BY party_id, bucket
+HAVING COUNT(DISTINCT account_id) >= 2  -- threshold from STRUCTURING_MIN_ACCOUNTS</code></pre>
+
+    <div class="example">
+      <strong>Concrete example — Three deposits that trigger the rule:</strong>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Account</th><th>Amount (INR)</th><th>Channel</th><th>In Band?</th><th>Bucket</th></tr></thead>
+        <tbody>
+          <tr><td>2022-09-01</td><td>ACC-001 (Savings)</td><td>9,50,000</td><td>CASH</td><td><span class="sev-crit">YES</span> (95%)</td><td>641</td></tr>
+          <tr><td>2022-09-05</td><td>ACC-002 (Current)</td><td>9,20,000</td><td>CASH</td><td><span class="sev-crit">YES</span> (92%)</td><td>641</td></tr>
+          <tr><td>2022-09-12</td><td>ACC-001 (Savings)</td><td>9,80,000</td><td>CASH</td><td><span class="sev-crit">YES</span> (98%)</td><td>641</td></tr>
+          <tr><td>2022-09-18</td><td>ACC-003 (FD)</td><td>2,50,000</td><td>UPI</td><td><span class="tag-no">NO</span> (not cash)</td><td>&mdash;</td></tr>
+          <tr><td>2022-10-02</td><td>ACC-001 (Savings)</td><td>9,70,000</td><td>CASH</td><td><span class="sev-crit">YES</span></td><td>642</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>Result:</strong> Rows 1-3 are in bucket 641. <code>COUNT(DISTINCT account_id)</code> = 2 (ACC-001, ACC-002). Since 2 &ge; 2 (min_accounts), the rule <strong>fires</strong>. Row 4 is excluded (UPI, not cash). Row 5 falls in bucket 642 &mdash; only 1 account in that window, so no fire.</p>
+      <p><strong>Signal output:</strong></p>
+      <pre><code>signal_business_key: STRUCTURING_CROSS_ACCOUNT|PTY-ABC123|2022-08-26
+metric_value:        2         (distinct accounts)
+threshold_value:     2         (STRUCTURING_MIN_ACCOUNTS)
+evidence_txn_ids:    [TXN-00142, TXN-00187, TXN-00203]
+detail: {
+  deposit_count: 3,
+  deposit_total_inr: 2850000,       ← Rs 28.5 lakh total
+  accounts: [ACC-001, ACC-002],
+  band_lower_inr: 900000,           ← 90% of 10L
+  band_upper_inr: 999000,           ← 99.9% of 10L
+  ctr_threshold_inr: 1000000        ← Rs 10L
+}</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 11: ROUTING ===== -->
+<details id="d11">
+  <summary><span class="diagram-num">11</span><h2>Signal Routing &amp; Case Creation</h2></summary>
+  <div class="section-body">
+    <p>Once <code>DT_SIGNALS_FAST</code> refreshes, a <strong>stream + triggered task</strong> routes signals into the evidence chain:</p>
+    <pre class="mermaid">
+flowchart TD
+    A["DT_SIGNALS_FAST refreshes"] --> B["SIGNALS_STREAM\ncaptures INSERT rows"]
+    B --> C{"SYSTEM$STREAM_HAS_DATA?"}
+    C -->|"No"| SKIP["No action"]
+    C -->|"Yes"| D["ROUTE_SIGNALS_TASK fires"]
+    D --> E["ROUTE_SIGNALS procedure\n(single transaction)"]
+
+    E --> F["Step 1: Validate rule_ids\nexist in RULE_DEFINITION"]
+    F --> G["Step 2: MERGE into SIGNAL\non signal_business_key"]
+    G --> H{"New signal?"}
+    H -->|"INSERT"| I["New SIGNAL row\nseverity from RULE_DEFINITION"]
+    H -->|"MATCHED"| J["Update if evidence changed\nbump last_seen_at"]
+
+    I --> K{"Severity >= MEDIUM?"}
+    K -->|"No (LOW)"| L["Logged only, no case"]
+    K -->|"Yes"| M["Step 3: Open CASE_RECORD\nif no open case for party"]
+
+    M --> N["Step 4: CASE_SIGNAL\nattach signal to case"]
+    N --> O{"2+ distinct rule families?"}
+    O -->|"Yes"| P["Step 5: Escalate to\nCROSS_DOMAIN case_type"]
+    O -->|"No"| Q["Keep original type\n(e.g., AML)"]
+
+    P & Q & L --> R["COMMIT"]
+
+    style A fill:#059669,color:#fff
+    style E fill:#2563eb,color:#fff
+    style R fill:#059669,color:#fff
+    style P fill:#dc2626,color:#fff
+    </pre>
+
+    <div class="example">
+      <strong>Example — Routing the structuring signal:</strong>
+      <ol>
+        <li><code>SIGNALS_STREAM</code> captures the new row with <code>signal_business_key = STRUCTURING_CROSS_ACCOUNT|PTY-ABC123|2022-08-26</code></li>
+        <li>Router validates <code>STRUCTURING_CROSS_ACCOUNT</code> exists in <code>RULE_DEFINITION</code> with <code>is_active=TRUE</code></li>
+        <li>MERGE: this key doesn't exist yet → INSERT into <code>SIGNAL</code> with <code>signal_id = SIG-</code> + SHA-256 hash, <code>severity = HIGH</code></li>
+        <li>HIGH &ge; MEDIUM → check for open case. None exists for PTY-abc123 → INSERT into <code>CASE_RECORD</code> with <code>case_type = AML</code>, <code>branch_region = MUMBAI</code></li>
+        <li>INSERT into <code>CASE_SIGNAL</code> to attach the signal</li>
+        <li>Only 1 rule family → stays as AML (not CROSS_DOMAIN)</li>
+        <li>COMMIT</li>
+      </ol>
+      <p>Total time from deposit to case creation: <strong>~6 minutes</strong> (1-min DT_TRANSACTIONS_ENRICHED + 5-min DT_SIGNALS_FAST + stream/task).</p>
+    </div>
+
+    <div class="decision"><strong>Atomicity:</strong> The entire procedure runs in <code>BEGIN TRANSACTION</code>. If step 4 fails, everything rolls back and the stream is unconsumed. The next run sees the same changes. No partial state.</div>
+  </div>
+</details>
+
+<!-- ===== SECTION 12: SEVERITY ===== -->
+<details id="d12">
+  <summary><span class="diagram-num">12</span><h2>Severity &amp; Aggregation Logic</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+flowchart TB
+    subgraph SIGS["Signal Severity Map"]
+        S1["SANCTIONS_MATCH_NEW"] -->|CRITICAL| BOX1["Immediate case\n+ BLOCK_AND_ESCALATE"]
+        S2["MULE_RING_CANDIDATE\nSTRUCTURING_CROSS_ACCOUNT"] -->|HIGH| BOX2["Case created"]
+        S3["SHARED_DEVICE_CLUSTER\nRAPID_CREDIT_VELOCITY\nINCOME_ACTIVITY_MISMATCH"] -->|MEDIUM| BOX3["Case created"]
+        S4["VELOCITY_ANOMALY_ML"] -->|LOW| BOX4["Logged only\nNo case"]
+    end
+    subgraph AGG["Aggregation Logic"]
+        AGG1["Single HIGH signal\n→ AML case"] --> CASE1["case_type = AML"]
+        AGG2["HIGH + MEDIUM from\ndifferent rules\n→ CROSS_DOMAIN"] --> CASE2["case_type = CROSS_DOMAIN\n(strongest signal)"]
+        AGG3["LOW signals\n→ enrich existing cases"] --> CASE3["Corroborating evidence\nin STR narrative"]
+    end
+    style S1 fill:#dc2626,color:#fff
+    style S2 fill:#d97706,color:#fff
+    style S3 fill:#d97706,color:#fff
+    style S4 fill:#2563eb,color:#fff
+    style CASE2 fill:#dc2626,color:#fff
+    </pre>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Rule</th><th>Severity</th><th>Case?</th><th>Typology</th></tr></thead>
+      <tbody>
+        <tr><td><code>SANCTIONS_MATCH_NEW</code></td><td><span class="sev-crit">CRITICAL</span></td><td><span class="tag-yes">Yes</span></td><td>Sanctions</td></tr>
+        <tr><td><code>MULE_RING_CANDIDATE</code></td><td><span class="sev-high">HIGH</span></td><td><span class="tag-yes">Yes</span></td><td>AML (graph)</td></tr>
+        <tr><td><code>STRUCTURING_CROSS_ACCOUNT</code></td><td><span class="sev-high">HIGH</span></td><td><span class="tag-yes">Yes</span></td><td>AML</td></tr>
+        <tr><td><code>SHARED_DEVICE_CLUSTER</code></td><td><span class="sev-med">MEDIUM</span></td><td><span class="tag-yes">Yes</span></td><td>AML</td></tr>
+        <tr><td><code>RAPID_CREDIT_VELOCITY</code></td><td><span class="sev-med">MEDIUM</span></td><td><span class="tag-yes">Yes</span></td><td>AML</td></tr>
+        <tr><td><code>INCOME_ACTIVITY_MISMATCH</code></td><td><span class="sev-med">MEDIUM</span></td><td><span class="tag-yes">Yes</span></td><td>AML</td></tr>
+        <tr><td><code>VELOCITY_ANOMALY_ML</code></td><td><span class="sev-low">LOW</span></td><td><span class="tag-no">No</span></td><td>ML anomaly</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="example">
+      <strong>Example — Cross-domain escalation:</strong> PTY-abc123 triggers both <code>STRUCTURING_CROSS_ACCOUNT</code> (HIGH) and <code>RAPID_CREDIT_VELOCITY</code> (MEDIUM). These are two <em>different</em> rule families. The router's step 5 detects <code>COUNT(DISTINCT rule_id) >= 2</code> and escalates the case to <code>CROSS_DOMAIN</code>. This is the primary false-positive reduction mechanism: a structuring signal <em>plus</em> a mule-velocity signal is far more suspicious than either alone.
+    </div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 13: E2E FLOW ===== -->
+<!-- ================================================================== -->
+<details id="d13">
+  <summary><span class="diagram-num">13</span><h2>End-to-End System Flow</h2></summary>
+  <div class="section-body">
+    <p>Five stages: Ingest &rarr; Detect &rarr; Route &rarr; Agent &rarr; Human Gate</p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph S1["1. INGEST"]
+        A1["AMLworld CSVs +\nOpenSanctions"]
+        A2["riskcopilot generate\nsample, enrich,\ninject, validate"]
+        A3["riskcopilot load\nCOPY INTO"]
+        A1 --> A2 --> A3
+    end
+
+    subgraph S2["2. DETECT"]
+        B1["DT_DIM_PARTY"]
+        B2["DT_TRANSACTIONS_ENRICHED\n1-min lag"]
+        B3["DT_TXN_DAILY_AGG\n5-min lag"]
+        B4["DT_PARTY_RELATIONSHIP\n10-min lag"]
+        B5["DT_SIGNALS_FAST\n5-min lag"]
+        B1 --> B2
+        B2 --> B3
+        B2 --> B4
+        B2 --> B5
+    end
+
+    subgraph S3["3. ROUTE"]
+        C1["SIGNALS_STREAM"]
+        C2["ROUTE_SIGNALS"]
+        C3["SIGNAL +\nCASE_RECORD +\nCASE_SIGNAL"]
+        C1 --> C2 --> C3
+    end
+
+    subgraph S4["4. AGENT"]
+        D1["collect_case_evidence"]
+        D2["generate_str"]
+        D3["review_finding"]
+        D4["request_attestation"]
+        D1 --> D2 --> D3 --> D4
+    end
+
+    subgraph S5["5. HUMAN GATE"]
+        E1["MLRO Review"]
+        E2["ATTESTATION"]
+        E1 --> E2
+    end
+
+    A3 --> B1
+    A3 --> B2
+    B5 --> C1
+    C3 --> D1
+    D4 --> E1
+
+    style S1 fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style S2 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style S3 fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style S4 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style S5 fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    </pre>
+  </div>
+</details>
+
+<!-- ===== SECTION 14: AGENT TOOLS ===== -->
+<details id="d14">
+  <summary><span class="diagram-num">14</span><h2>STR Agent — 5 Tools Sequence</h2></summary>
+  <div class="section-body">
+    <p>The <code>RISK_COPILOT_AGENT</code> is a Snowflake Cortex Agent with 5 tool-resources:</p>
+    <pre class="mermaid">
+sequenceDiagram
+    actor Analyst as Compliance Analyst
+    participant Agent as Risk Copilot Agent
+    participant CCE as collect_case_evidence
+    participant VAL as validate_str_inputs
+    participant GEN as generate_str (Claude)
+    participant REV as review_finding (Mistral)
+    participant ATT as request_attestation
+    actor MLRO as MLRO / Principal Officer
+
+    Analyst->>Agent: "Generate STR for case CASE-4399c4c86db5c6ea"
+
+    Note over Agent: Workflow Step 1:<br/>Collect all evidence
+
+    Agent->>CCE: collect_case_evidence(case_id)
+    Note over CCE: Reads SIGNAL, CASE_SIGNAL,<br/>DT_DIM_PARTY, DT_TRANSACTIONS_ENRICHED,<br/>V_POLICY_CLAUSE_CURRENT
+    Note over CCE: Pre-computes totals in SQL:<br/>total_amount, txn_count, distinct_accounts
+    Note over CCE: Inserts EVIDENCE pointer rows<br/>(refs, not copies)
+    CCE-->>Agent: STR-ready JSON + computed_values
+
+    Note over Agent: Workflow Step 2:<br/>Generate the STR narrative
+
+    Agent->>GEN: generate_str(evidence_json)
+    Note over GEN: Validates 5 required fields<br/>Inserts audit trail (STR_INPUT)<br/>Builds prompt with XML delimiters<br/>Embeds pre-computed values
+    GEN-->>Agent: Draft STR narrative (markdown)
+
+    Agent-->>Analyst: "Here is the draft STR..."
+
+    Analyst->>Agent: "Review finding FIND-001"
+
+    Note over Agent: Workflow Step 3:<br/>Adversarial review
+
+    Agent->>REV: review_finding(finding_id)
+    Note over REV: 3 deterministic checks +<br/>LLM review (different model family)
+    REV-->>Agent: APPROVE + checks detail
+
+    Analyst->>Agent: "Route for sign-off"
+
+    Note over Agent: Workflow Step 4:<br/>Create artifact
+
+    Agent->>ATT: request_attestation(finding_id)
+    Note over ATT: Verifies passing review<br/>Creates ARTIFACT with SHA-256 hash<br/>Updates case status to DRAFTED
+    ATT-->>Agent: artifact_id + content_hash
+
+    Agent-->>Analyst: "Artifact created. MLRO must attest."
+
+    Note over MLRO: STRUCTURAL HUMAN GATE<br/>Only COMPLIANCE_OFFICER role<br/>can INSERT into ATTESTATION
+    MLRO->>MLRO: INSERT INTO ATTESTATION<br/>(content_hash must match)
+    </pre>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tool</th><th>Type</th><th>What It Does</th><th>Safety Property</th></tr></thead>
+      <tbody>
+        <tr><td><code>collect_case_evidence</code></td><td>Proc</td><td>Reads 5 tables, assembles JSON, inserts EVIDENCE pointer rows</td><td>Pre-computes all numbers in SQL. LLM never does arithmetic.</td></tr>
+        <tr><td><code>validate_str_inputs</code></td><td>UDF</td><td>Checks 5 required fields, returns FIU-IND code reference</td><td>Rejects incomplete inputs before any LLM call.</td></tr>
+        <tr><td><code>generate_str</code></td><td>Proc</td><td>Builds XML-delimited prompt, calls Claude, stores input/output</td><td>Prompt injection defense via XML delimiters. Output always DRAFT.</td></tr>
+        <tr><td><code>review_finding</code></td><td>Proc</td><td>3 deterministic checks + different-model LLM review</td><td>Deliberate model diversity (Mistral reviews Claude's work).</td></tr>
+        <tr><td><code>request_attestation</code></td><td>Proc</td><td>Creates SHA-256&ndash;hashed ARTIFACT, routes to MLRO</td><td><strong>Cannot INSERT into ATTESTATION.</strong> Structural human gate.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 15: EVIDENCE CHAIN ===== -->
+<details id="d15">
+  <summary><span class="diagram-num">15</span><h2>Evidence Chain Lifecycle</h2></summary>
+  <div class="section-body">
+    <pre class="mermaid">
+stateDiagram-v2
+    [*] --> SIGNAL : DT refresh fires rule
+    SIGNAL --> CASE_RECORD : Router opens case (severity >= MEDIUM)
+    SIGNAL --> CASE_SIGNAL : Signal attached to case
+
+    CASE_RECORD --> EVIDENCE : collect_case_evidence inserts pointer rows
+    EVIDENCE --> FINDING : generate_str creates narrative + conclusion
+
+    state review_check <<choice>>
+    FINDING --> REVIEW : review_finding runs adversarial checks
+    REVIEW --> review_check
+    review_check --> FINDING : REJECT — fix defects, new version
+    review_check --> ARTIFACT : APPROVE
+
+    ARTIFACT --> ATTESTATION : MLRO signs off (COMPLIANCE_OFFICER only)
+    ATTESTATION --> [*] : Filed with FIU-IND
+    </pre>
+    <div class="info"><strong>Append-only by discipline:</strong> FINDING and ARTIFACT are versioned rather than updated. An overwritten narrative destroys the record of what was concluded and when. A new version creates a new row.</div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ===== SECTION 16: WORKED EXAMPLE ===== -->
+<!-- ================================================================== -->
+<details id="d16" open>
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">E</span><h2>Worked Example — Rajesh Kumar, End to End</h2></summary>
+  <div class="section-body">
+    <p>Tracing a single party from raw deposits through signal firing, case creation, STR generation, review, and attestation.</p>
+
+    <h3>The Subject</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>party_id</td><td><code>PTY-abc123</code></td></tr>
+        <tr><td>full_name</td><td>Rajesh Kumar</td></tr>
+        <tr><td>branch_region</td><td>MUMBAI</td></tr>
+        <tr><td>risk_rating</td><td>MEDIUM</td></tr>
+        <tr><td>declared_annual_income</td><td>Rs 8,00,000</td></tr>
+        <tr><td>kyc_status</td><td>VERIFIED</td></tr>
+        <tr><td>accounts</td><td>ACC-001 (Savings), ACC-002 (Current), ACC-003 (FD)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>The Transactions</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>txn_id</th><th>Date</th><th>Account</th><th>Amount</th><th>Channel</th><th>In Band?</th></tr></thead>
+      <tbody>
+        <tr><td>TXN-00142</td><td>2022-09-01</td><td>ACC-001</td><td>Rs 9,50,000</td><td>CASH</td><td><span class="sev-crit">YES (95%)</span></td></tr>
+        <tr><td>TXN-00187</td><td>2022-09-05</td><td>ACC-002</td><td>Rs 9,20,000</td><td>CASH</td><td><span class="sev-crit">YES (92%)</span></td></tr>
+        <tr><td>TXN-00203</td><td>2022-09-12</td><td>ACC-001</td><td>Rs 9,80,000</td><td>CASH</td><td><span class="sev-crit">YES (98%)</span></td></tr>
+        <tr><td>TXN-00250</td><td>2022-09-18</td><td>ACC-003</td><td>Rs 2,50,000</td><td>UPI</td><td><span class="tag-no">NO</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <pre class="mermaid">
+flowchart TD
+    subgraph T0["T+0min: Raw Ingest"]
+        TX["3 cash deposits land\nin RAW_TRANSACTIONS"]
+    end
+    subgraph T1["T+1min: Enrichment"]
+        EN["DT_TRANSACTIONS_ENRICHED refreshes\nis_cash=TRUE, party_id=PTY-abc123\nis_internal_account=FALSE"]
+    end
+    subgraph T5["T+5min: Signal Fires"]
+        SF["DT_SIGNALS_FAST refreshes\nSTRUCTURING_CROSS_ACCOUNT fires\nmetric=2 accounts, threshold=2\nevidence=[TXN-142, TXN-187, TXN-203]"]
+    end
+    subgraph T6["T+6min: Case Created"]
+        RT["ROUTE_SIGNALS fires\nNew SIGNAL (severity=HIGH)\nNew CASE_RECORD (type=AML)\nCASE_SIGNAL attached"]
+    end
+    subgraph AGENT["Analyst + Agent"]
+        CCE["collect_case_evidence\n→ JSON with 3 txns, party data,\n4 policy clauses, computed totals"]
+        GEN["generate_str\n→ Draft narrative citing\nRs 28.5L across 2 accounts\nFIU-IND codes D, E, F"]
+        REV["review_finding\n→ 3/3 deterministic PASS\n→ Mistral LLM: APPROVE"]
+        ATT["request_attestation\n→ ARTIFACT created\n→ SHA-256 hash locked"]
+    end
+    subgraph HUMAN["Human Gate"]
+        MLRO["MLRO reviews draft\nVerifies amounts match\nINSERT INTO ATTESTATION"]
+    end
+
+    T0 --> T1 --> T5 --> T6
+    T6 -->|"Analyst asks:\nGenerate STR for CASE-xxx"| CCE
+    CCE --> GEN --> REV --> ATT
+    ATT -->|"Routed to MLRO"| MLRO
+
+    style T0 fill:#dbeafe,stroke:#2563eb
+    style T1 fill:#dcfce7,stroke:#16a34a
+    style T5 fill:#fef3c7,stroke:#d97706
+    style T6 fill:#fee2e2,stroke:#dc2626
+    style AGENT fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style HUMAN fill:#fef2f2,stroke:#dc2626,stroke-width:2px
+    </pre>
+
+    <h3>What the Agent's Evidence JSON Looks Like</h3>
+    <pre><code>{
+  "status": "SUCCESS",
+  "case_id": "CASE-4399c4c86db5c6ea",
+  "subject_name": "Rajesh Kumar",
+  "subject_type": "INDIVIDUAL",
+  "subject_id": "ABCPK1234A",              ← PAN number
+  "typology": "AML",
+  "signals": [
+    {
+      "signal_id": "SIG-a1b2c3d4e5f6",
+      "rule_id": "STRUCTURING_CROSS_ACCOUNT",
+      "rule_version": 1,
+      "severity": "HIGH",
+      "metric_value": 2,
+      "threshold_value": 2,
+      "evidence_txn_ids": ["TXN-00142", "TXN-00187", "TXN-00203"],
+      "detail": {
+        "deposit_count": 3,
+        "deposit_total_inr": 2850000,
+        "accounts": ["ACC-001", "ACC-002"]
+      }
+    }
+  ],
+  "transactions": [
+    {"txn_id": "TXN-00142", "date": "2022-09-01", "amount": 950000, "channel": "CASH", "is_cash": true},
+    {"txn_id": "TXN-00187", "date": "2022-09-05", "amount": 920000, "channel": "CASH", "is_cash": true},
+    {"txn_id": "TXN-00203", "date": "2022-09-12", "amount": 980000, "channel": "CASH", "is_cash": true}
+  ],
+  "computed_values": {
+    "total_amount": 2850000,                ← computed in SQL, not by LLM
+    "transaction_count": 3,
+    "distinct_accounts": 2,
+    "signal_count": 1
+  },
+  "policy_clauses_cited": [
+    {"clause_id": "CTR_CASH_THRESHOLD", "threshold_lower": 1000000, "document_title": "PML Rules 2005"},
+    {"clause_id": "STRUCTURING_BAND", "threshold_lower": 0.90, "threshold_upper": 0.999},
+    {"clause_id": "STRUCTURING_MIN_ACCOUNTS", "threshold_lower": 2},
+    {"clause_id": "STRUCTURING_WINDOW_DAYS", "threshold_lower": 30}
+  ],
+  "suspicion_codes": ["D", "E", "F"],
+  "branch_name": "MUMBAI"
+}</code></pre>
+
+    <h3>What the STR Narrative Looks Like (Generated by Claude)</h3>
+    <div class="example">
+      <strong>Excerpt from the DRAFT STR:</strong>
+      <p><em>"Between 01-Sep-2022 and 12-Sep-2022, the subject Rajesh Kumar (PAN: ABCPK1234A) made three cash deposits totalling Rs 28,50,000 across two accounts (ACC-001, ACC-002) at the Mumbai branch. Each deposit was individually below the CTR threshold of Rs 10,00,000 as prescribed under PML (Maintenance of Records) Rules, 2005, Rule 3(1)(A), but fell within the 90%&ndash;99.9% structuring band (Rs 9,00,000 &ndash; Rs 9,99,000). The pattern is consistent with deliberate structuring to avoid the Cash Transaction Report filing requirement...</em></p>
+      <p><em>Grounds of Suspicion: D (Activity in accounts &mdash; multiple sub-threshold deposits), E (Nature of transactions &mdash; exclusively cash, branch counter), F (Value of transactions &mdash; aggregate Rs 28.5L significantly exceeds declared annual income of Rs 8L).</em></p>
+      <p><em><strong>This is a DRAFT requiring MLRO review before filing.</strong></em>"</p>
+    </div>
+  </div>
+</details>
+
+<!-- ===== SECTION 17: REVIEW ===== -->
+<details id="d17">
+  <summary><span class="diagram-num">17</span><h2>Adversarial Review Deep Dive</h2></summary>
+  <div class="section-body">
+    <p>Two kinds of checks, deliberately separated:</p>
+    <pre class="mermaid">
+flowchart TB
+    subgraph DET["DETERMINISTIC CHECKS (SQL)"]
+        C1["Check 1: Citation Resolution\nEvery cited evidence_id\nresolves in EVIDENCE table"]
+        C2["Check 2: Clause Validity\nEvery cited clause is\ncurrently in force"]
+        C3["Check 3: Computed Values\nPre-computed numbers\nare present"]
+    end
+    subgraph LLM["LLM CHECK (Different Model Family)"]
+        C4["Mistral reviews Claude's narrative:\n1. Internal consistency?\n2. Conclusion follows evidence?\n3. Obvious omissions?\n4. Unsupported claims?"]
+    end
+    subgraph RESULT["Decision"]
+        PASS["ALL checks pass\n→ APPROVE"]
+        FAIL["ANY check fails\n→ REJECT + specific defects"]
+    end
+    DET --> RESULT
+    LLM --> RESULT
+    style DET fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style LLM fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style FAIL fill:#dc2626,color:#fff
+    style PASS fill:#059669,color:#fff
+    </pre>
+    <div class="example">
+      <strong>Example — Review passes:</strong>
+      <pre><code>{
+  "status": "SUCCESS",
+  "review_id": "REV-x7y8z9",
+  "decision": "APPROVE",
+  "defects": [],
+  "checks": {
+    "citation_resolution":    { "passed": true, "cited": 4, "resolved": 4 },
+    "clause_in_effect":       { "passed": true, "cited": 4, "active": 4 },
+    "computed_values_present": { "passed": true },
+    "llm_review":             { "model": "mistral-large2", "decision": "APPROVE" }
+  }
+}</code></pre>
+    </div>
+    <div class="example">
+      <strong>Example — Review catches a defect:</strong>
+      <pre><code>{
+  "decision": "REJECT",
+  "defects": [
+    "CITATION_FAILED: 3/4 evidence IDs resolved — EVD-999 does not exist",
+    "Narrative claims Rs 30,00,000 total but computed_values shows Rs 28,50,000"
+  ],
+  "checks": {
+    "citation_resolution":    { "passed": false, "cited": 4, "resolved": 3 },
+    "clause_in_effect":       { "passed": true },
+    "computed_values_present": { "passed": true },
+    "llm_review":             { "model": "mistral-large2", "decision": "REJECT" }
+  }
+}</code></pre>
+      <p>The analyst would fix the finding (create a new version) and re-run the review.</p>
+    </div>
+    <div class="danger"><strong>Model diversity is deliberate:</strong> The drafter is Claude (Anthropic). The reviewer is Mistral (non-Anthropic). A critic sharing the drafter's blind spots is not a useful critic. This is enforced in <code>conf/models.yml</code>.</div>
+  </div>
+</details>
+
+<!-- ===== SECTION 18: ATTESTATION ===== -->
+<details id="d18">
+  <summary><span class="diagram-num">18</span><h2>The Human Gate — Attestation</h2></summary>
+  <div class="section-body">
+    <p>The final step is a <strong>structural enforcement</strong> of PMLA Rule 7: only the Principal Officer can file.</p>
+    <pre class="mermaid">
+flowchart LR
+    subgraph AGENT_SIDE["What the Agent CAN Do"]
+        A1["Create ARTIFACT\nfrom approved finding"]
+        A2["Compute SHA-256\ncontent hash"]
+        A3["Update case to DRAFTED"]
+        A4["Return hash + SQL\nfor MLRO to execute"]
+    end
+    subgraph HUMAN_SIDE["What ONLY the MLRO Can Do"]
+        H1["Review the STR narrative"]
+        H2["Verify amounts match\ncomputed_values"]
+        H3["INSERT INTO ATTESTATION\n(content_hash must match)"]
+        H4["Filed with FIU-IND"]
+    end
+    AGENT_SIDE -->|"Routed to MLRO\nvia request_attestation"| HUMAN_SIDE
+    style AGENT_SIDE fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style HUMAN_SIDE fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    </pre>
+    <div class="example">
+      <strong>Example — The exact SQL the MLRO runs:</strong>
+      <pre><code>-- The agent returns this SQL for the MLRO to execute:
+INSERT INTO EVIDENCE_CHAIN.ATTESTATION (
+    attestation_id,
+    artifact_id,
+    attested_content_hash,
+    attestor,
+    attestor_role,
+    decision
+) VALUES (
+    UUID_STRING(),
+    'ART-f1e2d3c4b5a6',                          -- artifact_id from agent
+    'a3b9c7d5e1f8...full SHA-256 hash...',         -- must match ARTIFACT.content_hash
+    CURRENT_USER(),                                -- 'PRIYA_SHARMA' (the MLRO)
+    'PRINCIPAL_OFFICER',
+    'ATTESTED'
+);</code></pre>
+      <p>If anyone edits the STR narrative after the artifact was created, the <code>content_hash</code> will no longer match, and the attestation is invalid. This is tamper detection, not just access control.</p>
+    </div>
+    <div class="danger">
+      <strong>Why the agent cannot attest (by design):</strong>
+      <ul>
+        <li>The agent runs as <code>RC_SERVICE_ROLE</code></li>
+        <li>Only <code>COMPLIANCE_OFFICER</code> role has <code>INSERT</code> on <code>ATTESTATION</code></li>
+        <li>This is enforced at the Snowflake privilege level, not by prompt instructions</li>
+        <li>PML Rule 7: "The Principal Officer bears the filing obligation. Autonomous filing is legally invalid, not merely imprudent."</li>
+      </ul>
+    </div>
+    <div class="decision"><strong>The chain is the product:</strong> Every step from signal firing through attestation is recorded. The rule version, the threshold at the time of firing, the exact transactions cited, the LLM model used, the reviewer's decision, and the content hash that binds the attestation to the exact artifact version. Nothing is overwritten. Nothing is computed by the LLM that could have been computed by SQL.</div>
+  </div>
+</details>
+
+<!-- ================================================================== -->
+<!-- ========== STAGE-BY-STAGE SQL EXECUTION GUIDE ==================== -->
+<!-- ================================================================== -->
+
+<h1 style="margin-top:48px; border-top: 3px solid light-dark(#7c3aed, #a78bfa); padding-top: 24px;">Stage-by-Stage SQL Execution Guide</h1>
+<p>Every query that runs, what table it reads from, what it writes to, what the output looks like, and how that output feeds the next stage. Parallel stages are marked <span class="tag-yes">PARALLEL</span>, serial stages <span class="sev-high">SERIAL</span>.</p>
+
+<!-- ===== STAGE S1: RAW_TRANSACTIONS ===== -->
+<details id="s1" open>
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S1</span><h2>RAW_TRANSACTIONS — Schema &amp; Ingest</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="sev-high">SERIAL</span> — must complete before any DT refreshes<br/>
+    <strong>Command:</strong> <code>COPY INTO RAW.RAW_TRANSACTIONS FROM @DATA_STAGE</code></p>
+
+    <h3>Table Schema — Every column and why it exists</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column</th><th>Type</th><th>Example Value</th><th>Why This Column Exists</th></tr></thead>
+      <tbody>
+        <tr><td><code>txn_id</code></td><td>VARCHAR PK</td><td><code>T-000000000142-C</code></td><td>Unique leg identifier. Suffix <code>-C</code> (credit) or <code>-D</code> (debit). Referenced by <code>evidence_txn_ids</code> in signals.</td></tr>
+        <tr><td><code>txn_pair_id</code></td><td>VARCHAR</td><td><code>TP-000000000142</code></td><td>Links the two legs (debit + credit) of one transfer. Required for the pair-level view used in graph queries.</td></tr>
+        <tr><td><code>leg_side</code></td><td>VARCHAR(1)</td><td><code>C</code></td><td><code>C</code>=credit (deposit), <code>D</code>=debit (withdrawal). The structuring rule filters on <code>leg_side='C'</code> because it looks for incoming cash deposits only.</td></tr>
+        <tr><td><code>account_id</code></td><td>VARCHAR FK</td><td><code>ACC-001</code></td><td>The account this leg posts to. Joined to <code>ID_MAP_ACCOUNT</code> to find the owning <code>party_id</code>.</td></tr>
+        <tr><td><code>counterparty_account_id</code></td><td>VARCHAR</td><td><code>DESK-MUM-001</code></td><td>The other side of the transfer. For cash deposits, this is the bank's cash desk.</td></tr>
+        <tr><td><code>txn_timestamp</code></td><td>TIMESTAMP_NTZ</td><td><code>2022-09-01 10:30:00</code></td><td>When the transaction happened. Used for tumbling window bucket assignment in rules.</td></tr>
+        <tr><td><code>amount</code></td><td>NUMBER(20,2)</td><td><code>950000.00</code></td><td>Signed amount in the original currency. Negative for debits. Not used in detection (use <code>amount_inr</code>).</td></tr>
+        <tr><td><code>currency</code></td><td>VARCHAR</td><td><code>INR</code></td><td>~95% INR; cross-border legs use the foreign currency. Kept for audit.</td></tr>
+        <tr><td><code>amount_inr</code></td><td>NUMBER(20,2)</td><td><code>950000.00</code></td><td><strong>The column all detection arithmetic uses.</strong> Converted at the FX rate in <code>conf/generation.yml</code>. The structuring rule compares this against <code>band * ctr_threshold</code>.</td></tr>
+        <tr><td><code>txn_type</code></td><td>VARCHAR</td><td><code>DEPOSIT</code></td><td><code>DEPOSIT | WITHDRAWAL | TRANSFER | PAYMENT</code>. Informational only &mdash; the rule uses <code>leg_side</code> + <code>is_cash</code> instead.</td></tr>
+        <tr><td><code>channel</code></td><td>VARCHAR</td><td><code>CASH</code></td><td><code>UPI | IMPS | NEFT | RTGS | CASH | CHEQUE</code>. Joined to <code>REF_CHANNEL</code> to resolve <code>is_cash</code>. This is the key CTR discriminator.</td></tr>
+        <tr><td><code>source_ref</code></td><td>VARCHAR</td><td><code>UTR2209010001</code></td><td>Opaque transfer reference. Deliberately carries no provenance (no "injected_" prefix) to prevent label leakage.</td></tr>
+        <tr><td><code>ingested_at</code></td><td>TIMESTAMP_NTZ</td><td><code>2026-09-29 10:00:00</code></td><td>When the row landed. Differs from <code>txn_timestamp</code> under replay. Not used in detection.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="example">
+      <strong>Example — 4 rows as they exist in RAW_TRANSACTIONS:</strong>
+      <pre><code>| txn_id           | leg_side | account_id | counterparty   | amount_inr | channel | txn_timestamp       |
+|------------------|----------|------------|----------------|------------|---------|---------------------|
+| T-000000142-C    | C        | ACC-001    | DESK-MUM-001   | 950000.00  | CASH    | 2022-09-01 10:30:00 |
+| T-000000142-D    | D        | DESK-MUM-001| ACC-001        | -950000.00 | CASH    | 2022-09-01 10:30:00 |
+| T-000000187-C    | C        | ACC-002    | DESK-MUM-001   | 920000.00  | CASH    | 2022-09-05 14:15:00 |
+| T-000000250-C    | C        | ACC-003    | ACC-EXT-999    | 250000.00  | UPI     | 2022-09-18 09:00:00 |</code></pre>
+      <p>Notice: each transfer creates <strong>two rows</strong> (one credit, one debit) sharing the same <code>txn_pair_id</code>. This is the leg-level grain.</p>
+    </div>
+
+    <div class="info"><strong>What happens next:</strong> These rows sit in RAW and are <em>never modified</em>. Within 1 minute, <code>DT_TRANSACTIONS_ENRICHED</code> picks them up via its incremental refresh.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S2: DT_TRANSACTIONS_ENRICHED ===== -->
+<details id="s2">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S2</span><h2>DT_TRANSACTIONS_ENRICHED — The 5-Join SQL</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="tag-yes">PARALLEL</span> with DT_DIM_PARTY (DIM_PARTY refreshes first via DOWNSTREAM, then this table reads it)<br/>
+    <strong>Refresh:</strong> Every 1 minute, INCREMENTAL<br/>
+    <strong>Reads from:</strong> RAW_TRANSACTIONS + ID_MAP_ACCOUNT + DT_DIM_PARTY + RAW_ACCOUNTS + REF_CHANNEL<br/>
+    <strong>Writes to:</strong> CURATED.DT_TRANSACTIONS_ENRICHED (dynamic table, auto-managed)</p>
+
+    <h3>The Actual SQL That Executes</h3>
+    <pre><code>-- This is the CREATE OR ALTER DYNAMIC TABLE statement.
+-- Snowflake runs this SELECT on every refresh (incrementally).
+
+SELECT
+    t.txn_id,
+    t.txn_pair_id,
+    t.leg_side,                                    -- 'C' or 'D'
+    t.account_id,
+    t.counterparty_account_id,
+    t.txn_timestamp,
+    TO_DATE(t.txn_timestamp)              AS txn_date,       -- derived for window bucketing
+    t.amount,
+    t.currency,
+    t.amount_inr,                                  -- THE detection column
+    t.txn_type,
+    t.channel,
+    ch.is_cash,                                    -- ← FROM REF_CHANNEL (is this a cash channel?)
+    ch.is_instant,                                 -- ← FROM REF_CHANNEL
+    t.source_ref,
+    a.party_id,                                    -- ← FROM ID_MAP_ACCOUNT (who owns this account?)
+    a.src_bank_id = 'BANK_INTERNAL'    AS is_internal_account,   -- is this the bank's own cash desk?
+    cp.party_id                        AS counterparty_party_id, -- ← FROM ID_MAP_ACCOUNT (counterparty)
+    cp.src_bank_id = 'BANK_INTERNAL'   AS is_internal_counterparty,
+    p.branch_region,                               -- ← FROM DT_DIM_PARTY (for Row Access Policy)
+    p.branch_code,                                 -- ← FROM DT_DIM_PARTY
+    p.party_type,                                  -- ← FROM DT_DIM_PARTY
+    ra.account_type,                               -- ← FROM RAW_ACCOUNTS (SAVINGS/CURRENT/FD)
+    t.ingested_at
+FROM RAW.RAW_TRANSACTIONS t
+JOIN RAW.ID_MAP_ACCOUNT a               ON a.account_id = t.account_id           -- INNER: must know owner
+LEFT JOIN RAW.ID_MAP_ACCOUNT cp          ON cp.account_id = t.counterparty_account_id -- LEFT: external ok
+LEFT JOIN CURATED.DT_DIM_PARTY p         ON p.party_id = a.party_id              -- LEFT: cash desk has no party
+LEFT JOIN RAW.RAW_ACCOUNTS ra            ON ra.account_id = t.account_id         -- LEFT: account metadata
+LEFT JOIN GOVERNANCE.REF_CHANNEL ch      ON ch.channel_code = t.channel          -- LEFT: classify cash/instant</code></pre>
+
+    <h3>Column-by-Column: What Each Join Adds and Why</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>New Column</th><th>Comes From</th><th>Join Type</th><th>Why It's Needed for Fraud Detection</th></tr></thead>
+      <tbody>
+        <tr><td><code>party_id</code></td><td><code>ID_MAP_ACCOUNT</code></td><td>INNER</td><td><strong>Most critical join.</strong> Links transaction &rarr; account &rarr; party. Without it, the structuring rule can't group deposits by customer. If ACC-001 and ACC-002 both belong to PTY-abc123, this join is how the rule knows they're the same person.</td></tr>
+        <tr><td><code>is_internal_account</code></td><td><code>ID_MAP_ACCOUNT</code></td><td>computed</td><td><code>TRUE</code> if the account is the bank's own cash desk. The structuring rule excludes these: <code>WHERE NOT is_internal_account</code>. Without this filter, the cash desk (which receives every cash deposit) would appear as the most suspicious "customer."</td></tr>
+        <tr><td><code>counterparty_party_id</code></td><td><code>ID_MAP_ACCOUNT cp</code></td><td>LEFT</td><td>The counterparty's party_id. Used in <code>DT_PARTY_RELATIONSHIP</code> to build FUND_FLOW edges. LEFT because the counterparty may be an external non-customer.</td></tr>
+        <tr><td><code>is_cash</code></td><td><code>REF_CHANNEL</code></td><td>LEFT</td><td><strong>The CTR gatekeeper.</strong> <code>TRUE</code> only for channel=CASH. The structuring rule's WHERE clause: <code>AND is_cash</code>. A UPI deposit for Rs 9.5L is NOT in-band because it's not cash. Getting this wrong would either miss real structuring or flag every digital transfer.</td></tr>
+        <tr><td><code>branch_region</code></td><td><code>DT_DIM_PARTY</code></td><td>LEFT</td><td>Denormalized for Row Access Policy. A Mumbai analyst can only see transactions where <code>branch_region='MUMBAI'</code>. Also required when opening a CASE_RECORD (the <code>branch_region</code> column is NOT NULL).</td></tr>
+        <tr><td><code>account_type</code></td><td><code>RAW_ACCOUNTS</code></td><td>LEFT</td><td>SAVINGS, CURRENT, FD, etc. Different monitoring profiles per type. A structuring pattern across savings + current is more suspicious than two savings accounts at the same branch.</td></tr>
+        <tr><td><code>txn_date</code></td><td>computed</td><td>&mdash;</td><td><code>TO_DATE(txn_timestamp)</code>. The structuring rule uses this for tumbling window assignment: <code>DATEDIFF('day', epoch, txn_date)</code>.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="example">
+      <strong>Example — Output of DT_TRANSACTIONS_ENRICHED for our 3 deposits:</strong>
+      <pre><code>| txn_id        | leg | account | amount_inr | channel | is_cash | party_id    | is_internal | branch | acct_type |
+|---------------|-----|---------|------------|---------|---------|-------------|-------------|--------|-----------|
+| T-000000142-C | C   | ACC-001 | 950000     | CASH    | TRUE    | PTY-abc123  | FALSE       | MUMBAI | SAVINGS   |
+| T-000000187-C | C   | ACC-002 | 920000     | CASH    | TRUE    | PTY-abc123  | FALSE       | MUMBAI | CURRENT   |
+| T-000000203-C | C   | ACC-001 | 980000     | CASH    | TRUE    | PTY-abc123  | FALSE       | MUMBAI | SAVINGS   |
+| T-000000250-C | C   | ACC-003 | 250000     | UPI     | FALSE   | PTY-abc123  | FALSE       | MUMBAI | FD        |</code></pre>
+      <p>Notice: all 4 rows now have <code>party_id</code>, <code>is_cash</code>, <code>is_internal_account</code>, and <code>branch_region</code> — the columns the structuring rule needs.</p>
+    </div>
+
+    <div class="info"><strong>What happens next:</strong> This output feeds three downstream consumers <span class="tag-yes">IN PARALLEL</span>: <code>DT_TXN_DAILY_AGG</code> (5-min), <code>DT_PARTY_RELATIONSHIP</code> (10-min), and <code>DT_SIGNALS_FAST</code> (5-min). All three read from this table independently.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S3: DT_SIGNALS_FAST ===== -->
+<details id="s3">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S3</span><h2>DT_SIGNALS_FAST — Rule SQL Execution</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="tag-yes">PARALLEL</span> with DT_TXN_DAILY_AGG and DT_PARTY_RELATIONSHIP (all read DT_TRANSACTIONS_ENRICHED independently)<br/>
+    <strong>Refresh:</strong> Every 5 minutes, INCREMENTAL<br/>
+    <strong>Reads from:</strong> DT_TRANSACTIONS_ENRICHED + V_POLICY_CLAUSE_CURRENT<br/>
+    <strong>Writes to:</strong> CURATED.DT_SIGNALS_FAST (dynamic table)</p>
+
+    <h3>The Actual SQL — STRUCTURING_CROSS_ACCOUNT Rule</h3>
+    <p>This is the complete query that executes inside the dynamic table. Every number comes from <code>V_POLICY_CLAUSE_CURRENT</code>, never a hardcoded value.</p>
+    <pre><code>-- STEP 1: Resolve thresholds (CROSS JOIN — one row from the policy view)
+WITH thresholds AS (
+    SELECT
+        MAX(IFF(clause_id='CTR_CASH_THRESHOLD',     threshold_lower, NULL)) AS ctr_threshold,   -- 1000000
+        MAX(IFF(clause_id='STRUCTURING_BAND',        threshold_lower, NULL)) AS band_lower,      -- 0.90
+        MAX(IFF(clause_id='STRUCTURING_BAND',        threshold_upper, NULL)) AS band_upper,      -- 0.999
+        MAX(IFF(clause_id='STRUCTURING_MIN_ACCOUNTS', threshold_lower, NULL)) AS min_accounts,   -- 2
+        MAX(IFF(clause_id='STRUCTURING_WINDOW_DAYS',  threshold_lower, NULL)) AS window_days     -- 30
+    FROM GOVERNANCE.V_POLICY_CLAUSE_CURRENT
+),
+
+-- STEP 2: Filter qualifying deposits
+qualifying_deposits AS (
+    SELECT
+        e.party_id,
+        e.account_id,
+        e.txn_id,
+        e.txn_timestamp,
+        e.amount_inr,
+        FLOOR(DATEDIFF('day', '1970-01-01', e.txn_date) / c.window_days) AS bucket,
+        c.ctr_threshold, c.band_lower, c.band_upper, c.min_accounts, c.window_days
+    FROM CURATED.DT_TRANSACTIONS_ENRICHED e
+    CROSS JOIN thresholds c
+    WHERE e.leg_side = 'C'                          -- credit legs only (deposits)
+      AND e.is_cash                                 -- cash channel only
+      AND NOT e.is_internal_account                 -- exclude the bank's cash desk
+      AND e.amount_inr BETWEEN c.band_lower * c.ctr_threshold
+                            AND c.band_upper * c.ctr_threshold
+                                                    -- Rs 9,00,000 to Rs 9,99,000
+)
+
+-- STEP 3: Aggregate and fire
+SELECT
+    'STRUCTURING_CROSS_ACCOUNT'                                       AS rule_id,
+    d.party_id,
+    NULL::VARCHAR                                                     AS account_id,
+    TO_VARCHAR(DATEADD('day', (d.bucket * d.window_days)::INT, '1970-01-01')) AS window_bucket,
+    COUNT(DISTINCT d.account_id)::NUMBER(20,4)                        AS metric_value,
+    d.min_accounts::NUMBER(20,4)                                      AS threshold_value,
+    ARRAY_AGG(d.txn_id) WITHIN GROUP (ORDER BY d.txn_id)              AS evidence_txn_ids,
+    OBJECT_CONSTRUCT(
+        'deposit_count', COUNT(*),
+        'deposit_total_inr', SUM(d.amount_inr),
+        'accounts', ARRAY_AGG(DISTINCT d.account_id),
+        'band_lower_inr', d.band_lower * d.ctr_threshold,
+        'band_upper_inr', d.band_upper * d.ctr_threshold,
+        'ctr_threshold_inr', d.ctr_threshold,
+        'window_days', d.window_days
+    )                                                                 AS detail,
+    MAX(d.txn_timestamp)                                              AS last_txn_at,
+    'STRUCTURING_CROSS_ACCOUNT' || '|' || UPPER(d.party_id) || '|'
+        || TO_VARCHAR(DATEADD('day', (d.bucket * d.window_days)::INT, '1970-01-01'))
+                                                                      AS signal_business_key
+FROM qualifying_deposits d
+GROUP BY d.party_id, d.bucket, d.window_days, d.min_accounts, d.ctr_threshold, d.band_lower, d.band_upper
+HAVING COUNT(DISTINCT d.account_id) >= d.min_accounts   -- ← THE FIRING CONDITION</code></pre>
+
+    <h3>Step-by-Step Trace With Real Data</h3>
+
+    <h4>Step 1 output — Thresholds (1 row):</h4>
+    <pre><code>| ctr_threshold | band_lower | band_upper | min_accounts | window_days |
+|---------------|------------|------------|--------------|-------------|
+| 1000000       | 0.90       | 0.999      | 2            | 30          |</code></pre>
+
+    <h4>Step 2 output — Qualifying deposits (filtering applied):</h4>
+    <pre><code>| party_id    | account_id | txn_id        | amount_inr | bucket | In range 9L-9.99L? |
+|-------------|------------|---------------|------------|--------|--------------------|
+| PTY-abc123  | ACC-001    | T-000000142-C | 950000     | 641    | YES (95% of 10L)   |
+| PTY-abc123  | ACC-002    | T-000000187-C | 920000     | 641    | YES (92% of 10L)   |
+| PTY-abc123  | ACC-001    | T-000000203-C | 980000     | 641    | YES (98% of 10L)   |
+
+EXCLUDED:
+| PTY-abc123  | ACC-003    | T-000000250-C | 250000     | —      | NO (UPI, not cash) |</code></pre>
+    <div class="info"><strong>Why T-000000250-C was excluded:</strong> It fails the <code>AND e.is_cash</code> filter. UPI has <code>is_cash=FALSE</code> in <code>REF_CHANNEL</code>. Even if the amount were in the structuring band, it would still be excluded because CTR rules only apply to physical cash.</div>
+
+    <h4>Step 3 output — The fired signal (1 row):</h4>
+    <pre><code>| rule_id                     | party_id   | window_bucket | metric_value | threshold_value | evidence_txn_ids                          |
+|-----------------------------|------------|---------------|--------------|-----------------|-------------------------------------------|
+| STRUCTURING_CROSS_ACCOUNT   | PTY-abc123 | 2022-08-26    | 2.0000       | 2.0000          | [T-000000142-C, T-000000187-C, T-000000203-C] |
+
+detail JSON:
+{
+  "deposit_count": 3,
+  "deposit_total_inr": 2850000,
+  "accounts": ["ACC-001", "ACC-002"],
+  "band_lower_inr": 900000,
+  "band_upper_inr": 999000,
+  "ctr_threshold_inr": 1000000,
+  "window_days": 30
+}
+
+signal_business_key: STRUCTURING_CROSS_ACCOUNT|PTY-ABC123|2022-08-26</code></pre>
+
+    <div class="decision"><strong>Why <code>metric_value = 2</code>:</strong> <code>COUNT(DISTINCT account_id)</code> = 2 (ACC-001 and ACC-002). The <code>HAVING</code> clause checks <code>2 >= 2</code> (min_accounts). TRUE &rarr; signal fires. If the customer had used only ACC-001 for all three deposits, metric_value would be 1, and the rule would NOT fire.</div>
+
+    <div class="info"><strong>What happens next:</strong> This row appears in <code>DT_SIGNALS_FAST</code>. The <code>SIGNALS_STREAM</code> (a Snowflake stream on this DT) captures it as a new INSERT.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S4: ROUTE_SIGNALS ===== -->
+<details id="s4">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S4</span><h2>ROUTE_SIGNALS — The 5-Step MERGE</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="sev-high">SERIAL</span> — triggered by <code>SYSTEM$STREAM_HAS_DATA</code>, runs as a single atomic transaction<br/>
+    <strong>Reads from:</strong> SIGNALS_STREAM + RULE_DEFINITION + SIGNAL + CASE_RECORD + DT_DIM_PARTY<br/>
+    <strong>Writes to:</strong> SIGNAL + CASE_RECORD + CASE_SIGNAL (all within one COMMIT)</p>
+
+    <h3>The 5 SQL Statements Inside the Transaction</h3>
+
+    <h4>Statement 1: MERGE into SIGNAL</h4>
+    <pre><code>MERGE INTO EVIDENCE_CHAIN.SIGNAL t
+USING (
+    SELECT
+        'SIG-' || LEFT(SHA2(b.signal_business_key, 256), 16) AS signal_id,
+        b.signal_business_key,
+        b.rule_id,
+        r.rule_version,        -- ← from RULE_DEFINITION
+        b.party_id,
+        b.account_id,
+        r.severity,            -- ← from RULE_DEFINITION (not from the signal itself)
+        b.window_bucket,
+        b.last_txn_at AS fired_at,
+        b.metric_value,
+        b.threshold_value,
+        b.evidence_txn_ids,
+        b.detail
+    FROM SIGNALS_STREAM b
+    JOIN RULE_DEFINITION r ON r.rule_id = b.rule_id   -- look up severity + version
+) s
+ON t.signal_business_key = s.signal_business_key      -- THE IDEMPOTENT KEY
+WHEN MATCHED AND (evidence changed) THEN UPDATE SET ...
+WHEN NOT MATCHED THEN INSERT (...) VALUES (...);</code></pre>
+
+    <div class="example">
+      <strong>Output — New row in SIGNAL table:</strong>
+      <pre><code>| signal_id          | signal_business_key                         | rule_id                   | severity | party_id   | metric_value |
+|--------------------|---------------------------------------------|---------------------------|----------|------------|--------------|
+| SIG-4399c4c86db5   | STRUCTURING_CROSS_ACCOUNT|PTY-ABC123|2022-08-26 | STRUCTURING_CROSS_ACCOUNT | HIGH     | PTY-abc123 | 2.0000       |</code></pre>
+    </div>
+
+    <h4>Statement 2: INSERT into CASE_RECORD (if no open case for this party)</h4>
+    <pre><code>INSERT INTO EVIDENCE_CHAIN.CASE_RECORD (case_id, party_id, case_type, branch_region, opened_at)
+SELECT
+    'CASE-' || LEFT(SHA2(c.party_id || '|' || MIN(c.signal_business_key), 256), 16),
+    c.party_id,
+    'AML',                                -- case_type from routing.case_type_by_rule
+    p.branch_region,                      -- ← from DT_DIM_PARTY (NOT NULL constraint)
+    CURRENT_TIMESTAMP()
+FROM (signals owed a case) c
+LEFT JOIN DT_DIM_PARTY p ON p.party_id = c.party_id
+WHERE NOT EXISTS (
+    SELECT 1 FROM CASE_RECORD o
+    WHERE o.party_id = c.party_id
+    AND o.status IN ('OPEN', 'INVESTIGATING', 'DRAFTED')  -- open_case_statuses
+)
+GROUP BY c.party_id, p.branch_region;</code></pre>
+
+    <div class="example">
+      <strong>Output — New row in CASE_RECORD:</strong>
+      <pre><code>| case_id              | party_id   | case_type | status | branch_region | opened_at           |
+|----------------------|------------|-----------|--------|---------------|---------------------|
+| CASE-4399c4c86db5c6ea| PTY-abc123 | AML       | OPEN   | MUMBAI        | 2026-09-29 10:06:15 |</code></pre>
+    </div>
+
+    <h4>Statement 3: INSERT into CASE_SIGNAL (attach signal to case)</h4>
+    <pre><code>INSERT INTO EVIDENCE_CHAIN.CASE_SIGNAL (case_id, signal_id, attached_at)
+SELECT o.case_id, c.signal_id, CURRENT_TIMESTAMP()
+FROM (signals owed a case) c
+JOIN (earliest open case per party) o ON o.party_id = c.party_id;</code></pre>
+
+    <div class="example">
+      <strong>Output — New row in CASE_SIGNAL:</strong>
+      <pre><code>| case_id              | signal_id          | attached_at         |
+|----------------------|--------------------|---------------------|
+| CASE-4399c4c86db5c6ea| SIG-4399c4c86db5   | 2026-09-29 10:06:15 |</code></pre>
+    </div>
+
+    <h4>Statement 4: UPDATE case_type to CROSS_DOMAIN (if 2+ rule families)</h4>
+    <pre><code>-- Only fires if COUNT(DISTINCT rule_id) >= 2 across attached signals
+UPDATE CASE_RECORD c SET case_type = 'CROSS_DOMAIN'
+WHERE ... AND c.case_type IS DISTINCT FROM 'CROSS_DOMAIN';
+-- In our example: only 1 rule → stays AML, this UPDATE affects 0 rows.</code></pre>
+
+    <h4>Statement 5: COMMIT</h4>
+    <pre><code>COMMIT;
+-- Returns: {"signals_inserted":1, "signals_updated":0, "cases_opened":1, "signals_attached":1, "cases_escalated":0}</code></pre>
+
+    <div class="danger"><strong>Atomicity guarantee:</strong> If Statement 3 fails (e.g., a signal can't be attached), the entire transaction rolls back. SIGNAL and CASE_RECORD inserts are undone. The stream is unconsumed. The next task run sees the same changes and retries.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S5: COLLECT_CASE_EVIDENCE ===== -->
+<details id="s5">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S5</span><h2>collect_case_evidence — Evidence Assembly</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="sev-high">SERIAL</span> — called by the agent when analyst asks for an STR<br/>
+    <strong>Trigger:</strong> Analyst says "Generate STR for case CASE-4399c4c86db5c6ea"<br/>
+    <strong>Reads from:</strong> CASE_RECORD + SIGNAL + CASE_SIGNAL + DT_DIM_PARTY + DT_TRANSACTIONS_ENRICHED + V_POLICY_CLAUSE_CURRENT + RULE_DEFINITION<br/>
+    <strong>Writes to:</strong> EVIDENCE (pointer rows) + returns JSON to the agent</p>
+
+    <h3>The 8 SQL Queries Inside (Executed Sequentially)</h3>
+
+    <h4>Query 1: Get the case</h4>
+    <pre><code>SELECT party_id, case_type, branch_region
+FROM CASE_RECORD WHERE case_id = 'CASE-4399c4c86db5c6ea';
+-- Result: PTY-abc123, AML, MUMBAI</code></pre>
+
+    <h4>Query 2: Get all signals attached to this case</h4>
+    <pre><code>SELECT s.signal_id, s.rule_id, s.rule_version, s.severity,
+       s.metric_value, s.threshold_value, s.evidence_txn_ids, s.detail, s.fired_at
+FROM SIGNAL s
+JOIN CASE_SIGNAL cs ON cs.signal_id = s.signal_id
+WHERE cs.case_id = 'CASE-4399c4c86db5c6ea';
+-- Result: 1 row (our structuring signal)</code></pre>
+
+    <h4>Query 3: Flatten all evidence transaction IDs</h4>
+    <pre><code>SELECT ARRAY_AGG(DISTINCT t.VALUE::VARCHAR)
+FROM SIGNAL s
+JOIN CASE_SIGNAL cs ON cs.signal_id = s.signal_id,
+LATERAL FLATTEN(input => s.evidence_txn_ids) t
+WHERE cs.case_id = 'CASE-4399c4c86db5c6ea';
+-- Result: ["T-000000142-C", "T-000000187-C", "T-000000203-C"]</code></pre>
+
+    <h4>Query 4: Get party details from DT_DIM_PARTY</h4>
+    <pre><code>SELECT party_id, full_name, party_type, nationality, tax_id,
+       kyc_status, risk_rating, branch_region
+FROM DT_DIM_PARTY WHERE party_id = 'PTY-abc123';
+-- Result: Rajesh Kumar, INDIVIDUAL, IN, ABCPK1234A, VERIFIED, MEDIUM, MUMBAI</code></pre>
+
+    <h4>Query 5: Get the actual transactions (evidence)</h4>
+    <pre><code>SELECT txn_id, txn_date, amount_inr, channel, debit_party_name,
+       credit_party_name, is_cash, is_cross_border
+FROM DT_TRANSACTIONS_ENRICHED
+WHERE txn_id IN ('T-000000142-C', 'T-000000187-C', 'T-000000203-C')
+ORDER BY txn_timestamp;</code></pre>
+    <div class="example">
+      <strong>Output — 3 evidence transaction rows:</strong>
+      <pre><code>| txn_id        | date       | amount_inr | channel | is_cash |
+|---------------|------------|------------|---------|---------|
+| T-000000142-C | 2022-09-01 | 950000     | CASH    | TRUE    |
+| T-000000187-C | 2022-09-05 | 920000     | CASH    | TRUE    |
+| T-000000203-C | 2022-09-12 | 980000     | CASH    | TRUE    |</code></pre>
+    </div>
+
+    <h4>Query 6: Get policy clauses cited by the signals' rules</h4>
+    <pre><code>SELECT pc.clause_id, pc.document_title, pc.metric, pc.operator,
+       pc.threshold_lower, pc.threshold_upper, pc.action_required
+FROM V_POLICY_CLAUSE_CURRENT pc
+JOIN RULE_DEFINITION rd ON ARRAY_CONTAINS(pc.clause_id::VARIANT, rd.clause_ids)
+WHERE rd.rule_id = 'STRUCTURING_CROSS_ACCOUNT' AND rd.is_active;</code></pre>
+    <div class="example">
+      <strong>Output — 4 policy clause rows:</strong>
+      <pre><code>| clause_id                 | threshold_lower | threshold_upper | document_title               |
+|---------------------------|-----------------|-----------------|------------------------------|
+| CTR_CASH_THRESHOLD        | 1000000         | NULL            | PML Rules 2005, Rule 3(1)(A) |
+| STRUCTURING_BAND          | 0.90            | 0.999           | Internal TM-04               |
+| STRUCTURING_MIN_ACCOUNTS  | 2               | NULL            | Internal TM-04               |
+| STRUCTURING_WINDOW_DAYS   | 30              | NULL            | Internal TM-04               |</code></pre>
+    </div>
+
+    <h4>Query 7: Insert EVIDENCE pointer rows (side effect)</h4>
+    <pre><code>-- One pointer per party:
+INSERT INTO EVIDENCE (evidence_id, case_id, ref_type, ref_id, ref_table, as_of_ts, materiality, gathered_by)
+VALUES (UUID_STRING(), 'CASE-4399c4c86db5c6ea', 'PARTY', 'PTY-abc123',
+        'CURATED.DT_DIM_PARTY', CURRENT_TIMESTAMP(), 'PRIMARY', 'PROC:COLLECT_CASE_EVIDENCE');
+
+-- One pointer per transaction:
+INSERT INTO EVIDENCE (...) SELECT UUID_STRING(), ..., 'TRANSACTION', VALUE::VARCHAR,
+        'CURATED.DT_TRANSACTIONS_ENRICHED', ...
+FROM TABLE(FLATTEN(input => :v_all_txn_ids));  -- 3 rows inserted</code></pre>
+    <div class="info"><strong>These are pointers, not copies.</strong> <code>ref_type='TRANSACTION'</code>, <code>ref_id='T-000000142-C'</code>, <code>ref_table='CURATED.DT_TRANSACTIONS_ENRICHED'</code>. The evidence can be re-queried at any time using <code>AT(TIMESTAMP => as_of_ts)</code> for Time Travel.</div>
+
+    <h4>Query 8: Pre-compute all totals in SQL</h4>
+    <pre><code>-- Total amount (the LLM must use this exact number, never its own arithmetic):
+SELECT SUM(amount_inr) FROM DT_TRANSACTIONS_ENRICHED
+WHERE txn_id IN ('T-000000142-C', 'T-000000187-C', 'T-000000203-C');
+-- Result: 2850000
+
+-- Distinct accounts:
+SELECT COUNT(DISTINCT account_id) FROM DT_TRANSACTIONS_ENRICHED
+WHERE txn_id IN ('T-000000142-C', 'T-000000187-C', 'T-000000203-C');
+-- Result: 2</code></pre>
+
+    <div class="decision"><strong>Output:</strong> All 8 queries' results are assembled into a single JSON object (the STR-ready payload shown in Section 16). This JSON is returned to the agent, which passes it to <code>generate_str</code>.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S6: GENERATE_STR ===== -->
+<details id="s6">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S6</span><h2>generate_str — The LLM Call</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="sev-high">SERIAL</span> — depends on output of collect_case_evidence<br/>
+    <strong>Reads from:</strong> JSON input from previous stage<br/>
+    <strong>Writes to:</strong> STR_INPUT + STR_OUTPUT (audit trail)</p>
+
+    <h3>The 4 Operations Inside (Sequential)</h3>
+
+    <h4>Operation 1: Validate inputs (UDF call)</h4>
+    <pre><code>SELECT VALIDATE_STR_INPUTS(PARSE_JSON(:input_json));
+-- Checks 5 required fields: subject_name, suspicion_codes,
+-- suspicion_summary, transactions, accounts
+-- Returns: { "is_valid": true, "missing_fields": [] }</code></pre>
+
+    <h4>Operation 2: Insert audit trail</h4>
+    <pre><code>INSERT INTO STR_INPUT (
+    str_input_id, subject_name, subject_type, subject_id,
+    accounts, transactions, total_amount, transaction_count,
+    suspicion_codes, suspicion_summary, typology, case_id,
+    bank_name, branch_name, principal_officer
+) VALUES (
+    'inp-uuid-123', 'Rajesh Kumar', 'INDIVIDUAL', 'ABCPK1234A',
+    [...accounts JSON...], [...transactions JSON...], 2850000, 3,
+    ['D','E','F'], 'Auto-assembled from case...', 'AML',
+    'CASE-4399c4c86db5c6ea', 'Demo Bank Ltd.', 'MUMBAI', 'Priya Sharma, MLRO'
+);</code></pre>
+
+    <h4>Operation 3: Call the LLM</h4>
+    <pre><code>SELECT SNOWFLAKE.CORTEX.COMPLETE(
+    'claude-sonnet-4',                        -- model from conf/models.yml
+    '
+    You are a compliance officer generating a Suspicious Transaction Report (STR)
+    for filing with FIU-IND under PMLA 2002.
+    ...
+    PRE-COMPUTED FIGURES (use these exact values, do not recalculate):
+    Total amount: 2850000
+    Transaction count: 3
+    ...
+    &lt;input_data&gt;
+    { ...the full evidence JSON... }
+    &lt;/input_data&gt;
+    '
+);
+-- Returns: The STR narrative (markdown text, ~500-1000 words)</code></pre>
+    <div class="warn"><strong>XML delimiters</strong> (<code>&lt;input_data&gt;</code>) separate data from instructions. This is the prompt injection defense: any text in the data that looks like a command is treated as data, not as an instruction to the LLM.</div>
+
+    <h4>Operation 4: Store the output</h4>
+    <pre><code>INSERT INTO STR_OUTPUT (
+    str_output_id, str_input_id, str_narrative, str_json,
+    computed_values, validation_status, status, model_used
+) VALUES (
+    'out-uuid-456', 'inp-uuid-123',
+    'Between 01-Sep-2022 and 12-Sep-2022, the subject Rajesh Kumar...',  -- the narrative
+    { "subject_name": "Rajesh Kumar", "status": "DRAFT", ... },
+    { "total_amount": 2850000, "transaction_count": 3 },
+    'PASSED', 'DRAFT', 'claude-sonnet-4'
+);</code></pre>
+
+    <div class="example">
+      <strong>STR_OUTPUT table — What's stored:</strong>
+      <pre><code>| str_output_id | str_input_id | status | model_used     | validation_status | generated_at        |
+|---------------|--------------|--------|----------------|-------------------|---------------------|
+| out-uuid-456  | inp-uuid-123 | DRAFT  | claude-sonnet-4| PASSED            | 2026-09-29 10:07:30 |
+
+str_narrative: "Between 01-Sep-2022 and 12-Sep-2022, the subject..."  (full text)
+computed_values: {"total_amount": 2850000, "transaction_count": 3}    (from SQL, not LLM)</code></pre>
+    </div>
+
+    <div class="info"><strong>What happens next:</strong> The narrative is returned to the agent, which presents it to the analyst. If the analyst asks for a review, the agent calls <code>review_finding</code>.</div>
+  </div>
+</details>
+
+<!-- ===== STAGE S7: REVIEW_FINDING ===== -->
+<details id="s7">
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S7</span><h2>review_finding — The 4 Checks</h2></summary>
+  <div class="section-body">
+    <p><strong>Execution:</strong> <span class="sev-high">SERIAL</span> — depends on the finding existing<br/>
+    <strong>Reads from:</strong> FINDING + EVIDENCE + V_POLICY_CLAUSE_CURRENT<br/>
+    <strong>Writes to:</strong> REVIEW</p>
+
+    <h3>Check 1: Citation Resolution (SQL, deterministic)</h3>
+    <pre><code>-- Every evidence_id cited in the finding must exist in EVIDENCE table
+SELECT COUNT(*) FROM EVIDENCE e
+WHERE e.evidence_id IN (
+    SELECT VALUE::VARCHAR FROM TABLE(FLATTEN(input => :v_cited_evidence_ids))
+);
+-- Expected: cited_count = resolved_count (e.g., 4 cited, 4 resolved → PASS)</code></pre>
+
+    <h3>Check 2: Clause Validity (SQL, deterministic)</h3>
+    <pre><code>-- Every clause cited must be currently in force
+SELECT COUNT(*) FROM V_POLICY_CLAUSE_CURRENT pc
+WHERE pc.clause_id IN (
+    SELECT VALUE::VARCHAR FROM TABLE(FLATTEN(input => :v_cited_clause_ids))
+);
+-- Expected: clause_count = active_clause_count (e.g., 4 cited, 4 active → PASS)</code></pre>
+
+    <h3>Check 3: Computed Values Present (SQL, deterministic)</h3>
+    <pre><code>-- Simply checks that computed_values is not NULL
+LET v_numeric_passed BOOLEAN := (:v_computed_values IS NOT NULL);
+-- PASS if the finding carries pre-computed numbers from SQL</code></pre>
+
+    <h3>Check 4: LLM Review (Mistral, different model family)</h3>
+    <pre><code>SELECT SNOWFLAKE.CORTEX.COMPLETE(
+    'mistral-large2',            -- deliberately non-Anthropic
+    'You are a compliance review officer...
+     Review the following STR narrative:
+     &lt;narrative&gt;
+     ' || :v_narrative || '
+     &lt;/narrative&gt;
+     Respond with JSON: {decision, defects, consistency_ok, ...}'
+);
+-- Returns: {"decision": "APPROVE", "defects": []}</code></pre>
+
+    <h3>Final Decision Logic</h3>
+    <pre><code>LET v_decision VARCHAR := CASE
+    WHEN NOT :v_citation_passed THEN 'REJECT'    -- any deterministic check fails → REJECT
+    WHEN NOT :v_clause_passed   THEN 'REJECT'
+    WHEN :llm_decision = 'REJECT' THEN 'REJECT'  -- LLM finds defects → REJECT
+    ELSE 'APPROVE'
+END;</code></pre>
+
+    <h3>Write to REVIEW table</h3>
+    <pre><code>INSERT INTO REVIEW (
+    review_id, finding_id, reviewer_type, decision, defects_found, checks_run,
+    numeric_recompute_passed, citation_resolution_passed, clause_in_effect_passed,
+    reviewer_model, reviewed_at
+) VALUES (
+    'REV-uuid-789', 'FIND-001', 'ADVERSARIAL_AGENT', 'APPROVE', [],
+    {"citation_resolution": {"passed": true}, "clause_in_effect": {"passed": true}, ...},
+    TRUE, TRUE, TRUE, 'mistral-large2', CURRENT_TIMESTAMP()
+);</code></pre>
+
+    <div class="example">
+      <strong>REVIEW table — What's stored:</strong>
+      <pre><code>| review_id   | finding_id | decision | reviewer_type     | reviewer_model | citation_ok | clause_ok |
+|-------------|------------|----------|-------------------|----------------|-------------|-----------|
+| REV-uuid-789| FIND-001   | APPROVE  | ADVERSARIAL_AGENT | mistral-large2 | TRUE        | TRUE      |</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ===== STAGE S8: PARALLEL vs SERIAL MAP ===== -->
+<details id="s8" open>
+  <summary><span class="diagram-num" style="background:light-dark(#7c3aed,#5b21b6);">S8</span><h2>Parallel vs Serial Execution Map</h2></summary>
+  <div class="section-body">
+    <p>Complete view of what runs in parallel vs serial, with the table each operation reads and writes.</p>
+
+    <pre class="mermaid">
+flowchart TD
+    subgraph SERIAL1["SERIAL: Data Load"]
+        L1["COPY INTO RAW_TRANSACTIONS\n(from Parquet/CSV stage)"]
+        L2["COPY INTO RAW_PARTY_CBS"]
+        L3["COPY INTO RAW_PARTY_KYC"]
+        L4["COPY INTO RAW_ACCOUNTS"]
+    end
+
+    subgraph PAR1["PARALLEL: Snowflake DT Engine"]
+        DIM["DT_DIM_PARTY refreshes\n(DOWNSTREAM lag)\nReads: CBS + KYC"]
+        TXE["DT_TRANSACTIONS_ENRICHED refreshes\n(1-min lag)\nReads: RAW_TXN + ID_MAP + DIM + ACCT + CHANNEL"]
+    end
+
+    subgraph PAR2["PARALLEL: Three DTs read TXE independently"]
+        AGG["DT_TXN_DAILY_AGG\n(5-min lag)\nGROUP BY acct, date"]
+        REL["DT_PARTY_RELATIONSHIP\n(10-min lag)\n3 x UNION ALL"]
+        SIG["DT_SIGNALS_FAST\n(5-min lag)\nRule SQL + POLICY_CLAUSE"]
+    end
+
+    subgraph SERIAL2["SERIAL: Routing (triggered task)"]
+        STREAM["SIGNALS_STREAM captures new rows"]
+        ROUTE["ROUTE_SIGNALS procedure\n5 SQL statements\nSingle COMMIT"]
+    end
+
+    subgraph SERIAL3["SERIAL: Agent Tools (on analyst request)"]
+        CCE["collect_case_evidence\n8 sequential queries\nReads 6 tables"]
+        GEN["generate_str\n4 operations\nLLM call to Claude"]
+        REV["review_finding\n3 SQL checks + 1 LLM\nMistral reviews Claude"]
+        ATT["request_attestation\nSHA-256 hash\nCreate ARTIFACT"]
+    end
+
+    subgraph SERIAL4["SERIAL: Human Gate"]
+        MLRO["MLRO: INSERT INTO ATTESTATION\n(COMPLIANCE_OFFICER role only)"]
+    end
+
+    L1 & L2 & L3 & L4 --> DIM
+    L1 --> TXE
+    DIM --> TXE
+    TXE --> AGG & REL & SIG
+    SIG --> STREAM --> ROUTE
+    ROUTE --> CCE --> GEN --> REV --> ATT --> MLRO
+
+    style SERIAL1 fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    style PAR1 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style PAR2 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style SERIAL2 fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style SERIAL3 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style SERIAL4 fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    </pre>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Stage</th><th>Execution</th><th>Reads From</th><th>Writes To</th><th>Trigger</th></tr></thead>
+      <tbody>
+        <tr><td>Data Load</td><td><span class="sev-high">SERIAL</span></td><td>@DATA_STAGE (files)</td><td>RAW_* tables</td><td><code>riskcopilot load</code> CLI</td></tr>
+        <tr><td>DT_DIM_PARTY</td><td><span class="tag-yes">PARALLEL</span></td><td>RAW_PARTY_CBS + KYC</td><td>DT_DIM_PARTY</td><td>DOWNSTREAM (auto)</td></tr>
+        <tr><td>DT_TRANSACTIONS_ENRICHED</td><td><span class="tag-yes">PARALLEL</span></td><td>RAW_TXN + 4 joins</td><td>DT_TRANSACTIONS_ENRICHED</td><td>1-min lag (auto)</td></tr>
+        <tr><td>DT_TXN_DAILY_AGG</td><td><span class="tag-yes">PARALLEL</span></td><td>DT_TRANSACTIONS_ENRICHED</td><td>DT_TXN_DAILY_AGG</td><td>5-min lag (auto)</td></tr>
+        <tr><td>DT_PARTY_RELATIONSHIP</td><td><span class="tag-yes">PARALLEL</span></td><td>DT_TRANSACTIONS_ENRICHED + RAW_ACCOUNTS + RAW_REL</td><td>DT_PARTY_RELATIONSHIP</td><td>10-min lag (auto)</td></tr>
+        <tr><td>DT_SIGNALS_FAST</td><td><span class="tag-yes">PARALLEL</span></td><td>DT_TRANSACTIONS_ENRICHED + V_POLICY_CLAUSE_CURRENT</td><td>DT_SIGNALS_FAST</td><td>5-min lag (auto)</td></tr>
+        <tr><td>ROUTE_SIGNALS</td><td><span class="sev-high">SERIAL</span></td><td>SIGNALS_STREAM + RULE_DEF + DT_DIM_PARTY</td><td>SIGNAL + CASE_RECORD + CASE_SIGNAL</td><td>STREAM_HAS_DATA (auto)</td></tr>
+        <tr><td>collect_case_evidence</td><td><span class="sev-high">SERIAL</span></td><td>6 tables (8 queries)</td><td>EVIDENCE (pointers)</td><td>Analyst request</td></tr>
+        <tr><td>generate_str</td><td><span class="sev-high">SERIAL</span></td><td>JSON from prev stage</td><td>STR_INPUT + STR_OUTPUT</td><td>Agent orchestration</td></tr>
+        <tr><td>review_finding</td><td><span class="sev-high">SERIAL</span></td><td>FINDING + EVIDENCE + V_POLICY_CLAUSE</td><td>REVIEW</td><td>Analyst request</td></tr>
+        <tr><td>request_attestation</td><td><span class="sev-high">SERIAL</span></td><td>FINDING + REVIEW</td><td>ARTIFACT + CASE_RECORD</td><td>Analyst request</td></tr>
+        <tr><td>MLRO Attestation</td><td><span class="sev-high">SERIAL</span></td><td>ARTIFACT</td><td>ATTESTATION</td><td>Human decision</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="decision">
+      <strong>Key insight:</strong> The <strong>detection pipeline</strong> (DTs, stream, task) is fully automatic &mdash; no human triggers it. Snowflake's DT engine manages the parallel refreshes. The <strong>investigation pipeline</strong> (agent tools) is human-triggered and serial &mdash; each step depends on the previous step's output. The <strong>attestation</strong> is a structural human gate enforced by Snowflake privileges.
+    </div>
+
+    <div class="example">
+      <strong>Complete timeline for the Rajesh Kumar example:</strong>
+      <pre><code>T+0:00  COPY INTO RAW_TRANSACTIONS         ← 3 cash deposits land (SERIAL)
+T+0:01  DT_DIM_PARTY refreshes              ← CBS + KYC join (PARALLEL, DOWNSTREAM)
+T+0:01  DT_TRANSACTIONS_ENRICHED refreshes  ← 5-join enrichment (PARALLEL, 1-min)
+T+0:05  DT_TXN_DAILY_AGG refreshes          ← daily velocity buckets (PARALLEL, 5-min)
+T+0:05  DT_PARTY_RELATIONSHIP refreshes     ← graph edges (PARALLEL, 10-min)
+T+0:05  DT_SIGNALS_FAST refreshes            ← structuring rule fires! (PARALLEL, 5-min)
+T+0:06  SIGNALS_STREAM detects new row       ← automatic
+T+0:06  ROUTE_SIGNALS_TASK fires             ← MERGE + CASE + CASE_SIGNAL (SERIAL, 1 txn)
+                                              Output: SIGNAL row, CASE_RECORD row, CASE_SIGNAL row
+--- Detection complete. Case CASE-4399c4c86db5c6ea is OPEN. ---
+
+T+???   Analyst: "Generate STR for CASE-4399c4c86db5c6ea"
+        → collect_case_evidence              ← 8 queries, assembles JSON (SERIAL)
+        → generate_str                       ← Claude drafts narrative (SERIAL)
+        → review_finding                     ← 3 SQL checks + Mistral review (SERIAL)
+        → request_attestation                ← ARTIFACT created with SHA-256 (SERIAL)
+                                              Output: ARTIFACT row, case status = DRAFTED
+
+T+???   MLRO: INSERT INTO ATTESTATION        ← Human signs off (SERIAL, manual)
+                                              Output: ATTESTATION row, ready for FIU-IND filing</code></pre>
+    </div>
+  </div>
+</details>
+
+<p style="color: light-dark(#94a3b8, #64748b); font-size: 0.82em; margin-top: 32px; padding-top: 16px; border-top: 1px solid light-dark(#e2e8f0, #334155);">
+  Generated from the <strong>Risk &amp; Compliance Copilot</strong> codebase (<code>RiskRemoved_Snowflake/</code>) on 2026-09-29.
+  Source files: <code>conf/detection.yml</code>, <code>sql/rules/STRUCTURING_CROSS_ACCOUNT.sql</code>, <code>sql/02_dynamic_tables/*.sql</code>, <code>sql/03_streams_tasks/01_route_signals.sql</code>, <code>sql/08_agent/*.sql</code>.
+</p>
+
+<script>
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({
+      startOnLoad: true, securityLevel: 'strict',
+      theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+      flowchart: { useMaxWidth: true }, sequence: { useMaxWidth: true, wrap: true }
+    });
+  }
+</script>
+</body>
+</html>

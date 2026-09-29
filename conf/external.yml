@@ -16,7 +16,7 @@
 snowflake:
   # The connection name in ~/.snowflake/connections.toml. Overridden per
   # profile and by RC_SNOWFLAKE_CONNECTION.
-  connection_name: ASHWINRAVI004
+  connection_name: hqrwrxk-uz26728
   # Key-pair is the required auth method for anything unattended (automations,
   # CI). Interactive/SSO is fine for local development only.
   preferred_authenticator: SNOWFLAKE_JWT
