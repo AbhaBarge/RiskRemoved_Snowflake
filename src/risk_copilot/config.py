@@ -23,6 +23,7 @@ Two rules make this worth having rather than decoration:
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import os
 import re
 from functools import cached_property
@@ -30,7 +31,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from risk_copilot import ids
 
@@ -50,6 +58,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 #: ``TARGET_LAG`` accepts either a duration or the literal ``DOWNSTREAM``.
 _TARGET_LAG_RE = re.compile(r"^(DOWNSTREAM|\d+\s+(second|minute|hour|day)s?)$", re.IGNORECASE)
+_DURATION_RE = re.compile(r"^(\d+)\s+(second|minute|hour|day)s?$", re.IGNORECASE)
 _LAG_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
 _DOMAIN_FILES = {
@@ -384,8 +393,15 @@ class DynamicTableSpec(_Frozen):
         """The lag in seconds, or ``None`` for ``DOWNSTREAM``."""
         if self.target_lag == "DOWNSTREAM":
             return None
-        count, unit = self.target_lag.split()
-        return int(count) * _LAG_UNIT_SECONDS[unit.rstrip("s")]
+        return duration_seconds(self.target_lag)
+
+
+def duration_seconds(text: str) -> int:
+    """``'<n> second|minute|hour|day(s)'`` in seconds, the grammar ``TARGET_LAG`` uses."""
+    match = _DURATION_RE.match(str(text).strip())
+    if not match:
+        raise ConfigError(f"Invalid duration {text!r}; expected '<n> second|minute|hour|day(s)'")
+    return int(match.group(1)) * _LAG_UNIT_SECONDS[match.group(2).lower()]
 
 
 def _check_lag_graph(specs: dict[str, DynamicTableSpec]) -> None:
@@ -456,6 +472,80 @@ class StreamsTasks(_Frozen):
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="Stream/task object name")
+
+
+class ReplaySpec(_Frozen):
+    """``conf/generation.yml`` ``replay``: the hold-back and the replay pacing.
+
+    ``hold_back_from`` null means ``load`` loads everything and there is nothing
+    to replay. ``injections`` maps a ``replay --inject`` name to an
+    ``injection`` cohort key; the cohort's ``label`` selects its pending legs.
+    """
+
+    hold_back_from: dt.datetime | None
+    sim_step: str
+    sleep_seconds: float
+    batch_legs: int
+    injections: dict[str, str]
+
+    @field_validator("hold_back_from", mode="before")
+    @classmethod
+    def _moment(cls, v: Any) -> Any:
+        # YAML reads `2022-09-03` as a date: the hold-back starts at its midnight.
+        if isinstance(v, dt.date) and not isinstance(v, dt.datetime):
+            return dt.datetime(v.year, v.month, v.day)
+        return v
+
+    @field_validator("hold_back_from")
+    @classmethod
+    def _naive(cls, v: dt.datetime | None) -> dt.datetime | None:
+        if v is not None and v.tzinfo is not None:
+            raise ConfigError("replay.hold_back_from must be a naive timestamp (TIMESTAMP_NTZ)")
+        return v
+
+    @field_validator("sim_step")
+    @classmethod
+    def _step(cls, v: str) -> str:
+        if duration_seconds(v) <= 0:
+            raise ConfigError("replay.sim_step must be positive")
+        return v.strip().lower()
+
+    @field_validator("sleep_seconds")
+    @classmethod
+    def _sleep(cls, v: float) -> float:
+        if v < 0:
+            raise ConfigError("replay.sleep_seconds must be >= 0")
+        return v
+
+    @field_validator("batch_legs")
+    @classmethod
+    def _batch(cls, v: int) -> int:
+        if v < 1:
+            raise ConfigError("replay.batch_legs must be >= 1")
+        return v
+
+    @property
+    def sim_step_seconds(self) -> int:
+        return duration_seconds(self.sim_step)
+
+
+def _replay_spec(generation: dict[str, Any]) -> ReplaySpec:
+    raw = generation.get("replay")
+    if not isinstance(raw, dict):
+        raise ConfigError("conf/generation.yml has no `replay` block")
+    try:
+        spec = ReplaySpec(**raw)
+    except ValidationError as exc:
+        raise ConfigError(f"conf/generation.yml `replay`: {exc}") from exc
+    cohorts = generation.get("injection") or {}
+    for name, key in spec.injections.items():
+        cohort = cohorts.get(key)
+        if not isinstance(cohort, dict) or not cohort.get("label"):
+            raise ConfigError(
+                f"replay.injections.{name} names injection cohort {key!r}, which "
+                "conf/generation.yml `injection` does not define with a label"
+            )
+    return spec
 
 
 #: CASE_RECORD.case_type values a single rule can map to; CROSS_DOMAIN is derived.
@@ -591,6 +681,8 @@ class Settings(BaseModel):
                 )
         if self.detection.get("rules"):
             _check_routing(self.detection)
+        if "replay" in self.generation:
+            _replay_spec(self.generation)
         return self
 
     # ------------------------------------------------------------------ #
@@ -783,6 +875,11 @@ class Settings(BaseModel):
             raise ConfigError(
                 f"Unknown warehouse key {key!r}; expected one of {sorted(self.warehouses)}"
             ) from exc
+
+    @cached_property
+    def replay(self) -> ReplaySpec:
+        """The typed ``replay`` block of ``conf/generation.yml``."""
+        return _replay_spec(self.generation)
 
     @cached_property
     def connection_name(self) -> str:

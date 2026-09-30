@@ -104,6 +104,12 @@ re-asserts them at run time. They are not only recorded here.
 | M33 | **Recall 10/10 and precision 10/10 at party-month; the false-positive control does not fire.** The grain holds **494** party-months, all 2022-09: **14** illicit, **10** expecting the rule, and 4 illicit with no expected rule (AMLworld legs, which count against no rule). The 10 signals map to **10** party-months (D40), all in the grain and all expected: TP 10, FP 0 (legit 0, other typology 0, not in grain 0), missed 0, 0 unresolved evidence ids. Control: **1** party-month with a genuine in-band cash credit (P-600485713464, 2022-09, 1 account), **0** fired. Mapping by the window's start month instead would have scored **0/10** both ways: every signal's bucket is 2022-08-26, every one of its 101 evidence legs is in 2022-09 | `sql/verify/03_detection_metrics.sql` as the admin role; the pre-build probe reproduced the same counts by hand | D40 |
 | M34 | **The hero is confirmed, and the result is deterministic.** P-754971478708: `CONFIRMED_BY_DETECTION` with `STRUCTURING_CROSS_ACCOUNT\|P-754971478708\|2022-08-26` on `CASE-4399c4c86db5c6ea` (M31's case). Two runs wrote a byte-identical `demo_entity.dev.verified.yml` (SHA-256 `C7A1BDD3...`); generate's pin is unchanged (`30EFF57A...`, no git diff). The loaded injected legs carry the pin's seed, 20260922, and no other | Two live runs; file hashes | D41 |
 | M35 | **Verify leaves the pipeline as it found it.** After two runs: `SIGNALS_STREAM_DEV` empty (`SYSTEM$STREAM_HAS_DATA` false, not stale); SIGNAL / CASE_RECORD / CASE_SIGNAL still 10 / 10 / 10, with `MAX(last_seen_at)` unchanged at 2026-09-27 05:02:28; ROUTE_SIGNALS_TASK_DEV still suspended. `GROUND_TRUTH.EVAL_RUN` gained exactly 2 rows (`EVAL-94053aede26b40e8`, `EVAL-c93d61c8badc45b7`): suite DETECTION, passed TRUE, seed 20260922, commit `294265a...-dirty` (the uncommitted step-7 tree). Runs took 12.8 s and 3.2 s | Live, as the admin role | D39, D42 |
+| M36 | **The dev split, by measurement.** **0 of 5,032** pairs (source + injected) have legs at two timestamps, so a timestamp cut never splits a pair. The 10 bursts overlap, 4-6 days each; the hero's runs **09-03 04:54 .. 09-08 04:28** (10 deposits). At **2022-09-03 00:00**: 6,118 of 9,862 source and 182 of 202 injected legs are held back; 6 hosts (the hero among them) have nothing loaded, 2 still fire at load on partial evidence (P-326177607580 4 of 13 deposits, P-356847009882 3 of 11), 2 are below `STRUCTURING_MIN_ACCOUNTS`. At 09-02 00:00, 9 hosts are held whole and none grows during replay. Pacing over the 6,300 held legs: 1 h -> 192 ticks, max 112 legs; 3 h -> 64 / 220; **6 h -> 32 / 362**; 12 h -> 16 / 674; at most 10 legs share one timestamp. The planner reproduces 32 ticks / 362 on the real bundle | The hash-verified dev bundle, offline | D44, D45 |
+| M37 | **The hold-back load, then the first refresh.** `load --replace` (exit 0, run `c534508d17cbc503`): RAW_TRANSACTIONS **3,764** = 3,744 source + 20 promoted; held back **6,118** source (the DELETE count equals the bundle's) and **182** pending; every other table equals the manifest; M16 holds on the 3,744 loaded source legs (0 mismatches) and M28 on its pairs (38 unbalanced, 0 unexplained). One manual refresh of the signal table: `insertedRows 2, deletedRows 10`, **2 signals** (the two partial hosts, 4 and 3 evidence legs). `SIGNALS_STREAM` then held **8 DELETEs** (`ISUPDATE` false) and **2 DELETE+INSERT update pairs** (evidence 13 -> 4, 11 -> 3). With the 30 chain rows cleared (D46), `CALL ROUTE_SIGNALS(TRUE)` wrote 2 / 2 / 2, consumed the stream, and re-derived the baseline ids (`CASE-906bf50becb8febf`, `CASE-0d9ff34cd488cd25`) | Live, admin role | The stream carries a shrinking signal as an update pair, which the router reads as a re-fire (D37) |
+| M38 | **The triggered task routes the stream's delta and records its counts.** `ROUTE_SIGNALS_TASK_DEV` resumed 13:03:25 PDT (its first check SKIPPED: stream empty). Three SUCCEEDED runs, `RETURN_VALUE` from `SYSTEM$SET_RETURN_VALUE` in `TASK_HISTORY`: (1) 13:04:25, **8 s** after the refresh that followed `--inject`: `{signals_inserted 1, cases_opened 1, signals_attached 1, signals_updated 0, full_scan false}`, the hero's `CASE-4399c4c86db5c6ea` re-derived; (2) 13:50:00, fired by the signal table's **own scheduled refresh** (60-minute lag) after replay ticks 1-24: `{signals_inserted 7, signals_updated 2, cases_opened 7, signals_attached 7}` -- the 7 new hosts, and the 2 partial ones grown back; (3) 20:19:55, after ticks 25-32 and a manual refresh (5 update pairs): `{signals_updated 5}`. 3 SKIPPED runs in all, 0 FAILED. Suspended again afterwards; stream empty | `INFORMATION_SCHEMA.TASK_HISTORY` as the admin role | Closes M31's open item: the delta path and the return value are proven in real triggered runs |
+| M39 | **A replay interrupted by the machine sleeping leaves no partial tick, and resumes.** The first `replay` committed ticks 1-24 at about 1 s of work + 5 s sleep each; tick 25's INSERT ran at 13:07:54 PDT, and the machine entered Modern Standby (Kernel-Power 506 at 01:35:51 IST, 507 at 08:43:55). On waking, the statement failed with `390114 Authentication token has expired`; the ROLLBACK failed the same way and its message **hid the original error**. Afterwards: ticks 1-24 fully in, 25-32 fully absent, 0 duplicate txn_ids, no open transaction (Snowflake aborted the session's uncommitted transaction). A second `replay` skipped ticks 1-24, streamed 25-32 (1,598 legs) in **67 s**, exit 0: 6,300 of 6,300 legs arrived, 0 unresolved pending, 0 duplicates | Query history, TASK_HISTORY, the Windows System log | D49 |
+| M40 | **Hold-back + replay equals a full load.** `HASH_AGG` over RAW_TRANSACTIONS' 13 columns other than `ingested_at` (INFORMATION_SCHEMA order): before the step, on the full load, **(10,064, 3958693971320019007)**; after hold-back + `--inject` + replay, **(10,064, 3958693971320019007)**. SIGNAL ids, evidence sizes and all 10 case ids equal the pre-step baseline; pending 202 with 0 unresolved. `ingested_at` falls on another date than `txn_timestamp` for every one of the 6,300 replayed legs | Live, admin role; the baseline was taken read-only before any change | The replayed ledger is the batch ledger, so every metric computed on it holds for both |
+| M41 | **Verify after replay.** Exit 0: yield 10 within [1, 2000]; recall and precision 10/10, FP legit / other / not in grain 0 / 0 / 0, 0 missed, control 0 of 1 fired, 0 unresolved evidence; hero `CONFIRMED_BY_DETECTION` on `CASE-4399c4c86db5c6ea`. `demo_entity.dev.verified.yml` is **byte-identical** to the committed one (no git diff); EVAL_RUN `EVAL-c553902990bd4c5f`. Its refresh changed no signal, so the suspended task had nothing to fire on | `riskcopilot --profile dev verify` | Same numbers as M32-M34 on the replayed data |
 
 ---
 
@@ -154,6 +160,12 @@ re-asserts them at run time. They are not only recorded here.
 | D41 | 09-29 | **The hero result goes to a sibling file**, `conf/generated/demo_entity.<profile>.verified.yml` (`output.demo_entity_verified_file`), written only by `verify` and committed: status, party, seed, per-rule signal keys and case ids, missing rules, no clock time. Generate's pin is never rewritten | **User** | One writer per file: generate's pin stays byte-identical per seed, and the result is deterministic for the same data (M34). The result names the pin's party and seed, so a stale one is recognisable |
 | D42 | 09-29 | **One `GROUND_TRUTH.EVAL_RUN` row per verify run** (suite DETECTION): yield, metrics, hero, refresh result, git commit (`-dirty` when tracked files differ), seed, passed | **User** | "A number without a commit is not a result" (the table's own comment). GROUND_TRUTH is admin-only, which suits metrics computed from labels |
 | D43 | 09-29 | `verify` **refuses with exit 2**, before judging anything, a pin that disagrees with config (status, profile, seed, must-trigger rules) or loaded data built from another seed. A rule's false-positive control is an optional `sql/verify/controls/<rule_id>.sql`; without one the report says "none defined", not "0" | Build | Confirming a pin against another build's data would certify the wrong party. A mandatory control file would block registering a rule whose near-miss is not yet defined |
+| D44 | 09-29 | **Dev holds back from 2022-09-03 00:00** (`generation_overrides.replay.hold_back_from` in `dev.yml`); base is `null` (load everything), so demo holds nothing back until it sets its own | **User** (the "10-day film, the opening shown at load" explanation) | M36: a day boundary before the hero's first deposit that exercises all three routing paths -- new signals, grown signals, an injected burst |
+| D45 | 09-29 | **Pacing: `sim_step` 6 hours, `sleep_seconds` 5, `batch_legs` 500.** A tick is `[start, end)` on the `sim_step` grid from the cut; it ends early, at a timestamp boundary, when it would exceed `batch_legs`, and the next tick resumes the same step. A timestamp group larger than `batch_legs` is taken whole. The plan is made offline from the bundle | **User** chose the pacing; the tick rule is Build | M36: 32 ticks of at most 362 legs, a few minutes a run. Cutting only between timestamps never splits a pair; planning offline makes it deterministic and testable |
+| D46 | 09-29 | **For the task proof, the 30 EVIDENCE_CHAIN rows were cleared after the hold-back reload and rebuilt**: `CALL ROUTE_SIGNALS(TRUE)` for the signals the loaded data supports, then the task for the rest | **User** (the "wipe the whiteboard to watch it written again" explanation; confirmed again just before the DELETE) | With the rows kept, every triggered run would have routed signals SIGNAL already held, and proved only the plumbing. Deterministic ids made the rebuild a check in itself (M37, M40) |
+| D47 | 09-29 | **`replay --inject <name> [--party]` releases, then exits**; default party = the hero pin's (`verify.read_pin`, so a stale pin refuses). `replay.injections` maps the name to an `injection` cohort, whose `label` selects pending legs by pair. It refuses a non-host, and a burst already released | **User** | Easy to reason about and to test. Not safe to run beside a streaming replay: two sessions could both insert the same legs, since RAW's primary key is not enforced |
+| D48 | 09-29 | **The hold-back is applied inside `load`'s transaction**: COPY the whole file, DELETE the source legs at or after the cut, promote only pending legs before it; the post-load check compares the DELETE count with the bundle's own count. `--no-hold-back` loads everything. Promotion is one method, `Loader.promote(filters)`, for load, replay ticks and `--inject`, and its INSERT is anti-joined on `txn_id` | Build | COPY cannot filter rows, and the DELETE is never visible outside the transaction. One promotion path means "the same SQL as load" holds by construction; the anti-join makes a re-run insert nothing twice |
+| D49 | 09-30 | **A failed ROLLBACK no longer hides the original error**: replay and `--inject` report both, and say that Snowflake aborts the session's uncommitted transaction | Build | M39: the only message after the machine slept was the ROLLBACK's |
 
 ---
 
@@ -464,7 +476,7 @@ thin slice only; demo `load` stays refused while its manifest says `passed: fals
 | 5 | Dynamic tables for the structuring slice | **Done** |
 | 6 | `SIGNALS_STREAM` + `ROUTE_SIGNALS` | **Done** |
 | 7 | Post-load verify: signal_yield, hero promotion | **Done** |
-| 8 | Replay harness, docs | Next |
+| 8 | Replay harness, docs | **Done** |
 
 ## Findings made while planning (P1-P7)
 
@@ -886,3 +898,98 @@ In `test_policy_seed.py`: the rule row is unchanged by the role keys; the hash e
 | -- | One EVAL_RUN row per run | D42 |
 
 **Verification:** 519 passed; ruff, mypy (30 files), lint (dev + demo, 14 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 0 failed, 14 warnings.
+
+## Step 8 -- the replay harness (D44-D49)
+
+**Found before building** (offline on the bundle, and read-only live):
+- no pair has legs at two timestamps, and the hero's burst starts 09-03 04:54, which is M36 and the reason for D44;
+- the full-load fingerprint was taken **before** anything changed (M40's left side). The pre-step state was a full load, so the equivalence check needed one reload, not two;
+- COPY cannot filter rows, and `CREATE TABLE ... LIKE` would copy RAW_TRANSACTIONS' constraints and `ingested_at` onto the temporary table.
+
+**What changed**
+- `conf/generation.yml`: the `replay` block (`hold_back_from: null`, `sim_step: 6 hours`, `sleep_seconds: 5`, `batch_legs: 500`, `injections: {structuring_burst: structuring}`). `conf/profiles/dev.yml`: `hold_back_from: 2022-09-03 00:00:00` (D44). `generate`'s output does not depend on this block: the manifest records no config.
+- `config.py`:
+  - `duration_seconds()` is the one parser of the `<n> hour(s)` grammar, shared with `TARGET_LAG`;
+  - a typed `ReplaySpec`, exposed as `Settings.replay`, and checked at load when present. It refuses a bad duration, `batch_legs < 1`, a negative sleep, a zoned timestamp, and an injection naming an unknown cohort. A YAML date means that day's midnight.
+- `pipeline/load.py` (D48):
+  - `Loader(hold_back=...)` deletes the copied source legs at or after the cut and promotes only the pending legs before it, all in the load transaction;
+  - two new checks, "source legs held back for replay" and "injected legs promoted" net of the held-back ones;
+  - `promotion_sql` takes filters and is anti-joined on `txn_id`;
+  - `Loader.promote(filters)` is the one promotion path; `PendingFilter` / `window_filters` are its predicates;
+  - `upload_artifact` PUTs one bundle file to its content-addressed folder;
+  - `raw_fingerprint` is the `HASH_AGG` over every column but `ingested_at`, with the columns from INFORMATION_SCHEMA;
+  - the loader's helpers are public (`sql`, `scalar`, `table`), because replay uses them.
+- New `pipeline/replay.py`:
+  - `held_back_legs` / `plan_ticks`: the offline plan (D45);
+  - `Replayer.run`:
+    1. check the bundle's hashes;
+    2. plan;
+    3. PUT the bundle's RAW_TRANSACTIONS (skipped when it is already staged);
+    4. a zero-row CTAS into a session TEMPORARY table, then the loader's COPY into it, row count checked;
+    5. preflight: refuse a leg this bundle did not write, and a load that held back more;
+    6. skip the ticks already complete;
+    7. per tick, one transaction: `INSERT ... SELECT` of the window's source legs, anti-joined, whose count must equal the plan, then `promote` of the window's pending legs;
+    8. three post-replay checks: every planned leg arrived, 0 pending unresolved, no txn_id twice.
+
+    It never refreshes and never routes.
+  - `inject`: one host's pending cohort legs, selected by pair through RAW_ACCOUNTS, in one transaction (D47);
+  - `_roll_back` (D49).
+- `cli.py`:
+  - `load --hold-back/--no-hold-back` (default on); `load` prints the cut;
+  - `replay` replaces the stub: it streams with a line per tick, and `--inject NAME [--party P]` releases and exits;
+  - before connecting, `replay` refuses `--party` without `--inject` (exit 2) and a null hold-back (exit 2).
+- `pyproject.toml`: S608 ignored for `replay.py`, for the loader's reason.
+
+**Live, on RISK_COPILOT_DEV** (each ASK answered by the user before the step ran):
+
+| # | Step | Result |
+|---|---|---|
+| 0 | Baseline, read-only | fingerprint (10,064, 3958693971320019007); chain 10 / 10 / 10; stream empty; task suspended |
+| 1 | `load --replace` with the hold-back | exit 0, M37 |
+| 2 | Refresh | 2 signals; stream 8 DELETE + 2 update pairs (M37) |
+| 3 | Clear the 30 chain rows, `CALL ROUTE_SIGNALS(TRUE)` | 2 / 2 / 2, stream consumed, baseline ids (M37) |
+| 4 | Resume the task | resumed only because step 3 gave 2 / 2 / 2 with an empty stream |
+| 5 | `replay --inject structuring_burst`, refresh | 20 legs released (09-03 04:54 .. 09-08 04:28); run 1 (M38) |
+| 6 | `replay` | ticks 1-24, then the machine slept (M39); run 2 fired by the scheduled refresh (M38) |
+| 6b | `replay` again | 24 skipped, 25-32 streamed, exit 0 (M39) |
+| 7 | Refresh, then suspend the task | run 3 (M38); task suspended, stream empty |
+| 8 | Fingerprint and ids | equal to step 0 (M40) |
+| 9 | `verify` | exit 0, verified file byte-identical (M41) |
+
+**Tests:** 555 passed, 3 skipped. This step started on `bb85ba8`, not `f1308a3`: on 09-29 at 22:22 IST, a `pull --rebase` put two commits under step 7, "Agent Design" and "Signal Rules" (neither part of this build). "Signal Rules" changed `conf/external.yml` `connection_name` from `ASHWINRAVI004` to `hqrwrxk-uz26728`. With no capability evidence for that connection, 3 capability tests skip. At `bb85ba8`, 519 tests are collected: 516 pass and 3 skip. At `f1308a3`, all 519 passed. The live runs are unaffected: `.env`'s `RC_SNOWFLAKE_CONNECTION` overrides the file, and every session was verified on ZC14131 / RISK_COPILOT_DEV as RC_ADMIN_DEV. New `tests/unit/test_replay.py` (39). Its session is a small simulator that holds RAW, the pending table and the temporary table, and applies BEGIN / ROLLBACK:
+- **config:** both profiles resolve; a YAML date means midnight; 7 refusals; a missing block; the duration grammar;
+- **the plan:** the tick grid; a full step cut early at a timestamp boundary, then the same step resumed; an oversized timestamp group kept whole; every leg in exactly one tick, with contiguous ticks and a deterministic plan; both files read in timestamp order;
+- **the load hold-back:**
+  - DELETE after COPY and before promotion, inside the transaction, with the cut bound;
+  - a DELETE of the wrong rows rolls back;
+  - promotion is anti-joined and carries its filters;
+- **streaming:**
+  - every held-back leg arrives, one sleep between executed ticks, and one transaction per tick;
+  - **hold-back + replay equals a full load**, by fingerprint too;
+  - a crash mid-tick rolls back, and the restart skips only the finished ticks;
+  - a second replay writes nothing;
+  - foreign rows are refused, as is a load that held back more, or a profile with no hold-back;
+  - the source goes through the temporary table (CTAS `LIMIT 0`, COPY with the ms cast, FORCE);
+  - `ingested_at` is never written;
+  - no CALL, EXECUTE TASK, RESUME, refresh or MERGE, and no stream or task name;
+  - no rendered 4+ digit value or quoted literal;
+  - a count other than planned rolls back;
+  - a failed ROLLBACK keeps the original error;
+- **`--inject`:** releases one host's pairs and leaves the other host waiting; inject-then-replay inserts nothing twice; refuses a non-host, a burst already released and an unknown name;
+- **the fingerprint** leaves out `ingested_at`;
+- **the CLI:** refuses `--party` alone and demo's null hold-back without opening a session.
+
+**Departures from the plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| Source legs at or after the cut "are not loaded" | COPY all, then DELETE inside the load transaction; injected legs after the cut are held back too | COPY cannot filter rows (D48). Holding back only source legs would have loaded the hero's burst |
+| `ROUTE_SIGNALS(TRUE)` run "by the replay harness" (D36) | Replay never routes; the full scan ran once by hand after the reload | A full scan inside replay would consume the stream the task had to prove it routes |
+| Equivalence: a full load vs hold-back + replay, two reloads | The pre-step state was the full load; its fingerprint was taken before the one reload | Same comparison, half the destructive steps |
+| Temporary table for the source legs | A zero-row CTAS of the file's columns, not `LIKE` | `LIKE` copies RAW's constraints and `ingested_at` |
+| -- | The evidence chain cleared and rebuilt | D46 |
+| -- | ROLLBACK-failure reporting | D49, found live (M39) |
+
+**Credits and state left behind:** the task is suspended again (it ran 3 times, plus 3 SKIPPED checks); the stream is empty; the five dynamic tables are ACTIVE on their 60-minute dev lags. The dev data equals the full load again (M40), so a plain `load` without `--replace` would refuse. To repeat the demo, run `load --replace` (hold-back), then refresh, then `replay`.
+
+**Verification:** 555 passed, 3 skipped; ruff, mypy (31 files), lint (dev + demo, 14 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 51 checks, 0 failed, 14 warnings.

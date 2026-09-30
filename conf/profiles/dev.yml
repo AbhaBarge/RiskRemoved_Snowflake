@@ -75,6 +75,13 @@ generation_overrides:
   validation:
     signal_yield:
       min_detections_per_rule: 1
+  replay:
+    # Measured (M36, D44): the hero's burst starts 2022-09-03 04:54, so it is
+    # held back whole. Load then holds 3,744 of 9,862 source legs and 20 of 202
+    # injected ones: 2 hosts already fire, 2 are below STRUCTURING_MIN_ACCOUNTS,
+    # and 6 (the hero among them) have nothing loaded. Replay therefore routes
+    # new signals, grown signals and an injected burst.
+    hold_back_from: 2022-09-03 00:00:00
 
 ml_overrides:
   tier1:

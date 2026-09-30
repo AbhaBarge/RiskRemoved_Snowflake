@@ -535,6 +535,35 @@ output:
   demo_entity_verified_file: "conf/generated/demo_entity.{profile}.verified.yml"
 
 # ---------------------------------------------------------------------------
+# Replay harness (`riskcopilot replay`, Phase 3 step 8). Loading is split in
+# time: `load` holds back every leg, source or injected, timestamped at or after
+# hold_back_from, and `replay` streams them in afterwards as if they were
+# arriving live. Nothing here changes what `generate` writes.
+#
+#   * The split is by timestamp, and no pair has legs at two timestamps
+#     (measured, M36), so a pair is never split.
+#   * Each replay tick releases one sim_step of simulated time, then sleeps
+#     sleep_seconds. A tick is cut early, at a timestamp boundary, if it would
+#     exceed batch_legs, so a burst of activity cannot make one tick huge.
+#   * `replay --inject <name>` releases one host's pending cohort legs at once
+#     (default: the hero pin's party). It releases data generate already wrote:
+#     the labels exist, so evaluation stays exact. Not safe to run while a
+#     streaming replay is running in another session.
+#   * `replay` never refreshes a dynamic table and never routes: the target lag,
+#     or `verify`, refreshes; the routing task routes.
+# ---------------------------------------------------------------------------
+replay:
+  # null: load everything, nothing to replay. Profiles set the split (dev.yml).
+  hold_back_from: null
+  sim_step: 6 hours
+  sleep_seconds: 5
+  # Measured at the dev split (M36): at most 362 legs fall in one 6-hour step.
+  batch_legs: 500
+  # `--inject` name -> `injection` cohort key.
+  injections:
+    structuring_burst: structuring
+
+# ---------------------------------------------------------------------------
 # GAP-07 -- realism validation. These are ASSERTED, not claimed. `riskcopilot
 # generate` fails if a gate with fail_build: true is violated.
 # The AMLworld base rate is 0.102% (5,177 of 5,078,345, M5); subgraph sampling

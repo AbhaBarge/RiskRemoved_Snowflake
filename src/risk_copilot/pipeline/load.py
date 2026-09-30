@@ -15,8 +15,11 @@ Order of operations, each step refusing rather than guessing:
    ground-truth stage and nowhere else, the AMLworld CSVs to the data stage.
    Paths are content-addressed (manifest hash, source SHA-256), so a re-upload
    of the same content is skipped by name.
-4. **One transaction:** ``replace`` deletes; COPY every table; promote the
-   injected legs; verify. Any failure rolls the whole load back.
+4. **One transaction:** ``replace`` deletes; COPY every table; hold back the
+   source legs at or after ``hold_back`` (COPY cannot filter rows, so they are
+   deleted before commit and never become visible); promote the injected legs
+   before ``hold_back``; verify. Any failure rolls the whole load back.
+   ``riskcopilot replay`` streams the held-back legs in later.
 
 COPY never interpolates a value taken from a data file. Column lists come from
 the live ``INFORMATION_SCHEMA`` and are validated as identifiers; casts come
@@ -32,6 +35,7 @@ statement.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
@@ -67,6 +71,12 @@ AMLWORLD_ACCOUNTS = "RAW_AMLWORLD_ACCOUNTS"
 TRANSACTIONS = "RAW_TRANSACTIONS"
 PENDING = "INJECTED_TXN_PENDING"
 LABELS = "TXN_LABELS"
+
+#: The leg timestamp every hold-back and replay window is cut on.
+TXN_TIMESTAMP = "txn_timestamp"
+#: RAW_TRANSACTIONS' arrival time: its default, so it differs under replay and is
+#: left out of the equivalence fingerprint.
+INGESTED_AT = "INGESTED_AT"
 
 #: Stage-path segment for the AMLworld source files.
 SOURCE_PREFIX = "amlworld"
@@ -166,6 +176,22 @@ def check_bundle(bundle: Bundle, settings: Settings) -> None:
                 f"{a.path}: content differs from manifest.json (rows {table.num_rows} vs "
                 f"{a.rows}, or hash). The file changed after generation; regenerate."
             )
+
+
+def held_back_counts(bundle: Bundle, cut: dt.datetime) -> tuple[int, int]:
+    """(source legs, injected legs) the bundle timestamps at or after ``cut``."""
+
+    def count(zone: str, table: str) -> int:
+        path = bundle.artifact(zone, table).path
+        stamps = pq.read_table(path, columns=[TXN_TIMESTAMP]).column(0).to_pylist()
+        return sum(1 for t in stamps if t >= cut)
+
+    return count("raw", TRANSACTIONS), count("ground_truth", PENDING)
+
+
+def bind_timestamp(moment: dt.datetime) -> str:
+    """A naive timestamp as a bind value; the SQL casts it with ``::TIMESTAMP_NTZ``."""
+    return moment.isoformat(sep=" ")
 
 
 # --------------------------------------------------------------------------- #
@@ -286,10 +312,15 @@ _PROMOTED = (
 )
 
 
-def promotion_sql(fq_transactions: str, fq_pending: str, fq_clauses: str) -> str:
+def promotion_sql(
+    fq_transactions: str, fq_pending: str, fq_clauses: str, filters: Sequence[str] = ()
+) -> str:
     """Pending legs -> RAW_TRANSACTIONS, rupees resolved from the clause in force.
 
-    Binds: rounding decimals (twice). The threshold is joined, never written.
+    Binds: rounding decimals (twice), then each filter's values. The threshold is
+    joined, never written. ``filters`` narrow the pending rows (a hold-back, a
+    replay window, one host); a leg already in RAW is never inserted twice, so a
+    restarted replay cannot duplicate one.
     """
     amount = "ROUND(p.amount_sign * p.amount_ctr_ratio * c.threshold_lower, ?)"
     select = [
@@ -300,8 +331,35 @@ def promotion_sql(fq_transactions: str, fq_pending: str, fq_clauses: str) -> str
         f"SELECT {', '.join(select)}\n"
         f"FROM {fq_pending} p\n"
         f"JOIN {fq_clauses} c ON c.clause_id = p.ctr_clause_id\n"
-        "WHERE p.resolved_at IS NULL"
+        "WHERE p.resolved_at IS NULL\n"
+        + "".join(f"  AND {f}\n" for f in filters)
+        + f"  AND NOT EXISTS (SELECT 1 FROM {fq_transactions} r WHERE r.txn_id = p.txn_id)"
     )
+
+
+@dataclass(frozen=True)
+class PendingFilter:
+    """A predicate on INJECTED_TXN_PENDING rows. ``{p}`` stands for the qualifier."""
+
+    sql: str
+    params: tuple[Any, ...] = ()
+
+    def render(self, qualifier: str = "") -> str:
+        return self.sql.format(p=qualifier)
+
+
+def window_filters(start: dt.datetime | None, end: dt.datetime | None) -> list[PendingFilter]:
+    """Pending legs timestamped in ``[start, end)``; either bound may be open."""
+    out = []
+    if start is not None:
+        out.append(
+            PendingFilter(f"{{p}}{TXN_TIMESTAMP} >= ?::TIMESTAMP_NTZ", (bind_timestamp(start),))
+        )
+    if end is not None:
+        out.append(
+            PendingFilter(f"{{p}}{TXN_TIMESTAMP} < ?::TIMESTAMP_NTZ", (bind_timestamp(end),))
+        )
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -322,6 +380,8 @@ class LoadReport:
     run_key: str
     rows: dict[str, int] = field(default_factory=dict)
     checks: list[Check] = field(default_factory=list)
+    #: The cut, when legs were held back for ``riskcopilot replay``.
+    held_back_from: dt.datetime | None = None
 
     @property
     def ok(self) -> bool:
@@ -339,12 +399,15 @@ class Loader:
         data_root: Path | None = None,
         replace: bool = False,
         source: bool = True,
+        hold_back: dt.datetime | None = None,
     ) -> None:
         self.settings = settings
         self.session = session
         self.data_root = data_root or settings.repo_root
         self.replace = replace
         self.source = source
+        #: Legs at or after this are left for replay; ``None`` loads everything.
+        self.hold_back = hold_back
         ctx = settings.sql_context()
         self.fq: Mapping[str, str] = ctx["fq"]
         self.stage: Mapping[str, str] = ctx["stage"]
@@ -360,14 +423,14 @@ class Loader:
 
     # ---- helpers ---------------------------------------------------------- #
 
-    def _sql(self, sql: str, params: Sequence[Any] | None = None) -> list[Any]:
+    def sql(self, sql: str, params: Sequence[Any] | None = None) -> list[Any]:
         return execute(self.session, sql, params)
 
-    def _scalar(self, sql: str, params: Sequence[Any] | None = None) -> Any:
-        rows = self._sql(sql, params)
+    def scalar(self, sql: str, params: Sequence[Any] | None = None) -> Any:
+        rows = self.sql(sql, params)
         return rows[0][0] if rows else None
 
-    def _table(self, zone: str, table: str) -> str:
+    def table(self, zone: str, table: str) -> str:
         return f"{self.fq[ZONES[zone][0]]}.{table}"
 
     def _stage(self, zone: str) -> str:
@@ -383,15 +446,15 @@ class Loader:
 
     def target_tables(self, bundle: Bundle) -> list[str]:
         """Every table this load writes, fully qualified."""
-        tables = [self._table(a.zone, a.table) for a in bundle.artifacts]
+        tables = [self.table(a.zone, a.table) for a in bundle.artifacts]
         if self.source:
-            tables += [self._table("raw", AMLWORLD_TRANS), self._table("raw", AMLWORLD_ACCOUNTS)]
+            tables += [self.table("raw", AMLWORLD_TRANS), self.table("raw", AMLWORLD_ACCOUNTS)]
         return tables
 
     def columns(self, schema_key: str) -> dict[str, dict[str, Column]]:
         """Live column types per table of one schema, from INFORMATION_SCHEMA."""
         db, schema = self.fq[schema_key].split(".")
-        rows = self._sql(
+        rows = self.sql(
             f"SELECT table_name, column_name, data_type, numeric_precision, numeric_scale "
             f"FROM {db}.INFORMATION_SCHEMA.COLUMNS WHERE table_schema = ?",
             [schema],
@@ -412,7 +475,7 @@ class Loader:
         live = {"raw": raw_cols, "ground_truth": gt_cols}
         for a in bundle.artifacts:
             if a.table not in live[a.zone]:
-                raise LoadError(f"{self._table(a.zone, a.table)} does not exist; deploy ddl first")
+                raise LoadError(f"{self.table(a.zone, a.table)} does not exist; deploy ddl first")
 
         if self.source:
             scales = {
@@ -434,7 +497,7 @@ class Loader:
             raise LoadError(f"{PENDING}: currencies {currencies}; only {self.base_currency}")
         clauses = f"{self.fq['governance']}.V_POLICY_CLAUSE_CURRENT"
         for clause_id in clause_ids:
-            found = self._scalar(f"SELECT COUNT(*) FROM {clauses} WHERE clause_id = ?", [clause_id])
+            found = self.scalar(f"SELECT COUNT(*) FROM {clauses} WHERE clause_id = ?", [clause_id])
             if found != 1:
                 raise LoadError(
                     f"Clause {clause_id!r} is not in force in V_POLICY_CLAUSE_CURRENT ({found} "
@@ -442,7 +505,7 @@ class Loader:
                 )
 
         gt_stage = self._stage("ground_truth").removeprefix("@")
-        grants = [r.as_dict() for r in self._sql(f"SHOW GRANTS ON STAGE {gt_stage}")]
+        grants = [r.as_dict() for r in self.sql(f"SHOW GRANTS ON STAGE {gt_stage}")]
         other = [
             (g["privilege"], g["grantee_name"]) for g in grants if g["privilege"] != "OWNERSHIP"
         ]
@@ -452,7 +515,7 @@ class Loader:
         occupied = [
             (t, n)
             for t in self.target_tables(bundle)
-            if (n := self._scalar(f"SELECT COUNT(*) FROM {t}"))
+            if (n := self.scalar(f"SELECT COUNT(*) FROM {t}"))
         ]
         if occupied and not self.replace:
             raise LoadError(
@@ -470,11 +533,16 @@ class Loader:
         (result,) = results
         return f"{stage_dir}/{result.target}"
 
+    def upload_artifact(self, bundle: Bundle, zone: str, table: str) -> str:
+        """PUT one bundle file to its content-addressed folder; return the staged path."""
+        a = bundle.artifact(zone, table)
+        stage_dir = f"{self._stage(a.zone)}/{self.settings.profile}/{bundle.run_key}/{a.zone}"
+        return self._put(a.path, stage_dir, compress=False)
+
     def upload(self, bundle: Bundle) -> dict[str, str]:
         staged: dict[str, str] = {}
         for a in bundle.artifacts:
-            stage_dir = f"{self._stage(a.zone)}/{self.settings.profile}/{bundle.run_key}/{a.zone}"
-            staged[f"{a.zone}/{a.table}"] = self._put(a.path, stage_dir, compress=False)
+            staged[f"{a.zone}/{a.table}"] = self.upload_artifact(bundle, a.zone, a.table)
         if self.source:
             for ds, table in self._sources():
                 stage_dir = (
@@ -492,9 +560,9 @@ class Loader:
             schema = pq.read_schema(a.path)
             exprs = select_expressions(schema, target, a.table)
             names = [target[validate_identifier(f.name, what="File column")].name for f in schema]
-            self._sql(
+            self.sql(
                 copy_parquet_sql(
-                    self._table(a.zone, a.table),
+                    self.table(a.zone, a.table),
                     names,
                     staged[f"{a.zone}/{a.table}"],
                     self.parquet_format,
@@ -502,75 +570,107 @@ class Loader:
                 )
             )
         if self.source:
-            self._sql(
+            self.sql(
                 amlworld_trans_copy_sql(
-                    self._table("raw", AMLWORLD_TRANS),
+                    self.table("raw", AMLWORLD_TRANS),
                     staged[f"source/{AMLWORLD_TRANS}"],
                     self.csv_format,
                     self.timestamp_format,
                     self.amount_scale,
                 )
             )
-            self._sql(
+            self.sql(
                 amlworld_accounts_copy_sql(
-                    self._table("raw", AMLWORLD_ACCOUNTS),
+                    self.table("raw", AMLWORLD_ACCOUNTS),
                     staged[f"source/{AMLWORLD_ACCOUNTS}"],
                     self.csv_format,
                 )
             )
 
-    def _promote(self) -> int:
-        pending = self._table("ground_truth", PENDING)
+    def promote(self, filters: Sequence[PendingFilter] = ()) -> int:
+        """Promote the unresolved pending legs ``filters`` select, inside the caller's txn.
+
+        Refuses unless every selected leg is inserted, then marks them resolved.
+        Load, replay and ``replay --inject`` all promote through here.
+        """
+        pending = self.table("ground_truth", PENDING)
         clauses = f"{self.fq['governance']}.V_POLICY_CLAUSE_CURRENT"
-        waiting = self._scalar(f"SELECT COUNT(*) FROM {pending} WHERE resolved_at IS NULL")
-        rows = self._sql(
-            promotion_sql(self._table("raw", TRANSACTIONS), pending, clauses),
-            [self.decimals, self.decimals],
+        where = "".join(f" AND {f.render()}" for f in filters)
+        params = [v for f in filters for v in f.params]
+        waiting = self.scalar(
+            f"SELECT COUNT(*) FROM {pending} WHERE resolved_at IS NULL{where}", params or None
+        )
+        rows = self.sql(
+            promotion_sql(
+                self.table("raw", TRANSACTIONS),
+                pending,
+                clauses,
+                [f.render("p.") for f in filters],
+            ),
+            [self.decimals, self.decimals, *params],
         )
         inserted = int(rows[0][0]) if rows else 0
         if inserted != waiting:
             raise LoadError(
                 f"Promoted {inserted} of {waiting} pending legs: some name a clause that is not "
-                "in force. Nothing is committed."
+                "in force, or are already in RAW_TRANSACTIONS. Nothing is committed."
             )
-        self._sql(
+        self.sql(
             f"UPDATE {pending} SET resolved_at = CURRENT_TIMESTAMP() WHERE resolved_at IS NULL"
+            f"{where}",
+            params or None,
         )
         return inserted
+
+    def _hold_back(self) -> int:
+        """Delete the copied source legs at or after the cut; they are replay's."""
+        if self.hold_back is None:
+            return 0
+        rows = self.sql(
+            f"DELETE FROM {self.table('raw', TRANSACTIONS)} "
+            f"WHERE {TXN_TIMESTAMP} >= ?::TIMESTAMP_NTZ",
+            [bind_timestamp(self.hold_back)],
+        )
+        return int(rows[0][0]) if rows else 0
 
     def run(self, bundle: Bundle) -> LoadReport:
         check_bundle(bundle, self.settings)
         self.preflight(bundle)
         staged = self.upload(bundle)
-        report = LoadReport(run_key=bundle.run_key)
-        self._sql("BEGIN")
+        report = LoadReport(run_key=bundle.run_key, held_back_from=self.hold_back)
+        self.sql("BEGIN")
         try:
             if self.replace:
                 for table in self.target_tables(bundle):
-                    self._sql(f"DELETE FROM {table}")
+                    self.sql(f"DELETE FROM {table}")
             self._copy_all(bundle, staged)
-            promoted = self._promote()
+            held = self._hold_back()
+            promoted = self.promote(window_filters(None, self.hold_back))
             report.rows = {
-                t: int(self._scalar(f"SELECT COUNT(*) FROM {t}"))
-                for t in self.target_tables(bundle)
+                t: int(self.scalar(f"SELECT COUNT(*) FROM {t}")) for t in self.target_tables(bundle)
             }
-            report.checks = self.verify(bundle, promoted, report.rows)
+            report.checks = self.verify(bundle, promoted, report.rows, held)
             if not report.ok:
                 failed = [c.name for c in report.checks if not c.ok]
                 raise LoadError(f"Post-load checks failed: {failed}")
         except BaseException:
-            self._sql("ROLLBACK")
+            self.sql("ROLLBACK")
             raise
-        self._sql("COMMIT")
+        self.sql("COMMIT")
         return report
 
     # ---- verification ------------------------------------------------------- #
 
-    def verify(self, bundle: Bundle, promoted: int, rows: Mapping[str, int]) -> list[Check]:
+    def verify(
+        self, bundle: Bundle, promoted: int, rows: Mapping[str, int], held: int = 0
+    ) -> list[Check]:
         checks: list[Check] = []
+        planned_source, planned_pending = (
+            held_back_counts(bundle, self.hold_back) if self.hold_back is not None else (0, 0)
+        )
         for a in bundle.artifacts:
-            table = self._table(a.zone, a.table)
-            expected = a.rows + (promoted if a.table == TRANSACTIONS else 0)
+            table = self.table(a.zone, a.table)
+            expected = a.rows + (promoted - held if a.table == TRANSACTIONS else 0)
             checks.append(
                 Check(
                     f"rows {a.zone}.{a.table}",
@@ -583,15 +683,24 @@ class Loader:
         checks.append(
             Check(
                 "injected legs promoted",
-                promoted == pending_rows,
+                promoted == pending_rows - planned_pending,
                 f"{promoted}",
-                f"pending {pending_rows}",
+                f"pending {pending_rows}, held back {planned_pending}",
             )
         )
+        if self.hold_back is not None:
+            checks.append(
+                Check(
+                    "source legs held back for replay",
+                    held == planned_source,
+                    f"{held:,}",
+                    f"bundle has {planned_source:,} at or after {self.hold_back}",
+                )
+            )
 
-        tx = self._table("raw", TRANSACTIONS)
-        labels = self._table("ground_truth", LABELS)
-        unlabelled = self._scalar(
+        tx = self.table("raw", TRANSACTIONS)
+        labels = self.table("ground_truth", LABELS)
+        unlabelled = self.scalar(
             f"SELECT COUNT(*) FROM {tx} t LEFT JOIN {labels} l ON l.txn_id = t.txn_id "
             "WHERE l.txn_id IS NULL"
         )
@@ -599,8 +708,8 @@ class Loader:
 
         if self.source:
             ledger, accounts = self._sources()
-            trans = self._table("raw", AMLWORLD_TRANS)
-            n, illicit = self._sql(f"SELECT COUNT(*), SUM(is_laundering) FROM {trans}")[0]
+            trans = self.table("raw", AMLWORLD_TRANS)
+            n, illicit = self.sql(f"SELECT COUNT(*), SUM(is_laundering) FROM {trans}")[0]
             checks.append(
                 Check(
                     "ledger rows (M5)",
@@ -611,7 +720,7 @@ class Loader:
                     f"{ledger[0].require('laundering_rows'):,}",
                 )
             )
-            n_acc = self._scalar(f"SELECT COUNT(*) FROM {self._table('raw', AMLWORLD_ACCOUNTS)}")
+            n_acc = self.scalar(f"SELECT COUNT(*) FROM {self.table('raw', AMLWORLD_ACCOUNTS)}")
             checks.append(
                 Check(
                     "accounts rows",
@@ -625,7 +734,7 @@ class Loader:
 
     def _verify_source_join(self, tx: str, labels: str, trans: str) -> Iterable[Check]:
         """M16 in practice, and pair balance explained by the source (M28)."""
-        id_map = self._table("raw", "ID_MAP_ACCOUNT")
+        id_map = self.table("raw", "ID_MAP_ACCOUNT")
 
         # Same rule as ids.normalise_bank_id: numeric ids lose their zero padding.
         def side(bank: str, account: str) -> str:
@@ -634,7 +743,7 @@ class Loader:
                 f"AND a.src_account_number = {account})"
             )
 
-        rows = self._sql(
+        rows = self.sql(
             f"""SELECT COUNT(*),
                    COUNT_IF(s.src_row_number IS NULL),
                    COUNT_IF(s.txn_timestamp <> t.txn_timestamp),
@@ -656,7 +765,7 @@ class Loader:
             f"{total:,} source legs",
             f"no row {orphan}, timestamp {ts}, is_laundering {flag}, account {account}",
         )
-        rows = self._sql(
+        rows = self.sql(
             f"""WITH pair AS (
                     SELECT t.txn_pair_id, SUM(t.amount_inr) AS net, MIN(l.src_row_number) AS src
                     FROM {tx} t JOIN {labels} l ON l.txn_id = t.txn_id
@@ -673,6 +782,33 @@ class Loader:
             f"{unbalanced} unbalanced",
             f"{unexplained} not a cross-currency source pair",
         )
+
+
+def raw_fingerprint(session: Any, fq_raw: str) -> tuple[int, int]:
+    """(rows, HASH_AGG) of RAW_TRANSACTIONS over every column but ``ingested_at``.
+
+    The equivalence check: a full load and a hold-back load plus replay must give
+    the same pair. Columns come from INFORMATION_SCHEMA in ordinal order, so a
+    new column joins the fingerprint instead of being silently left out.
+    """
+    db, schema = fq_raw.split(".")
+    columns = [
+        validate_identifier(r[0], what="Live column name")
+        for r in execute(
+            session,
+            f"SELECT column_name FROM {db}.INFORMATION_SCHEMA.COLUMNS "
+            "WHERE table_schema = ? AND table_name = ? AND column_name <> ? "
+            "ORDER BY ordinal_position",
+            [schema, TRANSACTIONS, INGESTED_AT],
+        )
+    ]
+    if not columns:
+        raise LoadError(f"{fq_raw}.{TRANSACTIONS} has no columns to fingerprint")
+    rows = execute(
+        session, f"SELECT COUNT(*), HASH_AGG({', '.join(columns)}) FROM {fq_raw}.{TRANSACTIONS}"
+    )
+    count, digest = rows[0]
+    return int(count), int(digest)
 
 
 def open_bundle(settings: Settings, out_dir: Path | None = None) -> Bundle:
@@ -695,11 +831,21 @@ def load(
     data_root: Path | None = None,
     replace: bool = False,
     source: bool = True,
+    hold_back: dt.datetime | None = None,
 ) -> LoadReport:
-    """Load a checked ``bundle`` (:func:`open_bundle`) through ``session``."""
+    """Load a checked ``bundle`` (:func:`open_bundle`) through ``session``.
+
+    ``hold_back`` (normally ``settings.replay.hold_back_from``) leaves the legs at
+    or after it for ``riskcopilot replay``.
+    """
     try:
-        return Loader(settings, session, data_root=data_root, replace=replace, source=source).run(
-            bundle
-        )
+        return Loader(
+            settings,
+            session,
+            data_root=data_root,
+            replace=replace,
+            source=source,
+            hold_back=hold_back,
+        ).run(bundle)
     except ConfigError as exc:
         raise LoadError(str(exc)) from exc

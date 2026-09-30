@@ -106,6 +106,9 @@ ignore = [
 # constants. Every value taken from data is a bind parameter; nothing read from
 # a data file is interpolated. S608 flags the string building itself.
 "src/risk_copilot/pipeline/load.py" = ["S608"]
+# Replay reuses the loader's builders under the same rule: configured and live,
+# validated identifiers only; every timestamp, party id and cohort is bound.
+"src/risk_copilot/pipeline/replay.py" = ["S608"]
 
 [tool.ruff.format]
 quote-style = "double"

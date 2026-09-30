@@ -404,6 +404,14 @@ def load(
             help="Also load the AMLworld ledger and accounts into RAW_AMLWORLD_*.",
         ),
     ] = True,
+    hold_back: Annotated[
+        bool,
+        typer.Option(
+            "--hold-back/--no-hold-back",
+            help="Leave legs at or after replay.hold_back_from for `riskcopilot replay`. "
+            "--no-hold-back loads everything (the equivalence check's full load).",
+        ),
+    ] = True,
 ) -> None:
     """Upload a generated dataset and COPY it into RAW and GROUND_TRUTH.
 
@@ -417,6 +425,7 @@ def load(
 
     settings = _settings()
     try:
+        cut = settings.replay.hold_back_from if hold_back else None
         bundle = open_bundle(settings, out_dir)
         with open_session(settings, unattended=True) as session:
             report = run_load(
@@ -426,6 +435,7 @@ def load(
                 data_root=data_root,
                 replace=replace,
                 source=source,
+                hold_back=cut,
             )
     except (LoadError, SessionError, ConfigError) as exc:
         console.print(f"[red]Load failed; nothing was committed[/red]\n{exc}")
@@ -447,6 +457,11 @@ def load(
             c.name, "[green]OK[/green]" if c.ok else "[red]FAIL[/red]", c.value, c.detail
         )
     console.print(checks)
+    if report.held_back_from is not None:
+        console.print(
+            f"Held back for replay: legs at or after {report.held_back_from}. "
+            "Stream them in with `riskcopilot replay`."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -550,15 +565,110 @@ def verify_detection() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Stubs -- implemented in later phases, declared now so the surface is stable.
+# replay
 # --------------------------------------------------------------------------- #
 
 
 @app.command()
-def replay() -> None:
-    """Stream pre-generated transactions into the live pipeline."""
-    console.print("[yellow]Not yet implemented[/yellow] -- Phase 3 (replay harness).")
-    raise typer.Exit(code=2)
+def replay(
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Generated dataset. Default: output.root/<profile>."),
+    ] = None,
+    inject: Annotated[
+        str | None,
+        typer.Option(
+            "--inject",
+            help="Release one host's pending burst now and exit (a replay.injections name).",
+        ),
+    ] = None,
+    party: Annotated[
+        str | None,
+        typer.Option("--party", help="With --inject: the host. Default: the hero pin's party."),
+    ] = None,
+) -> None:
+    """Stream the legs load held back into RAW, as if they were arriving live.
+
+    One replay.sim_step of simulated time per replay.sleep_seconds, one
+    transaction per tick; a restart skips the ticks already in. It never
+    refreshes or routes: the target lag (or `verify`) refreshes, and the routing
+    task routes. Do not run --inject while a streaming replay is running.
+    """
+    from risk_copilot.pipeline.load import LoadError, open_bundle
+    from risk_copilot.pipeline.replay import ReplayError, TickResult, describe
+    from risk_copilot.pipeline.replay import inject as run_inject
+    from risk_copilot.pipeline.replay import replay as run_replay
+    from risk_copilot.pipeline.verify import VerifyError, read_pin
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    if party and not inject:
+        console.print("[red]--party needs --inject[/red]")
+        raise typer.Exit(code=2)
+    try:
+        cut = settings.replay.hold_back_from
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error[/red]\n{exc}")
+        raise typer.Exit(code=2) from exc
+    if cut is None and not inject:
+        console.print(
+            f"[red]Nothing to replay[/red]: replay.hold_back_from is null for profile "
+            f"'{settings.profile}', so load holds nothing back."
+        )
+        raise typer.Exit(code=2)
+
+    if inject:
+        try:
+            host = party or str(read_pin(settings)["party_id"])
+            with open_session(settings, unattended=True) as session:
+                done = run_inject(settings, session, inject, host)
+        except VerifyError as exc:
+            console.print(f"[red]Inject refused[/red]\n{exc}")
+            raise typer.Exit(code=2) from exc
+        except (ReplayError, SessionError, ConfigError) as exc:
+            console.print(f"[red]Inject failed; nothing was committed[/red]\n{exc}")
+            raise typer.Exit(code=1) from exc
+        console.print(
+            f"Released {done.promoted} {done.cohort} legs for {done.party_id} "
+            f"({done.first} .. {done.last}). Signals appear at the next refresh."
+        )
+        return
+
+    def progress(result: TickResult, total: int) -> None:
+        t = result.tick
+        what = (
+            "already in, skipped"
+            if result.skipped
+            else f"{result.source} source + {result.promoted} injected"
+        )
+        console.print(f"tick {t.index + 1}/{total} [{t.start} .. {t.end}): {what}")
+
+    try:
+        bundle = open_bundle(settings, out_dir)
+        with open_session(settings, unattended=True) as session:
+            report = run_replay(settings, session, bundle, on_tick=progress)
+    except (ReplayError, LoadError, SessionError, ConfigError) as exc:
+        console.print(f"[red]Replay stopped; the tick in progress was rolled back[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"Replayed {report.held_legs:,} legs from {report.cut}: {describe(report.ticks)}."
+    )
+    checks = Table(title="Post-replay checks")
+    for column in ("Check", "Status", "Value", "Detail"):
+        checks.add_column(column, style="cyan" if column == "Check" else None)
+    for c in report.checks:
+        checks.add_row(
+            c.name, "[green]OK[/green]" if c.ok else "[red]FAIL[/red]", c.value, c.detail
+        )
+    console.print(checks)
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------- #
+# Stubs -- implemented in later phases, declared now so the surface is stable.
+# --------------------------------------------------------------------------- #
 
 
 @app.command("eval")
