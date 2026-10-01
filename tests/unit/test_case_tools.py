@@ -24,8 +24,9 @@ def test_procedures_stage_renders_one_object_per_statement(repo_root: Path, prof
         "02_gather_evidence.sql",
         "03_draft_str.sql",
         "04_review_str.sql",
+        "05_attest_str.sql",
     ]
-    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1]
+    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1, 1]
 
 
 def test_tool_names_carry_the_profile_suffix(repo_root: Path) -> None:
@@ -108,3 +109,28 @@ def test_the_reviewer_runs_every_check_and_uses_no_model(repo_root: Path) -> Non
     # Only a DRAFT can be reviewed; APPROVE is the only path to REVIEWED.
     assert "IF (v_status <> 'DRAFT') THEN" in review
     assert "IFF(:decision = 'APPROVE', 'REVIEWED', 'REJECTED')" in review
+
+
+@pytest.mark.parametrize(
+    ("profile", "role"), [("dev", "COMPLIANCE_OFFICER_DEV"), ("demo", "COMPLIANCE_OFFICER")]
+)
+def test_attestation_is_gated_on_the_callers_compliance_role(
+    repo_root: Path, profile: str, role: str
+) -> None:
+    attest = _rendered(repo_root, profile)["05_attest_str.sql"]
+    # Caller's rights: the owner's role must not stand in for the person signing.
+    assert "EXECUTE AS CALLER" in attest
+    assert f"IF (NOT IS_ROLE_IN_SESSION('{role}')) THEN" in attest
+
+
+def test_attestation_binds_the_reviewed_hash_and_is_the_only_way_to_file(repo_root: Path) -> None:
+    files = _rendered(repo_root, "dev")
+    attest = files["05_attest_str.sql"]
+    assert "reviewed_hash IS DISTINCT FROM actual_hash" in attest
+    assert "attested_content_hash" in attest
+    assert "IFF(decision = 'ATTESTED', 'FILED', 'RETURNED')" in attest
+    others = [s for name, s in files.items() if name != "05_attest_str.sql"]
+    # No other tool can set FILED (DRAFT_STR only reads it, to refuse a redraft).
+    assert not any(re.search(r"SET\s+status\s*=[^;]*'FILED'", s) for s in others)
+    # A refusal is written to the audit log before it is re-raised.
+    assert "'REFUSED'" in attest
