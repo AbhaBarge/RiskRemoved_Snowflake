@@ -13,6 +13,7 @@ Subcommands:
 * ``load``      stage and COPY INTO the generated data
 * ``verify``    refresh detection and check it against the generated truth
 * ``replay``    drive the replay harness
+* ``app``       render, run or deploy the Streamlit-in-Snowflake app
 * ``eval``      run the evaluation suites
 """
 
@@ -664,6 +665,73 @@ def replay(
     console.print(checks)
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------- #
+# app -- the Streamlit-in-Snowflake demo surface
+# --------------------------------------------------------------------------- #
+
+app_cli = typer.Typer(
+    help="Render, run locally, or deploy the Streamlit app.", no_args_is_help=True
+)
+app.add_typer(app_cli, name="app")
+
+
+@app_cli.command("render")
+def app_render() -> None:
+    """Write app/app_config.json from the resolved configuration."""
+    from risk_copilot.pipeline.app import AppError, render_app_config
+
+    settings = _settings()
+    try:
+        path = render_app_config(settings)
+    except AppError as exc:
+        console.print(f"[red]App render failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"Wrote {path}")
+
+
+@app_cli.command("run")
+def app_run(
+    port: Annotated[int, typer.Option("--port", help="Local port.")] = 8501,
+) -> None:
+    """Render the config, then run the app locally against this profile's database."""
+    import subprocess
+
+    from risk_copilot.pipeline.app import MAIN_FILE, AppError, app_root, render_app_config
+
+    settings = _settings()
+    try:
+        render_app_config(settings)
+    except AppError as exc:
+        console.print(f"[red]App render failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    # The app opens its own session from the same RC_* environment (.env was
+    # loaded by the callback); the profile is passed explicitly.
+    env = {**os.environ, "RC_PROFILE": settings.profile}
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app_root(settings) / MAIN_FILE)]
+    cmd += ["--server.port", str(port), "--server.headless", "true"]
+    raise typer.Exit(code=subprocess.call(cmd, env=env))  # noqa: S603 -- fixed argv
+
+
+@app_cli.command("deploy")
+def app_deploy() -> None:
+    """Upload app/ and (re)create the STREAMLIT object on the container runtime."""
+    from risk_copilot.pipeline.app import AppError, deploy_app
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    try:
+        with open_session(settings, unattended=True) as session:
+            result = deploy_app(settings, session, echo=console.print)
+    except (AppError, SessionError) as exc:
+        console.print(f"[red]App deploy failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]Deployed[/green] {result.fq_name}: {len(result.files)} files, "
+        f"pool {result.compute_pool}, warehouse {result.warehouse}"
+    )
+    console.print(f"Open: {result.url or '(Snowsight > Projects > Streamlit)'}")
 
 
 # --------------------------------------------------------------------------- #

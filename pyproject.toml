@@ -106,6 +106,11 @@ ignore = [
 # constants. Every value taken from data is a bind parameter; nothing read from
 # a data file is interpolated. S608 flags the string building itself.
 "src/risk_copilot/pipeline/load.py" = ["S608"]
+# The app's queries interpolate only object names from app_config.json, which
+# `riskcopilot app render` writes from configuration validated by
+# config.validate_identifier. Every value (case id, party id) is a bind
+# parameter; nothing a user types reaches the SQL text.
+"app/lib/data.py" = ["S608"]
 # Replay reuses the loader's builders under the same rule: configured and live,
 # validated identifiers only; every timestamp, party id and cohort is bound.
 "src/risk_copilot/pipeline/replay.py" = ["S608"]

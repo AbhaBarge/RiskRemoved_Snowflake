@@ -595,6 +595,58 @@ class CortexObjects(_Frozen):
         return validate_identifier(v, what="Cortex object name")
 
 
+_RUNTIME_RE = re.compile(r"^SYSTEM\$[A-Z0-9_]+$")
+
+
+class AppSpec(_Frozen):
+    """The Streamlit-in-Snowflake app (``conf/base.yml:app``).
+
+    ``schema`` and ``warehouse`` are config *keys*, not names, so a schema or
+    warehouse rename is still one line; Settings checks they resolve.
+    """
+
+    name: str
+    title: str
+    schema_key: str = Field(alias="schema")
+    stage: str
+    warehouse: str
+    runtime_name: str
+    #: Empty: the account's DEFAULT_STREAMLIT_COMPUTE_POOL, read at deploy time.
+    compute_pool: str = ""
+
+    @field_validator("name", "stage")
+    @classmethod
+    def _identifier(cls, v: str) -> str:
+        return validate_identifier(v, what="App object name")
+
+    @field_validator("schema_key")
+    @classmethod
+    def _schema(cls, v: str) -> str:
+        if v not in Schemas.model_fields:
+            raise ConfigError(f"app.schema must be one of {list(Schemas.model_fields)}, got {v!r}")
+        return v
+
+    @field_validator("runtime_name")
+    @classmethod
+    def _runtime(cls, v: str) -> str:
+        if not _RUNTIME_RE.match(v):
+            raise ConfigError(f"app.runtime_name must look like SYSTEM$..., got {v!r}")
+        return v
+
+    @field_validator("compute_pool")
+    @classmethod
+    def _pool(cls, v: str) -> str:
+        return validate_identifier(v, what="Compute pool") if v else ""
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, v: str) -> str:
+        # Rendered into a SQL string literal; refuse rather than escape.
+        if not v or "'" in v or "\\" in v:
+            raise ConfigError(f"app.title must be non-empty without quotes or backslashes: {v!r}")
+        return v
+
+
 # --------------------------------------------------------------------------- #
 # Settings
 # --------------------------------------------------------------------------- #
@@ -626,6 +678,7 @@ class Settings(BaseModel):
     views: dict[str, str]
     streams_tasks: StreamsTasks
     cortex: CortexObjects
+    app: AppSpec
     # Domain configs are kept as plain mappings: they are large, mostly
     # data-shaped, and consumed by the generators that own their semantics.
     # Validating them here would duplicate that ownership.
@@ -646,6 +699,12 @@ class Settings(BaseModel):
                 raise ConfigError(f"Missing required warehouse definition: {required!r}")
 
         _check_lag_graph(self.dynamic_tables)
+
+        if self.app.warehouse not in self.warehouses:
+            raise ConfigError(
+                f"app.warehouse {self.app.warehouse!r} is not a key of warehouses: "
+                f"{sorted(self.warehouses)}"
+            )
 
         # A branch analyst role whose region is never generated silently makes
         # the RLS demo return an empty result instead of a filtered one -- a
@@ -816,6 +875,7 @@ class Settings(BaseModel):
                 },
                 streams_tasks=StreamsTasks(**merged["streams_tasks"]),
                 cortex=CortexObjects(**merged["cortex"]),
+                app=AppSpec(**merged["app"]),
                 generation=domains["generation"],
                 detection=domains["detection"],
                 models=domains["models"],

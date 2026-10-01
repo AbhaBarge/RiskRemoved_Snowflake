@@ -132,6 +132,21 @@ streams_tasks:
   route_signals_task: ROUTE_SIGNALS_TASK
   resume_route_task: false
 
+# Streamlit in Snowflake app (Phase 4). A thin client: it reads tables and views
+# and calls procedures, nothing else. `riskcopilot app render` writes the names
+# below into app/app_config.json, so the app holds no literal object name either.
+# The trial account has no external access, so the app ships no dependency file
+# and uses only the container runtime's pre-installed packages.
+app:
+  name: RISK_COPILOT_APP
+  title: Risk & Compliance Copilot
+  schema: evidence            # a key of `schemas`
+  stage: APP_STAGE
+  warehouse: demo             # a key of `warehouses`: runs the app's queries
+  runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+  # Empty = the account's DEFAULT_STREAMLIT_COMPUTE_POOL, read at deploy time.
+  compute_pool: ""
+
 cortex:
   search_service: REGULATORY_SEARCH_SVC
   search_source_table: POLICY_CLAUSE_CHUNKS

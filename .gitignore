@@ -35,6 +35,9 @@ data/staging/
 # inputs, not build output. No credentials are written there.
 !conf/generated/
 
+# Rendered per profile by `riskcopilot app render`; never hand-edited.
+app/app_config.json
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------
