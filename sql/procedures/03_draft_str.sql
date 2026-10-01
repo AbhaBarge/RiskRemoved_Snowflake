@@ -158,6 +158,7 @@ BEGIN
 
     UPDATE {{ EV }}.ARTIFACT
     SET status = 'SUPERSEDED'
+    -- A REJECTED draft keeps its status: the Reviewer's catch stays visible.
     WHERE status IN ('DRAFT', 'REVIEWED')
       AND finding_id IN (SELECT finding_id FROM {{ EV }}.FINDING WHERE case_id = :case_id AND finding_id <> :fid);
 

@@ -23,8 +23,9 @@ def test_procedures_stage_renders_one_object_per_statement(repo_root: Path, prof
         "01_case_tools_common.sql",
         "02_gather_evidence.sql",
         "03_draft_str.sql",
+        "04_review_str.sql",
     ]
-    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1]
+    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1]
 
 
 def test_tool_names_carry_the_profile_suffix(repo_root: Path) -> None:
@@ -83,3 +84,27 @@ def test_draft_records_the_configured_narrative_author(repo_root: Path) -> None:
     draft = _rendered(repo_root, "dev")["03_draft_str.sql"]
     assert "'TEMPLATE_V1'" in draft
     assert "FIU_IND_STR" in draft
+
+
+def test_gather_and_review_share_one_canonical_form(repo_root: Path) -> None:
+    # Recompute-and-compare is only meaningful if both sides hash the same way.
+    files = _rendered(repo_root, "dev")
+
+    def wrapper(sql: str) -> str:
+        # The variable spliced in (q_summary, q_text) differs; the form must not.
+        found = re.findall(r"wrapped := '(.*?)';\n", sql)
+        (w,) = {re.sub(r"' \|\| \w+ \|\| '", "' || <q> || '", x) for x in found}
+        return w
+
+    assert wrapper(files["02_gather_evidence.sql"]) == wrapper(files["04_review_str.sql"])
+    assert "'SQL-1'" in files["02_gather_evidence.sql"]
+
+
+def test_the_reviewer_runs_every_check_and_uses_no_model(repo_root: Path) -> None:
+    review = _rendered(repo_root, "dev")["04_review_str.sql"]
+    for check in ("numeric_recompute", "citation_resolution", "clause_in_effect", "schema"):
+        assert f"'{check}'" in review, check
+    assert "AI_COMPLETE" not in review and "CORTEX" not in review
+    # Only a DRAFT can be reviewed; APPROVE is the only path to REVIEWED.
+    assert "IF (v_status <> 'DRAFT') THEN" in review
+    assert "IFF(:decision = 'APPROVE', 'REVIEWED', 'REJECTED')" in review
