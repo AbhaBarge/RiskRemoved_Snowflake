@@ -67,6 +67,7 @@ def test_dev_names_carry_the_suffix_and_tables_are_qualified_by_schema(
         "attest_str",
     }
     assert cfg["role"]["compliance_officer"] == "COMPLIANCE_OFFICER_DEV"
+    assert cfg["semantic_view"] == "RISK_COPILOT_DEV.CURATED.SV_RISK_COPILOT_DEV"
 
 
 def test_demo_names_are_unsuffixed(repo_root: Path, tmp_path: Path) -> None:
@@ -155,6 +156,8 @@ def test_the_repository_app_has_its_entry_point_and_pages(repo_root: Path) -> No
         "app_pages/signoff.py",
         "app_pages/governance.py",
         "lib/str_view.py",
+        "lib/analyst.py",
+        "app_pages/ask.py",
     } <= files
 
 
