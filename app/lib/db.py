@@ -54,11 +54,34 @@ def cached(sql: str, params: tuple[Any, ...] = ()) -> pd.DataFrame:
 
 
 def call(proc: str, *args: Any) -> Any:
-    """CALL a procedure; returns its scalar result and drops cached reads."""
+    """CALL a procedure; returns its result (parsed if JSON) and drops cached reads."""
     marks = ", ".join("?" for _ in args)
     rows = session().sql(f"CALL {proc}({marks})", params=list(args)).collect()
     st.cache_data.clear()
-    return rows[0][0] if rows else None
+    value = rows[0][0] if rows else None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def reason(exc: Exception) -> str:
+    """The procedure's own message from a Snowflake error, without the envelope."""
+    text = str(exc)
+    marker = text.rfind(" : ")
+    return text[marker + 3 :].strip() if marker != -1 else text.strip()
+
+
+def variant(value: Any) -> Any:
+    """A VARIANT/OBJECT/ARRAY column as Python (pandas gives JSON text)."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
 
 
 def inr(value: Any) -> str:

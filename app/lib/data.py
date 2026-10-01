@@ -174,6 +174,111 @@ def chain_counts(case_id: str) -> dict[str, int]:
     return {k: int(v) for k, v in row.items()}
 
 
+# ---- the STR workflow ------------------------------------------------------ #
+
+
+def case_artifacts(case_id: str) -> pd.DataFrame:
+    """Every STR version for a case, newest first, with its latest review."""
+    return cached(
+        f"""
+        SELECT a.artifact_id, a.version, a.status, a.validation_status, a.content_hash,
+               a.created_at, f.finding_id, f.author_model, f.prompt_version,
+               r.decision AS review_decision, r.review_id, r.defects_found, r.checks_run,
+               r.numeric_recompute_passed, r.citation_resolution_passed,
+               r.clause_in_effect_passed, r.reviewed_at
+        FROM {EV}.ARTIFACT a
+        JOIN {EV}.FINDING f ON f.finding_id = a.finding_id
+        LEFT JOIN {EV}.REVIEW r ON r.finding_id = a.finding_id
+        WHERE f.case_id = ?
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY a.artifact_id
+                                   ORDER BY r.reviewed_at DESC NULLS LAST) = 1
+        ORDER BY a.version DESC
+        """,
+        (case_id,),
+    )
+
+
+def artifact(artifact_id: str) -> dict[str, Any] | None:
+    df = cached(
+        f"""
+        SELECT a.*, f.case_id, f.computed_values, f.cited_clause_ids, f.author_model,
+               f.prompt_version, f.version AS finding_version
+        FROM {EV}.ARTIFACT a JOIN {EV}.FINDING f ON f.finding_id = a.finding_id
+        WHERE a.artifact_id = ?
+        """,
+        (artifact_id,),
+    )
+    return None if df.empty else df.iloc[0].to_dict()
+
+
+def evidence_rows(case_id: str) -> pd.DataFrame:
+    return cached(
+        f"""
+        SELECT ref_type, ref_id, materiality, ref_table, as_of_ts, evidence_id
+        FROM {EV}.EVIDENCE WHERE case_id = ? ORDER BY ref_type, ref_id
+        """,
+        (case_id,),
+    )
+
+
+def query_logs(case_id: str) -> pd.DataFrame:
+    return cached(
+        f"""
+        SELECT q.bind_values:name::STRING AS query, q.query_log_id, q.result_row_count AS row_count,
+               q.result_hash, q.canonical_form_version AS form, q.executed_at, q.execution_ms,
+               q.sql_text
+        FROM {EV}.EVIDENCE_QUERY_LOG q JOIN {EV}.EVIDENCE e ON e.evidence_id = q.evidence_id
+        WHERE e.case_id = ? ORDER BY q.executed_at, q.query_log_id
+        """,
+        (case_id,),
+    )
+
+
+def signoff_queue() -> pd.DataFrame:
+    """STRs the Reviewer approved and no officer has signed yet."""
+    return cached(
+        f"""
+        SELECT a.artifact_id, f.case_id, p.full_name, c.branch_region, a.version,
+               c.sla_deadline, a.created_at
+        FROM {EV}.ARTIFACT a
+        JOIN {EV}.FINDING f ON f.finding_id = a.finding_id
+        JOIN {EV}.CASE_RECORD c ON c.case_id = f.case_id
+        LEFT JOIN {DT["dim_party"]} p ON p.party_id = c.party_id
+        WHERE a.status = 'REVIEWED'
+        ORDER BY c.sla_deadline, a.created_at
+        """
+    )
+
+
+def attestations() -> pd.DataFrame:
+    return cached(
+        f"""
+        SELECT t.attested_at, t.decision, t.attestor, t.attestor_role, f.case_id, t.artifact_id,
+               a.status AS artifact_status,
+               t.attested_content_hash = a.content_hash AS hash_matches,
+               t.comment
+        FROM {EV}.ATTESTATION t
+        JOIN {EV}.ARTIFACT a ON a.artifact_id = t.artifact_id
+        JOIN {EV}.FINDING f ON f.finding_id = a.finding_id
+        ORDER BY t.attested_at DESC
+        """
+    )
+
+
+def filing_integrity() -> int:
+    """FILED artifacts without a matching, hash-bound attestation. Must be 0."""
+    df = cached(
+        f"""
+        SELECT COUNT(*) AS n FROM {EV}.ARTIFACT a
+        WHERE a.status = 'FILED' AND NOT EXISTS (
+            SELECT 1 FROM {EV}.ATTESTATION t
+            WHERE t.artifact_id = a.artifact_id AND t.decision = 'ATTESTED'
+              AND t.attested_content_hash = a.content_hash)
+        """
+    )
+    return int(df.iloc[0]["n"])
+
+
 # ---- governance ------------------------------------------------------------ #
 
 

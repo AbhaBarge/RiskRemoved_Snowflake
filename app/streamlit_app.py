@@ -8,6 +8,7 @@ st.set_page_config(page_title=CFG["title"], page_icon=":material/shield:", layou
 pages = [
     st.Page("app_pages/overview.py", title="Overview", icon=":material/monitoring:", default=True),
     st.Page("app_pages/case.py", title="Case investigation", icon=":material/manage_search:"),
+    st.Page("app_pages/signoff.py", title="Officer sign-off", icon=":material/verified:"),
     st.Page("app_pages/governance.py", title="Governance & audit", icon=":material/policy:"),
 ]
 nav = st.navigation(pages)

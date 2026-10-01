@@ -58,6 +58,14 @@ def test_dev_names_carry_the_suffix_and_tables_are_qualified_by_schema(
     assert cfg["dt"]["signals_fast"] == "RISK_COPILOT_DEV.CURATED.DT_SIGNALS_FAST_DEV"
     assert cfg["view"]["transaction_pairs"] == "RISK_COPILOT_DEV.CURATED.V_TRANSACTION_PAIRS_DEV"
     assert cfg["procedure"]["route_signals"] == "RISK_COPILOT_DEV.EVIDENCE_CHAIN.ROUTE_SIGNALS_DEV"
+    assert cfg["procedure"]["attest_str"] == "RISK_COPILOT_DEV.EVIDENCE_CHAIN.ATTEST_STR_DEV"
+    assert set(cfg["procedure"]) == {
+        "route_signals",
+        "gather_evidence",
+        "draft_str",
+        "review_str",
+        "attest_str",
+    }
     assert cfg["role"]["compliance_officer"] == "COMPLIANCE_OFFICER_DEV"
 
 
@@ -144,7 +152,9 @@ def test_the_repository_app_has_its_entry_point_and_pages(repo_root: Path) -> No
         "lib/data.py",
         "app_pages/overview.py",
         "app_pages/case.py",
+        "app_pages/signoff.py",
         "app_pages/governance.py",
+        "lib/str_view.py",
     } <= files
 
 

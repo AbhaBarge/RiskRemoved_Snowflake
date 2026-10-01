@@ -6,7 +6,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from lib import data
-from lib.db import HERO, inr, lakh
+from lib.db import HERO, PROC, call, inr, lakh, reason
+from lib.str_view import STATUS_HELP, review_result, str_document
 
 st.title("Case investigation")
 
@@ -151,3 +152,96 @@ if not txns.empty:
         hide_index=True,
         use_container_width=True,
     )
+
+
+# ---- the STR workflow: gather -> draft -> review ---------------------------- #
+st.divider()
+st.header("Investigate, draft and review the STR")
+st.caption(
+    "Each button calls one stored procedure: the same tools a Cortex Agent will call "
+    "once this account allows agents. Every step is written to the audit log."
+)
+
+arts = data.case_artifacts(case_id)
+latest = arts.iloc[0].to_dict() if not arts.empty else None
+filed = bool((arts["status"] == "FILED").any()) if not arts.empty else False
+
+
+def run(label: str, fn) -> None:
+    try:
+        with st.spinner(label):
+            result = fn()
+        st.session_state["last_action"] = (True, label, result)
+    except Exception as exc:  # shown to the user, verbatim
+        st.session_state["last_action"] = (False, label, reason(exc))
+    st.rerun()
+
+
+b = st.columns([1, 1, 1, 2], vertical_alignment="center")
+plant = b[3].toggle(
+    "Plant a defect in the next draft",
+    help="Demo: inflates the deposit total by 10% and cites a clause that does not exist. "
+    "Watch the Reviewer catch both.",
+    disabled=filed,
+)
+if b[0].button("1 · Gather evidence", use_container_width=True, disabled=filed):
+    run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
+if b[1].button("2 · Draft STR", use_container_width=True, disabled=filed):
+    run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
+can_review = latest is not None and latest["status"] == "DRAFT"
+if b[2].button(
+    "3 · Run Reviewer", type="primary", use_container_width=True, disabled=not can_review
+):
+    run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
+
+last = st.session_state.pop("last_action", None)
+if last:
+    ok, label, result = last
+    if ok:
+        st.toast(f"{label}: done")
+    else:
+        st.error(f"{label} refused: {result}")
+
+if latest is None:
+    st.info("No STR drafted yet. Gather the evidence, then draft.")
+else:
+    if latest["status"] == "REVIEWED":
+        s1, s2 = st.columns([3, 1], vertical_alignment="center")
+        s1.success(
+            "The Reviewer approved this STR. It now needs the Principal Officer's signature."
+        )
+        if s2.button("Go to sign-off", use_container_width=True):
+            st.switch_page("app_pages/signoff.py")
+    elif filed:
+        st.success("STR attested by the Principal Officer and filed. The case is closed.")
+    t1, t2, t3 = st.tabs(["Latest STR", "Version history", "Evidence chain"])
+    with t1:
+        left, right = st.columns([3, 2])
+        with left:
+            a = data.artifact(latest["artifact_id"])
+            if a:
+                str_document(a)
+        with right:
+            st.markdown("##### Reviewer")
+            review_result(latest)
+    with t2:
+        hist = arts[["version", "artifact_id", "status", "review_decision", "created_at"]].copy()
+        hist["meaning"] = hist["status"].map(STATUS_HELP)
+        st.dataframe(hist, hide_index=True, use_container_width=True)
+        for _, row in arts.iterrows():
+            if row["review_decision"] == "REJECT":
+                with st.expander(f"v{row['version']} -- why the Reviewer rejected it"):
+                    review_result(row.to_dict())
+    with t3:
+        st.markdown("##### Evidence pointers")
+        st.dataframe(data.evidence_rows(case_id), hide_index=True, use_container_width=True)
+        st.markdown("##### Logged queries (the source of every figure)")
+        st.dataframe(
+            data.query_logs(case_id).drop(columns=["sql_text"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.caption(
+            "Each query's exact text, bind value and canonical result hash are stored. "
+            "The Reviewer re-runs them and compares."
+        )
