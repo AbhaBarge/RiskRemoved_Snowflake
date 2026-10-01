@@ -596,6 +596,10 @@ class CortexObjects(_Frozen):
 
 
 _RUNTIME_RE = re.compile(r"^SYSTEM\$[A-Z0-9_]+$")
+#: case_tools keys that hold data values rather than object names.
+_CASE_TOOL_DATA = frozenset(
+    {"str_template_id", "sla_clause_id", "attestation_clause_id", "narrative_author"}
+)
 
 
 class AppSpec(_Frozen):
@@ -679,6 +683,7 @@ class Settings(BaseModel):
     streams_tasks: StreamsTasks
     cortex: CortexObjects
     app: AppSpec
+    case_tools: dict[str, str] = Field(default_factory=dict)
     # Domain configs are kept as plain mappings: they are large, mostly
     # data-shaped, and consumed by the generators that own their semantics.
     # Validating them here would duplicate that ownership.
@@ -876,6 +881,10 @@ class Settings(BaseModel):
                 streams_tasks=StreamsTasks(**merged["streams_tasks"]),
                 cortex=CortexObjects(**merged["cortex"]),
                 app=AppSpec(**merged["app"]),
+                case_tools={
+                    k: validate_identifier(str(v), what=f"case_tools.{k}")
+                    for k, v in (merged.get("case_tools") or {}).items()
+                },
                 generation=domains["generation"],
                 detection=domains["detection"],
                 models=domains["models"],
@@ -1009,6 +1018,12 @@ class Settings(BaseModel):
                 for key, spec in self.dynamic_tables.items()
             },
             "view": {key: self.obj(name) for key, name in self.views.items()},
+            # Case workflow procedures and UDFs, suffixed; the two data values
+            # (template id, narrative author) are not object names, so unsuffixed.
+            "tool": {
+                key: (name if key in _CASE_TOOL_DATA else self.obj(name))
+                for key, name in self.case_tools.items()
+            },
             "stream_task": {
                 "signals_stream": self.obj(self.streams_tasks.signals_stream),
                 "route_signals_procedure": self.obj(self.streams_tasks.route_signals_procedure),

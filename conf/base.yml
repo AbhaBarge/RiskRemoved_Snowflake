@@ -132,6 +132,25 @@ streams_tasks:
   route_signals_task: ROUTE_SIGNALS_TASK
   resume_route_task: false
 
+# Case workflow (Phase 4, sql/procedures). Stored procedures, not Python, so
+# the same objects become Cortex Agent tools once the account allows agents
+# (docs: "keep tool logic in Snowflake stored procedures"). Suffixed per profile.
+case_tools:
+  gather_evidence: GATHER_EVIDENCE       # case -> EVIDENCE + EVIDENCE_QUERY_LOG
+  draft_str: DRAFT_STR                   # case -> FINDING + ARTIFACT (template narrative)
+  review_str: REVIEW_STR                 # artifact -> REVIEW (deterministic checks)
+  attest_str: ATTEST_STR                 # artifact -> ATTESTATION (the human gate)
+  render_template: RENDER_TEMPLATE       # JS UDF: {placeholder} -> display value
+  format_inr: FORMAT_INR                 # JS UDF: Indian digit grouping
+  # Data, not objects: the REF_FILING_TEMPLATES row DRAFT_STR fills, and the
+  # POLICY_CLAUSE ids for the filing deadline and the human-attestation duty.
+  str_template_id: FIU_IND_STR
+  sla_clause_id: STR_FILING_SLA_DAYS
+  attestation_clause_id: PRINCIPAL_OFFICER_ATTESTATION_REQUIRED
+  # Recorded as FINDING.author_model while narratives are templated (trial:
+  # no AI_COMPLETE). The AI switch replaces it with the resolved model name.
+  narrative_author: TEMPLATE_V1
+
 # Streamlit in Snowflake app (Phase 4). A thin client: it reads tables and views
 # and calls procedures, nothing else. `riskcopilot app render` writes the names
 # below into app/app_config.json, so the app holds no literal object name either.

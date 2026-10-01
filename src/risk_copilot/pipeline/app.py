@@ -86,6 +86,11 @@ def app_config(settings: Settings) -> dict[str, Any]:
             "route_signals": settings.fq(
                 "evidence", settings.streams_tasks.route_signals_procedure
             ),
+            **{
+                key: settings.fq("evidence", name)
+                for key, name in settings.case_tools.items()
+                if key in ("gather_evidence", "draft_str", "review_str", "attest_str")
+            },
         },
         "role": {"compliance_officer": settings.obj(settings.roles.compliance_officer)},
         "hero": _hero(settings),
