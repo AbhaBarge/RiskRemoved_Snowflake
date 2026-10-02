@@ -112,8 +112,7 @@ def check_config(settings: Settings, report: Report) -> None:
             g,
             "retention clamped",
             Status.WARN,
-            f"Time Travel reduced to what the account allows: "
-            f"{settings.retention_clamp.summary()}",
+            f"Time Travel reduced to what the account allows: {settings.retention_clamp.summary()}",
             "The deploy will succeed. EVIDENCE_QUERY_LOG.result_snapshot remains "
             "the Reviewer's source of truth (Gap 15), so correctness is "
             "unaffected -- only the demonstrable Time Travel window shrinks. "

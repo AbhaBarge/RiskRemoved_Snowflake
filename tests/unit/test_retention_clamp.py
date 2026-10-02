@@ -38,8 +38,7 @@ PROBE_ID = "RETENTION_14_DAYS"
 
 #: Snowflake's actual rejection, which is where the cap is read from.
 CAP_ERROR = (
-    "001048 (22023): SQL compilation error: "
-    "Exceeds maximum allowable retention time (1 day(s))."
+    "001048 (22023): SQL compilation error: Exceeds maximum allowable retention time (1 day(s))."
 )
 
 
@@ -90,8 +89,12 @@ def test_cap_is_read_from_the_accounts_own_rejection_message(fake_repo: Path) ->
     write_evidence(
         fake_repo,
         connection_name(fake_repo),
-        {"available": False, "failure_class": "b_edition", "error_code": "001048",
-         "error": CAP_ERROR},
+        {
+            "available": False,
+            "failure_class": "b_edition",
+            "error_code": "001048",
+            "error": CAP_ERROR,
+        },
     )
 
     settings = load_settings(repo_root=fake_repo, profile="demo")
@@ -176,8 +179,12 @@ def test_clamp_is_exposed_to_sql_rendering(fake_repo: Path) -> None:
     write_evidence(
         fake_repo,
         connection_name(fake_repo),
-        {"available": False, "failure_class": "b_edition", "error_code": "001048",
-         "error": CAP_ERROR},
+        {
+            "available": False,
+            "failure_class": "b_edition",
+            "error_code": "001048",
+            "error": CAP_ERROR,
+        },
     )
 
     context = load_settings(repo_root=fake_repo, profile="demo").sql_context()
@@ -225,8 +232,12 @@ def test_doctor_reports_the_clamp_rather_than_applying_it_silently(fake_repo: Pa
     write_evidence(
         fake_repo,
         connection_name(fake_repo),
-        {"available": False, "failure_class": "b_edition", "error_code": "001048",
-         "error": CAP_ERROR},
+        {
+            "available": False,
+            "failure_class": "b_edition",
+            "error_code": "001048",
+            "error": CAP_ERROR,
+        },
     )
     settings = load_settings(repo_root=fake_repo, profile="demo")
 
