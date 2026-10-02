@@ -1163,3 +1163,21 @@ account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
 **Live, on RISK_COPILOT_DEV, as the public service user**: Overview, Case (Gather, planted-defect Draft, Review REJECT with 2 defects on their cards) and the Governance timeline rendered with no exceptions. Cases reset afterwards; SiS redeployed (17 files).
 
 **Verification:** 606 passed, 3 skipped; ruff, mypy, lint clean.
+
+## Step 11 -- Ask charts and formal polish (D62)
+
+| # | Decision | Why |
+|---|---|---|
+| D62 | Cortex Analyst's answers are charted by their **shape**, not by the question: one value is a figure, a date column with one measure is an area line, one category with one measure is a ranked bar. Any other shape stays a table. Every Table view shows human headings (`case_id` -> "Case ID", `flagged_inr` -> "Flagged (Rs)") | Analyst's SQL is not known in advance, so a per-question chart cannot be written. A shape rule never draws a misleading chart: when in doubt, it shows the rows |
+
+**What changed**
+- `lib/ui.py`: `label` / `pretty` (headings), `auto_chart`, `facts` (a two-column fact sheet with flags), and `strip(arrows=False)` for independent figures.
+- **Ask**: the example questions are cards with an Ask button; each answer has its own Visual / Table switch and a row count.
+- **Case**: the KYC profile is a fact sheet that flags a HIGH risk rating and a PEP; the signal's three figures are tiles that wrap instead of truncating.
+- **Sign-off**: a deadline callout with days left (red at 2 or fewer, amber at 5 or fewer). The wording states what `DRAFT_STR` does, a governed number of working days from POLICY_CLAUSE, and not a remembered rule number.
+- Every `st.dataframe` goes through `ui.pretty`.
+- Tests: the heading rule (5 cases), and `auto_chart`'s choice for 7 shapes.
+
+**Live, on RISK_COPILOT_DEV, as the public service user:** "How many cash deposits were made each day?" was drawn as a 10-day series; "How many cases by status?" (one row, all OPEN) fell back to the table with readable headings; the Case fact sheet rendered with no exceptions. Nothing needed resetting; SiS redeployed (17 files).
+
+**Verification:** 612 passed, 3 skipped; ruff, mypy (32 files) and lint (dev + demo, 22 templates) are clean.

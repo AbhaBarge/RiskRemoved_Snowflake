@@ -18,13 +18,13 @@ t1, t2, t3, t4 = st.tabs(
 )
 
 with t1:
-    st.dataframe(data.policy_clauses(), hide_index=True, width="stretch")
+    st.dataframe(ui.pretty(data.policy_clauses()), hide_index=True, width="stretch")
     st.caption("GOVERNANCE.V_POLICY_CLAUSE_CURRENT: the clauses effective today.")
 
 with t2:
     r = data.rules()
     r["rule_sql_hash"] = r["rule_sql_hash"].str[:16] + "…"
-    st.dataframe(r, hide_index=True, width="stretch")
+    st.dataframe(ui.pretty(r), hide_index=True, width="stretch")
 
 with t3:
     log = data.audit_log()
@@ -74,7 +74,7 @@ with t3:
             "how it ended. Refusals are logged too. Switch to Table for the raw rows."
         )
     else:
-        st.dataframe(log, hide_index=True, width="stretch")
+        st.dataframe(ui.pretty(log), hide_index=True, width="stretch")
 
 with t4:
     runs = data.eval_runs()
@@ -106,7 +106,7 @@ with t4:
         )
         st.altair_chart(trend, width="stretch")
     else:
-        st.dataframe(runs, hide_index=True, width="stretch")
+        st.dataframe(ui.pretty(runs), hide_index=True, width="stretch")
     st.caption(
         "Detection scored against the hidden answer key, in SQL, by `riskcopilot verify`. "
         "The app reads only these aggregate results, never a label."

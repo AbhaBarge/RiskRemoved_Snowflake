@@ -99,7 +99,7 @@ def _cases(q: pd.DataFrame) -> None:
             "flagged",
             "opened_at",
         ]
-        st.dataframe(q[shown], hide_index=True, width="stretch")
+        st.dataframe(ui.pretty(q[shown]), hide_index=True, width="stretch")
         return
     left, right = st.columns([3, 2], gap="large")
     with left:
@@ -168,7 +168,7 @@ def _signals() -> None:
     f["total_lakh"] = f["total_inr"].astype(float) / 100000
     if not show_visual:
         st.dataframe(
-            f[["last_seen_at", "party_id", "rule_id", "deposits", "total", "case_id"]],
+            ui.pretty(f[["last_seen_at", "party_id", "rule_id", "deposits", "total", "case_id"]]),
             hide_index=True,
             width="stretch",
         )

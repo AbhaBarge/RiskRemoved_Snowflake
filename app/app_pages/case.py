@@ -87,16 +87,17 @@ with left:
         "Branch": f"{party['branch_region']} / {party['branch_code']}",
         "Aadhaar": f"XXXX-XXXX-{party['aadhaar_last4']}",
     }
-    st.dataframe(
-        pd.DataFrame(profile.items(), columns=["Field", "Value"]),
-        hide_index=True,
-        width="stretch",
-    )
+    flags = {}
+    if str(party["risk_rating"]).upper() == "HIGH":
+        flags["Risk rating"] = "high risk"
+    if party["pep_flag"]:
+        flags["PEP"] = "enhanced due diligence"
+    ui.facts(profile, flags=flags)
     if party.get("kyc_note"):
         st.caption("KYC note (free text, untrusted input)")
         st.text(party["kyc_note"])
     st.markdown("#### Accounts")
-    st.dataframe(data.accounts(case["party_id"]), hide_index=True, width="stretch")
+    st.dataframe(ui.pretty(data.accounts(case["party_id"])), hide_index=True, width="stretch")
 
 # ---- what fired ------------------------------------------------------------ #
 with right:
@@ -107,10 +108,14 @@ with right:
             st.markdown(f"**{s['rule_id']}** v{s['rule_version']} · severity **{s['severity']}**")
             if s.get("rule_description"):
                 st.caption(s["rule_description"])
-            m = st.columns(3)
-            m[0].metric("Cash deposits in band", detail.get("deposit_count", "-"))
-            m[1].metric("Total deposited", lakh(detail.get("deposit_total_inr")))
-            m[2].metric("Accounts used", len(detail.get("accounts", [])))
+            ui.strip(
+                [
+                    ("Cash deposits in band", str(detail.get("deposit_count", "-")), ""),
+                    ("Total deposited", lakh(detail.get("deposit_total_inr")), ""),
+                    ("Accounts used", str(len(detail.get("accounts", []))), ""),
+                ],
+                arrows=False,
+            )
             band = (detail.get("band_lower_inr"), detail.get("band_upper_inr"))
             st.caption(
                 f"Each deposit between {inr(band[0])} and {inr(band[1])}, just under the "
@@ -220,22 +225,17 @@ if not txns.empty:
         st.altair_chart(per_account, width="stretch")
         st.caption("How the cash was spread across accounts: splitting is part of the pattern.")
     else:
-        st.dataframe(
-            shown[
-                [
-                    "txn_id",
-                    "txn_timestamp",
-                    "account_id",
-                    "amount",
-                    "channel",
-                    "txn_type",
-                    "branch_code",
-                    "source_ref",
-                ]
-            ],
-            hide_index=True,
-            width="stretch",
-        )
+        cols = [
+            "txn_id",
+            "txn_timestamp",
+            "account_id",
+            "amount",
+            "channel",
+            "txn_type",
+            "branch_code",
+            "source_ref",
+        ]
+        st.dataframe(ui.pretty(shown[cols]), hide_index=True, width="stretch")
 
 
 # ---- the STR workflow: gather -> draft -> review ---------------------------- #
@@ -317,17 +317,17 @@ else:
     with t2:
         hist = arts[["version", "artifact_id", "status", "review_decision", "created_at"]].copy()
         hist["meaning"] = hist["status"].map(STATUS_HELP)
-        st.dataframe(hist, hide_index=True, width="stretch")
+        st.dataframe(ui.pretty(hist), hide_index=True, width="stretch")
         for _, row in arts.iterrows():
             if row["review_decision"] == "REJECT":
                 with st.expander(f"v{row['version']} -- why the Reviewer rejected it"):
                     review_result(row.to_dict())
     with t3:
         st.markdown("##### Evidence pointers")
-        st.dataframe(data.evidence_rows(case_id), hide_index=True, width="stretch")
+        st.dataframe(ui.pretty(data.evidence_rows(case_id)), hide_index=True, width="stretch")
         st.markdown("##### Logged queries (the source of every figure)")
         st.dataframe(
-            data.query_logs(case_id).drop(columns=["sql_text"]),
+            ui.pretty(data.query_logs(case_id).drop(columns=["sql_text"])),
             hide_index=True,
             width="stretch",
         )

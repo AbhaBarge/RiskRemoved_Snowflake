@@ -1,9 +1,11 @@
 """Ask: plain-English questions about transactions, customers, cases and STRs."""
 
 import streamlit as st
+from lib import ui
 from lib.analyst import ask, log_turn
 from lib.db import query, reason
 
+ui.style()
 st.title("Ask the data")
 st.caption(
     "Cortex Analyst writes the SQL from a governed semantic view (SV_RISK_COPILOT). The view "
@@ -21,11 +23,14 @@ if "ask_history" not in st.session_state:
     st.session_state["ask_history"] = []  # Analyst message format
     st.session_state["ask_turns"] = []  # what we render
 
+st.markdown("##### Try one")
 cols = st.columns(len(EXAMPLES))
 picked = None
 for col, q in zip(cols, EXAMPLES, strict=True):
-    if col.button(q, width="stretch"):
-        picked = q
+    with col.container(border=True):
+        st.caption(q)
+        if st.button("Ask", key=f"ex_{q}", icon=":material/arrow_forward:", width="stretch"):
+            picked = q
 typed = st.chat_input("Ask a question about the bank's data")
 question = typed or picked
 
@@ -46,7 +51,7 @@ if question:
             result["message"],
         ]
 
-for turn in reversed(st.session_state["ask_turns"]):
+for i, turn in enumerate(reversed(st.session_state["ask_turns"])):
     with st.chat_message("user"):
         st.write(turn["q"])
     with st.chat_message("assistant"):
@@ -57,11 +62,11 @@ for turn in reversed(st.session_state["ask_turns"]):
             st.write(turn["text"])
         df = turn.get("df")
         if df is not None:
-            st.dataframe(df, hide_index=True, width="stretch")
-            numeric = df.select_dtypes("number").columns.tolist()
-            if len(df.columns) == 2 and len(numeric) == 1 and 1 < len(df) <= 50:
-                label = next(c for c in df.columns if c not in numeric)
-                st.bar_chart(df.set_index(label)[numeric[0]])
+            n = len(st.session_state["ask_turns"]) - i
+            charted = ui.visual(f"ask_view_{n}") and ui.auto_chart(df)
+            if not charted:
+                st.dataframe(ui.pretty(df), hide_index=True, width="stretch")
+            st.caption(f"{len(df):,} row(s)")
         if turn.get("run_error"):
             st.error(f"The generated SQL did not run: {turn['run_error']}")
         if turn.get("sql"):

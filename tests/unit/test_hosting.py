@@ -141,3 +141,54 @@ def test_sign_in_checks_the_password(auth) -> None:  # type: ignore[no-untyped-d
     assert auth.st.session_state["login_user"] == "officer"
     assert auth.sign_in("officer", auth.st.session_state["login_password"])
     assert auth.can("can_attest")
+
+
+# --------------------------------------------------------------------------- #
+# Visual helpers (app/lib/ui.py)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def ui(repo_root: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    monkeypatch.syspath_prepend(str(repo_root / "app"))
+    from lib import ui as module
+
+    drawn: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "st",
+        SimpleNamespace(
+            metric=lambda *a, **k: drawn.append("metric"),
+            altair_chart=lambda chart, **k: drawn.append(type(chart).__name__),
+        ),
+    )
+    module.drawn = drawn
+    return module
+
+
+@pytest.mark.parametrize(
+    ("column", "heading"),
+    [
+        ("case_id", "Case ID"),
+        ("flagged_inr", "Flagged (\u20b9)"),
+        ("CASE_BRANCH_REGION", "Case branch region"),
+        ("pep_flag", "PEP flag"),
+        ("latency_ms", "Latency (ms)"),
+    ],
+)
+def test_headings_are_human(ui, column: str, heading: str) -> None:  # type: ignore[no-untyped-def]
+    assert ui.label(column) == heading
+
+
+def test_auto_chart_picks_by_shape(ui) -> None:  # type: ignore[no-untyped-def]
+    import pandas as pd
+
+    assert ui.auto_chart(pd.DataFrame({"N": [7]}))
+    assert ui.auto_chart(pd.DataFrame({"BRANCH": ["A", "B"], "CASES": [5, 2]}))
+    assert ui.auto_chart(pd.DataFrame({"DAY": ["2022-09-03", "2022-09-04"], "N": [1, 3]}))
+    assert ui.drawn[0] == "metric" and len(ui.drawn) == 3
+    # No obvious chart: two measures, text only, or a single row of categories.
+    assert not ui.auto_chart(pd.DataFrame({"A": ["x", "y"], "B": [1, 2], "C": [3, 4]}))
+    assert not ui.auto_chart(pd.DataFrame({"A": ["x", "y"], "B": ["p", "q"]}))
+    assert not ui.auto_chart(pd.DataFrame({"A": ["x"], "B": [1]}))
+    assert not ui.auto_chart(pd.DataFrame())

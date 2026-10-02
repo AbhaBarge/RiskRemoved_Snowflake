@@ -1,10 +1,14 @@
 """Principal Officer sign-off: the human gate. Nothing is filed without it."""
 
+import html
+
+import pandas as pd
 import streamlit as st
-from lib import auth, data
+from lib import auth, data, ui
 from lib.db import PROC, call, reason
 from lib.str_view import review_result, str_document
 
+ui.style()
 st.title("Principal Officer sign-off")
 st.caption(
     "PML (Maintenance of Records) Rules, Rule 7: the Principal Officer bears the filing "
@@ -56,6 +60,14 @@ else:
         for r in queue.itertuples()
     }
     aid = st.selectbox("STR awaiting attestation", list(labels), format_func=labels.get)
+    due = pd.to_datetime(queue.set_index("artifact_id").loc[aid, "sla_deadline"])
+    days = (due.normalize() - pd.Timestamp.now(tz=due.tz).normalize()).days
+    colour = ui.RED if days <= 2 else ui.AMBER if days <= 5 else ui.TEAL
+    ui.callout(
+        f"{ui.chip(f'{days} day(s) left' if days >= 0 else f'{-days} day(s) overdue', colour)}"
+        f" Filing deadline <b>{html.escape(str(due)[:10])}</b>: the governed number of working "
+        "days after suspicion was established, read from POLICY_CLAUSE when the STR was drafted."
+    )
     a = data.artifact(aid)
     if a:
         left, right = st.columns([3, 2])
@@ -96,7 +108,7 @@ reg = data.attestations()
 if reg.empty:
     st.caption("No attestations yet.")
 else:
-    st.dataframe(reg, hide_index=True, width="stretch")
+    st.dataframe(ui.pretty(reg), hide_index=True, width="stretch")
 bad = data.filing_integrity()
 st.metric(
     "Filed STRs without a matching, hash-bound attestation",
