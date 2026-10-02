@@ -617,6 +617,8 @@ class AppSpec(_Frozen):
     runtime_name: str
     #: Empty: the account's DEFAULT_STREAMLIT_COMPUTE_POOL, read at deploy time.
     compute_pool: str = ""
+    #: Fully qualified artifact repository for the app's packages; empty for none.
+    artifact_repository: str = ""
 
     @field_validator("name", "stage")
     @classmethod
@@ -641,6 +643,16 @@ class AppSpec(_Frozen):
     @classmethod
     def _pool(cls, v: str) -> str:
         return validate_identifier(v, what="Compute pool") if v else ""
+
+    @field_validator("artifact_repository")
+    @classmethod
+    def _repository(cls, v: str) -> str:
+        if not v:
+            return ""
+        parts = v.split(".")
+        if len(parts) != 3:
+            raise ConfigError(f"app.artifact_repository must be DB.SCHEMA.NAME, got {v!r}")
+        return ".".join(validate_identifier(p, what="Artifact repository") for p in parts)
 
     @field_validator("title")
     @classmethod

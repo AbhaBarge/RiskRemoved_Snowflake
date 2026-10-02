@@ -193,6 +193,11 @@ class AppDeployer:
 
     def create(self, pool: str) -> None:
         spec = self.settings.app
+        repo = (
+            f"  ARTIFACT_REPOSITORIES = ({spec.artifact_repository})\n"
+            if spec.artifact_repository
+            else ""
+        )
         self.sql(
             f"CREATE OR REPLACE STREAMLIT {self.fq_name}\n"
             f"  FROM '@{self.stage}'\n"
@@ -200,6 +205,7 @@ class AppDeployer:
             f"  QUERY_WAREHOUSE = {self.warehouse}\n"
             f"  RUNTIME_NAME = '{spec.runtime_name}'\n"
             f"  COMPUTE_POOL = {pool}\n"
+            f"{repo}"
             f"  TITLE = '{spec.title}'\n"
             "  COMMENT = 'Risk & Compliance Copilot demo surface (riskcopilot app deploy).'"
         )

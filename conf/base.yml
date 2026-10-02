@@ -154,8 +154,8 @@ case_tools:
 # Streamlit in Snowflake app (Phase 4). A thin client: it reads tables and views
 # and calls procedures, nothing else. `riskcopilot app render` writes the names
 # below into app/app_config.json, so the app holds no literal object name either.
-# The trial account has no external access, so the app ships no dependency file
-# and uses only the container runtime's pre-installed packages.
+# The trial account has no external access, so packages come from Snowflake's
+# built-in PyPI mirror (app.artifact_repository).
 app:
   name: RISK_COPILOT_APP
   title: Risk & Compliance Copilot
@@ -165,6 +165,11 @@ app:
   runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
   # Empty = the account's DEFAULT_STREAMLIT_COMPUTE_POOL, read at deploy time.
   compute_pool: ""
+  # Where the container runtime installs app/pyproject.toml's packages from.
+  # The trial has no external access, so it must be Snowflake's built-in PyPI
+  # mirror (usable by PUBLIC via SNOWFLAKE.PYPI_REPOSITORY_USER). The runtime
+  # will not start without a dependency file, and an empty one has no Streamlit.
+  artifact_repository: SNOWFLAKE.SNOWPARK.PYPI_SHARED_REPOSITORY
 
 cortex:
   search_service: REGULATORY_SEARCH_SVC

@@ -6,6 +6,7 @@ No connection: the deploy runs against a recording fake session.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -212,6 +213,8 @@ def test_deploy_uploads_then_creates_on_the_default_pool(repo_root: Path, tmp_pa
     )
     assert "QUERY_WAREHOUSE = RC_DEMO_WH_DEV" in create
     assert "RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11' COMPUTE_POOL = POOL_A" in create
+    # Packages come from Snowflake's PyPI mirror: the trial has no external access.
+    assert "ARTIFACT_REPOSITORIES = (SNOWFLAKE.SNOWPARK.PYPI_SHARED_REPOSITORY)" in create
     assert s.index(create) < s.index(f"ALTER STREAMLIT {app} ADD LIVE VERSION FROM LAST")
     assert sorted(session.puts) == sorted(
         [(CONFIG_FILE, f"@{stage}"), ("db.py", f"@{stage}/lib"), (MAIN_FILE, f"@{stage}")]
@@ -237,13 +240,23 @@ def test_configured_pool_wins_over_the_account_default(repo_root: Path, tmp_path
     assert not any(x.startswith("SHOW PARAMETERS") for x in session.statements)
 
 
-def test_the_app_ships_an_empty_dependency_file(repo_root: Path) -> None:
+def test_the_app_declares_streamlit_and_its_imports(repo_root: Path) -> None:
     # The container runtime will not start without a dependency file ("Installing
-    # dependencies failed because the pyproject.toml file does not exist"), and any
-    # package listed in it needs a package index, which the trial cannot reach.
+    # dependencies failed because the pyproject.toml file does not exist"), and it
+    # installs exactly what is listed: an empty list failed with "Failed to get the
+    # version of the Streamlit library ... >=1.48.0".
     import tomllib
 
     files = {p.as_posix() for p in app_files(repo_root / "app")}
     assert "pyproject.toml" in files
     project = tomllib.loads((repo_root / "app" / "pyproject.toml").read_text("utf-8"))["project"]
-    assert project["dependencies"] == []
+    names = {re.split(r"[\[<>=]", d)[0] for d in project["dependencies"]}
+    assert names == {"streamlit", "pandas", "altair"}
+    assert any(d.startswith("streamlit[snowflake]") for d in project["dependencies"])
+
+
+def test_artifact_repository_must_be_fully_qualified(repo_root: Path) -> None:
+    with pytest.raises((ConfigError, ValueError), match="artifact_repository"):
+        Settings.load(
+            repo_root=repo_root, profile="dev", overrides={"app": {"artifact_repository": "PYPI"}}
+        )
