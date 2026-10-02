@@ -734,6 +734,45 @@ def app_deploy() -> None:
     console.print(f"Open: {result.url or '(Snowsight > Projects > Streamlit)'}")
 
 
+@app_cli.command("reset-cases")
+def app_reset_cases(
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+) -> None:
+    """Reopen every case and delete its evidence, drafts, reviews and sign-offs.
+
+    For re-running the demo on the same cases. Signals, case-signal links and
+    the audit log are kept; the reset logs itself there.
+    """
+    from risk_copilot.pipeline.app import AppError, reset_cases, workflow_counts
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    try:
+        with open_session(settings, unattended=True) as session:
+            counts = workflow_counts(settings, session)
+            if not any(counts.values()):
+                console.print("Nothing to reset: every case is OPEN with no workflow rows.")
+                return
+            table = Table(title=f"Reset in {settings.db()} (profile '{settings.profile}')")
+            table.add_column("Table", style="cyan")
+            table.add_column("Rows", justify="right")
+            for name, n in counts.items():
+                label = "CASE_RECORD (reopened)" if name == "CASE_RECORD" else f"{name} (deleted)"
+                table.add_row(label, f"{n:,}")
+            console.print(table)
+            if not yes and not typer.confirm("Delete these rows and reopen the cases?"):
+                console.print("Cancelled; nothing changed.")
+                raise typer.Exit(code=1)
+            result = reset_cases(settings, session)
+    except (AppError, SessionError) as exc:
+        console.print(f"[red]Reset failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]Reset[/green]: {sum(result.deleted.values()):,} workflow rows deleted, "
+        f"{result.cases_reopened} cases reopened. The audit log is kept."
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Stubs -- implemented in later phases, declared now so the surface is stable.
 # --------------------------------------------------------------------------- #

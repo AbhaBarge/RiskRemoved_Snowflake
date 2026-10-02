@@ -1,6 +1,6 @@
-# Build log -- Phase 2 (data synthesis) and Phase 3 (load, pipeline, replay)
+# Build log -- Phase 2 (data synthesis), Phase 3 (load, pipeline, replay) and Phase 4 (demo app)
 
-Progress record for Phases 2 and 3. It covers what is done, what was decided and
+Progress record for Phases 2 to 4. It covers what is done, what was decided and
 by whom, what was measured, and where the build departs from the plan. Kept
 current at each step. Phase 3 has its own status table and step log below the
 Phase 2 sections; measured facts and decisions are numbered continuously.
@@ -993,3 +993,100 @@ In `test_policy_seed.py`: the rule row is unchanged by the role keys; the hash e
 **Credits and state left behind:** the task is suspended again (it ran 3 times, plus 3 SKIPPED checks); the stream is empty; the five dynamic tables are ACTIVE on their 60-minute dev lags. The dev data equals the full load again (M40), so a plain `load` without `--replace` would refuse. To repeat the demo, run `load --replace` (hold-back), then refresh, then `replay`.
 
 **Verification:** 555 passed, 3 skipped; ruff, mypy (31 files), lint (dev + demo, 14 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 51 checks, 0 failed, 14 warnings.
+
+# Phase 4 -- the demo app: case tools, Reviewer, human gate, Ask
+
+Plan: `.snowflake/cortex/plans/phase4-ship-demo-ui.plan.md`, approved 10-01. Trial
+account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
+(`TEMPLATE_V1`) because the trial blocks `AI_COMPLETE`.
+
+## Status
+
+| Step | Scope | State | Commit |
+|---|---|---|---|
+| 1 | SiS prerequisites probe | **Done** | -- |
+| 2 | Read-only app, deployed | **Done** | `f2172c6` |
+| 3 | `GATHER_EVIDENCE`, `DRAFT_STR` | **Done** | `b52a86e` |
+| 4 | `REVIEW_STR` | **Done** | `95f72c1` |
+| 5 | `ATTEST_STR` | **Done** | `04b63be` |
+| 6 | Workflow in the app | **Done** | `19b9d60` |
+| 7 | Semantic view + Ask | **Done** | `fabb7c0` |
+| -- | Container runtime fixes | **Done** | `88cc2f4`, `0c2a2fc` |
+| 8 | `reset-cases`, rehearsal, runbook, docs | **Done**, except the streaming rehearsal (open item 1) | this commit |
+
+## Decisions
+
+| # | Decision | Why |
+|---|---|---|
+| D50 | The case tools are stored procedures, and the narrative is a governed template | The same procedures become `CREATE AGENT` tools once the account allows agents. Only the template step changes when `AI_COMPLETE` is available |
+| D51 | The app is a thin client. Names reach it through `app/app_config.json`, rendered from `conf/`. Deploy is plain SQL: `PUT`, then `CREATE STREAMLIT` on the container runtime | The app cannot import `risk_copilot` in SiS. Plain SQL keeps deploy on the same key-pair session as every other command, with no Snowflake CLI |
+| D52 | The app's packages come from `SNOWFLAKE.SNOWPARK.PYPI_SHARED_REPOSITORY` (`app.artifact_repository`) | M42. The trial has no external access, and this mirror needs none |
+| D53 | `ATTEST_STR` runs `EXECUTE AS CALLER` and checks `IS_ROLE_IN_SESSION` (compliance role), REVIEWED + latest review APPROVE, and approved hash = stored hash = recomputed hash. It is the only setter of FILED | PML Rule 7. The gate is code, not an instruction to a model |
+| D54 | The Reviewer is deterministic. It re-runs each logged query from its text and bind, then compares hashes and every figure | A critic that is a model can share the drafter's errors. A recompute cannot |
+| D55 | `riskcopilot app reset-cases` deletes the six workflow tables and reopens the cases, in one transaction. It keeps SIGNAL, CASE_SIGNAL and the audit log, and logs itself as an OPERATOR row | The demo has to run more than once on the same ten cases. It breaks append-only on purpose, so it is a demo tool only |
+
+## Measured facts
+
+| # | Fact | Source |
+|---|---|---|
+| M42 | The container runtime will not start without `pyproject.toml` ("Installing dependencies failed because the pyproject.toml file does not exist"). With an empty dependency list it fails with "Failed to get the version of the Streamlit library ... >=1.48.0". It starts with `streamlit[snowflake]`, `pandas` and `altair` from the mirror | Deployed app, 10-02 |
+| M43 | Inside SiS, `CURRENT_USER()` is the app's service user (`STPLATSTREAMLIT37820976`) and `CURRENT_ROLE()` is the owner, `RC_ADMIN_DEV`. An audit row written from SiS therefore names the app, not the viewer | Query history and AGENT_ACTION_LOG |
+| M44 | Cortex Analyst works from inside SiS: the service user logged one successful CORTEX_ANALYST row (10-02 05:00 PDT). The app's page queries also succeed there | AGENT_ACTION_LOG, query history |
+| M45 | `RC_ADMIN_DEV` holds `COMPLIANCE_OFFICER_DEV`, so `IS_ROLE_IN_SESSION` is true even with secondary roles off. In an owner's-rights app, the gate on the viewer is therefore the procedure's checks plus the typed, confirmed attestation, not the viewer's role | `SHOW GRANTS OF ROLE`, live |
+| M46 | Rehearsal latencies (X-Small): gather 4.3 s (1.3-1.6 s re-run), draft 5.1 / 4.4 s, review 4.0 s, attest 1.9 s, Analyst 5.3 s | AGENT_ACTION_LOG.latency_ms |
+| M47 | In the rehearsal, one Gather click logged 3 GATHER_EVIDENCE rows; the 2 extras came just before each Draft. Flipping the defect toggle alone did not reproduce it. Data is unaffected: the procedure is idempotent and inserted nothing | AGENT_ACTION_LOG |
+
+## Steps 2-7
+
+- **Step 2.** Overview (KPIs, case queue, signals, EVAL_RUN recall / precision), Case (KYC, the rule that fired, the deposits against the threshold) and Governance (clauses in force, rule registry, action log, eval runs). `riskcopilot app render | run | deploy`.
+- **Step 3.** `GATHER_EVIDENCE` writes pointers (the signal, each cited deposit, the party, each clause in force) and 4 logged queries with text, bind, canonical snapshot and SHA-256 (form SQL-1). `DRAFT_STR` writes a versioned FINDING in which every figure is a `computed_values` entry tied to a `query_log_id`, and an STR ARTIFACT from the `FIU_IND_STR` template. `plant_defect` inflates the total by 10% and cites a nonexistent clause. Hero: 18 evidence rows, 4 logs; a re-run inserts 0.
+- **Step 4.** `REVIEW_STR`: on the hero, the planted draft got REJECT with both defects named, and the clean redraft got APPROVE (4 queries, 13 figures, 6 clauses, 18 evidence ids).
+- **Step 5.** `ATTEST_STR` (D53). Refused live: a rejected draft, a bad decision, a blank attestor, an artifact edited after review, re-attesting, and redrafting after filing.
+- **Step 6.** The case-page buttons, the Sign-off page (name + explicit confirmation, refusals shown verbatim, attestation register, a live "filed without attestation" count) and Overview's Live mode fragment. Driven headless with AppTest.
+- **Step 7.** `SV_RISK_COPILOT` over transactions, customers, cases, signals, findings and STRs. It excludes GROUND_TRUTH, identity numbers and free text, since there is no masking on this edition. The Ask page calls Analyst over REST with the session token, runs the SQL, shows it, and logs it.
+- **Fixes.** M42, then D52.
+
+## Step 8 -- reset, rehearsal, runbook
+
+**What changed**
+- `pipeline/app.py`: `WORKFLOW_TABLES` (deleted children first), `workflow_counts`, `reset_cases` (D55). One transaction: `ROLLBACK` and `AppError` on any failure, and the audit row's values are bound.
+- `cli.py`: `riskcopilot app reset-cases [--yes]` prints what it would delete and reopen, then asks for confirmation. Nothing to reset exits 0.
+- `pyproject.toml`: S608 ignored for `pipeline/app.py`, for the loader's reason (configured, validated identifiers and module constants only).
+- `README.md`: the status table brought up to date, a **Demo runbook**, and the known blockers rewritten.
+- Tests (`tests/unit/test_app.py`, +4):
+  - deletes run children first, inside BEGIN/COMMIT, and every case field the procedures set is reset;
+  - SIGNAL, CASE_SIGNAL and the audit log are never deleted, and the reset's own row carries the counts and case ids;
+  - a failure rolls back;
+  - the counts cover every table.
+
+**Live, on RISK_COPILOT_DEV**
+
+| # | Step | Result |
+|---|---|---|
+| 0 | State before | 7 OPEN, 2 REVIEWED, 1 CLOSED, all left over from the step 4-6 proofs; 86 workflow rows |
+| 1 | `app reset-cases --yes` | 86 rows deleted (1 / 6 / 7 / 7 / 12 / 53), 3 cases reopened; 10 OPEN; audit log 32 -> 33 |
+| 2 | `app reset-cases` again | "Nothing to reset", exit 0 |
+| 3 | Click path, local app (`app run`) | the runbook's steps 1-11, all as listed. v1 `STR-f1265ae30bbcd279` REJECTED (numeric and citation checks failed); v2 `STR-86a2d570947bae4e` APPROVE then FILED, `ATT-be50f3877a7cb58d` bound to hash `3dc473b4...`; hero CLOSED / STR_FILED; integrity count 0 |
+| 4 | A filed case | Gather, Draft, Review and the toggle are all disabled |
+| 5 | Deployed app | M43, M44 |
+
+**Departures from the plan**
+
+| Plan said | Built | Why |
+|---|---|---|
+| The SiS app ships no `pyproject.toml` | It ships one, with 3 packages from the PyPI mirror | M42, D52 |
+| `snow streamlit deploy --replace` | `PUT` + `CREATE STREAMLIT` + `ADD LIVE VERSION FROM LAST` | D51 |
+| Only `COMPLIANCE_OFFICER` can call `ATTEST_STR`, by grant | A caller's-rights role check in the procedure | D53. A caller *without* the role has not been proven live: that role holds no grants in dev yet |
+| Rehearsal: hold-back load, replay --inject, live hero | Reset plus the click path on the loaded data | Reload and task resume need the user's OK first (plan, step 6). Open item 1 |
+| -- | `reset-cases` | D55, so the demo can be repeated |
+
+**Open items**
+1. The streaming rehearsal (`load --replace`, refresh, route, resume the task, `replay --inject`, with Overview's Live mode on) has not been run with the app. It needs the user's OK.
+2. Sign-off from inside SiS has not been clicked yet. M45 says the role check passes there; the runbook has it as a pre-demo check.
+3. Per-viewer identity in SiS (M43). Restricted caller's rights needs Streamlit 1.53.1 or later on the container runtime (Snowflake docs). Later work.
+4. M47, the double-fired Gather. Harmless, but it adds audit rows during a demo.
+5. Streamlit warns that `use_container_width` is deprecated; the app still uses it.
+
+**State left behind:** the hero case is FILED, from the rehearsal. Case `CASE-15e77e72e5fbdf92` is INVESTIGATING, from the M47 test. The task is suspended and the app is deployed at `0c2a2fc` (app/ is unchanged since). Run `riskcopilot -p dev app reset-cases` before the demo.
+
+**Verification:** 593 passed, 3 skipped; ruff, mypy (32 files), lint (dev + demo, 20 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 51 checks, 0 failed, 14 warnings.

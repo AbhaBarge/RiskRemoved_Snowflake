@@ -8,6 +8,8 @@ rendered here from the same Settings the SQL stages use.
 
 Deploy is plain SQL, no Snowflake CLI: ``PUT`` the files to a stage, then
 ``CREATE OR REPLACE STREAMLIT ... FROM`` that stage on the container runtime.
+
+``reset-cases`` undoes the case workflow so the demo can be run again.
 """
 
 from __future__ import annotations
@@ -252,3 +254,94 @@ def deploy_app(settings: Settings, session: Any, **kwargs: Any) -> AppDeployResu
         return AppDeployer(settings, session, **kwargs).run()
     except ConfigError as exc:
         raise AppError(str(exc)) from exc
+
+
+# --------------------------------------------------------------------------- #
+# Reset -- put every case back where the router left it, for a demo re-run
+# --------------------------------------------------------------------------- #
+
+#: What the case workflow writes, children first (each references a later one).
+#: SIGNAL and CASE_SIGNAL are detection's output and stay.
+WORKFLOW_TABLES = (
+    "ATTESTATION",
+    "REVIEW",
+    "ARTIFACT",
+    "FINDING",
+    "EVIDENCE_QUERY_LOG",
+    "EVIDENCE",
+)
+#: A case exactly as ROUTE_SIGNALS opens it: no suspicion clock, no SLA, not closed.
+_UNTOUCHED = (
+    "status = 'OPEN' AND suspicion_established_at IS NULL AND sla_deadline IS NULL "
+    "AND closed_at IS NULL AND closure_reason IS NULL"
+)
+
+
+@dataclass(frozen=True)
+class ResetResult:
+    deleted: dict[str, int]
+    cases_reopened: int
+
+
+def workflow_counts(settings: Settings, session: Any) -> dict[str, int]:
+    """Rows in each workflow table, plus the cases a reset would reopen."""
+    ev = settings.fq("evidence")
+    counts = {
+        t: int(execute(session, f"SELECT COUNT(*) FROM {ev}.{t}")[0][0]) for t in WORKFLOW_TABLES
+    }
+    counts["CASE_RECORD"] = int(
+        execute(session, f"SELECT COUNT(*) FROM {ev}.CASE_RECORD WHERE NOT ({_UNTOUCHED})")[0][0]
+    )
+    return counts
+
+
+def reset_cases(settings: Settings, session: Any) -> ResetResult:
+    """Delete the workflow's rows and reopen every case, in one transaction.
+
+    This deliberately breaks the evidence chain's append-only discipline, so it
+    is a demo tool only: it exists so the same ten cases can be investigated,
+    drafted, reviewed and attested again in front of an audience. The audit log
+    is kept, and the reset writes its own row there with what it deleted, so
+    the trail shows the earlier runs and the reset that wiped them.
+    """
+    ev, audit = settings.fq("evidence"), settings.fq("audit")
+    execute(session, "BEGIN")
+    try:
+        reopened_ids = [
+            str(r[0])
+            for r in execute(
+                session,
+                f"SELECT case_id FROM {ev}.CASE_RECORD WHERE NOT ({_UNTOUCHED}) ORDER BY case_id",
+            )
+        ]
+        deleted = {t: int(execute(session, f"DELETE FROM {ev}.{t}")[0][0]) for t in WORKFLOW_TABLES}
+        execute(
+            session,
+            f"UPDATE {ev}.CASE_RECORD SET status = 'OPEN', suspicion_established_at = NULL, "
+            "sla_deadline = NULL, closed_at = NULL, closure_reason = NULL, "
+            f"updated_at = CURRENT_TIMESTAMP()::TIMESTAMP_NTZ WHERE NOT ({_UNTOUCHED})",
+        )
+        execute(
+            session,
+            f"INSERT INTO {audit}.AGENT_ACTION_LOG (\n"
+            "    log_id, session_id, turn_number, agent_mode, invoked_by, snowflake_user,\n"
+            "    user_role, tools_invoked, tool_arguments, case_ids_touched, model_version,\n"
+            "    prompt_version, rows_touched, outcome\n"
+            ")\n"
+            "SELECT 'LOG-' || UUID_STRING(), CURRENT_SESSION()::VARCHAR,\n"
+            f"       (SELECT COUNT(*) + 1 FROM {audit}.AGENT_ACTION_LOG\n"
+            "         WHERE session_id = CURRENT_SESSION()::VARCHAR),\n"
+            "       'OPERATOR', 'USER', CURRENT_USER(), CURRENT_ROLE(),\n"
+            "       ARRAY_CONSTRUCT('RESET_CASES'), PARSE_JSON(?), PARSE_JSON(?),\n"
+            "       'n/a', 'n/a', ?, 'SUCCESS'",
+            [
+                json.dumps({"deleted": deleted}, sort_keys=True),
+                json.dumps(reopened_ids),
+                sum(deleted.values()) + len(reopened_ids),
+            ],
+        )
+        execute(session, "COMMIT")
+    except Exception as exc:
+        execute(session, "ROLLBACK")
+        raise AppError(f"Reset rolled back; nothing changed.\n{exc}") from exc
+    return ResetResult(deleted=deleted, cases_reopened=len(reopened_ids))

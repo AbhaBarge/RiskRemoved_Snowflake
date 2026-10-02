@@ -115,6 +115,10 @@ ignore = [
 # Replay reuses the loader's builders under the same rule: configured and live,
 # validated identifiers only; every timestamp, party id and cohort is bound.
 "src/risk_copilot/pipeline/replay.py" = ["S608"]
+# Deploy and reset-cases interpolate configured schema/object names (validated
+# by config.validate_identifier) and module-constant table names; the reset's
+# audit values are bound.
+"src/risk_copilot/pipeline/app.py" = ["S608"]
 
 [tool.ruff.format]
 quote-style = "double"

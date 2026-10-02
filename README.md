@@ -21,13 +21,14 @@ SIGNAL  ->  EVIDENCE  ->  FINDING  ->  ARTIFACT  ->  ATTESTATION
 |---|---|---|
 | 0 | Repo scaffold, layered config, CLI, `doctor`, capability gating | **Done** |
 | 1 | Bootstrap + full DDL (28 tables, 7 schemas) | **Done, deployed** |
-| 2 | Data synthesis: subgraph sampling, ID maps, reskin, injection, validation gates | Next |
-| 3 | Load, dynamic tables, idempotent streams/tasks, replay harness | Pending |
-| 4 | Semantic view, Analyst NL→SQL, 8 procedures, policy seeding | Pending — mostly unblocked |
-| 5 | ML, evaluation suites, Streamlit, governance, agent object | Pending — partly blocked |
+| 2 | Data synthesis: subgraph sampling, ID maps, reskin, injection, validation gates | **Done** (dev; demo profile gated, D24) |
+| 3 | Load, dynamic tables, idempotent streams/tasks, replay harness | **Done** on dev |
+| 4 | Streamlit-in-Snowflake demo app, case-tool procedures, Reviewer, human gate, semantic view + Analyst | **Done** on dev ([demo runbook](#demo-runbook)) |
+| 5 | ML, evaluation suites, governance, agent object, `AI_COMPLETE` narrative | Pending — partly blocked |
 
-125 unit tests pass; all SQL templates render for both profiles; key-pair auth
-works unattended; `deploy --stage bootstrap` is idempotent across runs.
+593 unit tests pass (3 skip without capability evidence for the configured
+connection); all SQL templates render for both profiles; key-pair auth works
+unattended. Build history and measurements: [`docs/build-log.md`](docs/build-log.md).
 
 **Account capability is measured, not assumed.** A 98-probe sweep against the
 build account (Standard edition, trial, `AWS_AP_SOUTHEAST_7`) produced
@@ -147,10 +148,67 @@ ranking, `TOP_INSIGHTS`, Model Registry, `snowflake.ml.jobs` graph embeddings,
 never supply a number that appears in an artifact.
 `RULE_DEFINITION.admissible_as_primary_evidence` enforces this in the schema.
 
+## Demo runbook
+
+Judges open the app in Snowsight (Projects > Streamlit > `RISK_COPILOT_APP_DEV`).
+It runs in Streamlit in Snowflake on the container runtime, with the owner's
+rights. Every button is one stored-procedure call, and every call writes a row
+to `AUDIT.AGENT_ACTION_LOG`.
+
+**Before the demo**
+
+```bash
+riskcopilot -p dev app reset-cases        # every case back to OPEN; shows what it deletes, then asks
+riskcopilot -p dev app deploy             # only if app/ changed since the last deploy
+```
+
+`reset-cases` deletes the workflow's rows (EVIDENCE, EVIDENCE_QUERY_LOG, FINDING,
+REVIEW, ARTIFACT, ATTESTATION) and reopens the cases, in one transaction. Signals
+and case links are untouched. The audit log is kept, and the reset adds its own
+row, so the trail shows both the earlier runs and the reset. This breaks the
+evidence chain's append-only rule on purpose, so use it only on a demo database.
+
+Then open the deployed app once and check that it loads. Also click through one
+sign-off on a case you will not demo, then reset again. That sign-off has not yet
+been exercised from inside Streamlit in Snowflake; Ask has, and works there.
+
+**Click path** (times measured on the dev trial account, X-Small warehouse)
+
+| # | Page | Action | Shows | Time |
+|---|---|---|---|---|
+| 1 | Overview | -- | 5,032 transactions, 10 signals, 10 open cases, 0 STRs filed, recall / precision 10/10 | -- |
+| 2 | Overview | **Investigate** (the hero is preselected) | Kamya Dhar, `CASE-4399c4c86db5c6ea`: 10 cash deposits, ₹94.03 lakh, 2 accounts, all under the ₹10 lakh line | -- |
+| 3 | Case | **1 · Gather evidence** | Status INVESTIGATING; 18 evidence pointers, 4 logged queries with hashes | ~4 s |
+| 4 | Case | Turn on **Plant a defect**, then **2 · Draft STR** | Draft v1 claims ₹1,03,42,961 and cites `CTR_CASH_THRESHOLD_2026` | ~5 s |
+| 5 | Case | **3 · Run Reviewer** | **REJECT**, with 2 defects: the stated total vs the ₹94,02,691 its query returns, and a clause that does not exist. 4 queries re-run, no model | ~4 s |
+| 6 | Case | Turn the defect off, then **2 · Draft STR**, then **3 · Run Reviewer** | v2 states ₹94,02,691 and gets **APPROVE**: all 4 checks pass; v1 stays in the version history | ~9 s |
+| 7 | Case | **Go to sign-off** | The approved STR, its hash, the Reviewer's checklist | -- |
+| 8 | Sign-off | Name, Attest, **Sign** without ticking the box | Refused: "Tick the confirmation to sign." | -- |
+| 9 | Sign-off | Tick, **Sign** | ATTESTED: the STR is FILED, the attestation records its hash; "filed without attestation" stays 0 | ~2 s |
+| 10 | Ask the data | "How many cases are there by status?" | Cortex Analyst's SQL and a chart: 1 CLOSED, 9 OPEN | ~5 s |
+| 11 | Governance & audit | Action log tab | The run above, one row per call, from the reset onward | -- |
+
+After step 9 the hero's buttons are disabled: a filed case cannot be redrafted.
+
+**Live streaming (optional, needs the routing task)**
+
+This shows the hero's deposits arriving and the case appearing on Overview with
+**Live mode** on. Running it reloads RAW and resumes the routing task, so it
+costs credits.
+
+```bash
+riskcopilot -p dev load --replace          # hold back from replay.hold_back_from
+# refresh the dynamic tables, then route once (docs/build-log.md, Phase 3 step 8)
+riskcopilot -p dev replay --inject structuring_burst
+```
+
+Suspend the task afterwards. This path was last rehearsed in Phase 3, step 8,
+and not since the app was added.
+
 ## Development
 
 ```bash
-pytest -q                                  # 101 unit tests, no Snowflake needed
+pytest -q                                  # unit tests, no Snowflake needed
 ruff check src tests && ruff format src
 mypy src
 python -m risk_copilot.pipeline.lint       # render all SQL, both profiles
@@ -177,13 +235,12 @@ docs/            architecture docs and CoCo lifecycle evidence
 
 ## Known blockers
 
-**Snowflake authentication.** The `ASHWINRAVI004` connection uses
-`externalbrowser` and the account returns SAML error **390190** (identity
-provider parameter misconfigured — an account-level setting). This blocks
-`deploy`, `load`, and verification of `CREATE SEMANTIC VIEW` / `CREATE AGENT`
-syntax, model availability and Enterprise ML gating.
+**Snowflake authentication** (resolved). The `ASHWINRAVI004` connection's
+`externalbrowser` login returns SAML error **390190**, an account-level setting.
+Every command therefore authenticates with a key pair through
+`RC_SNOWFLAKE_PRIVATE_KEY_PATH`, which unattended runs need anyway.
 
-Everything offline — config, generation, SQL rendering, unit tests — works. To
-unblock, either configure key-pair auth and set
-`RC_SNOWFLAKE_PRIVATE_KEY_PATH` (also required for unattended automations), or
-have an ACCOUNTADMIN review the SSO security integration.
+**Trial account limits.** The trial blocks `AI_COMPLETE`, agent invocation,
+Cortex Search and external access (509009). STR narratives are therefore filled
+from a governed template (`author_model = TEMPLATE_V1`), and the app installs
+its packages from Snowflake's built-in PyPI mirror.
