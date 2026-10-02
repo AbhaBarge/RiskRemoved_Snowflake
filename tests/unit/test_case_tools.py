@@ -25,8 +25,9 @@ def test_procedures_stage_renders_one_object_per_statement(repo_root: Path, prof
         "03_draft_str.sql",
         "04_review_str.sql",
         "05_attest_str.sql",
+        "06_reset_cases.sql",
     ]
-    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1, 1]
+    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1, 1, 1]
 
 
 def test_tool_names_carry_the_profile_suffix(repo_root: Path) -> None:
@@ -134,3 +135,41 @@ def test_attestation_binds_the_reviewed_hash_and_is_the_only_way_to_file(repo_ro
     assert not any(re.search(r"SET\s+status\s*=[^;]*'FILED'", s) for s in others)
     # A refusal is written to the audit log before it is re-raised.
     assert "'REFUSED'" in attest
+
+
+WORKFLOW = ("ATTESTATION", "REVIEW", "ARTIFACT", "FINDING", "EVIDENCE_QUERY_LOG", "EVIDENCE")
+
+
+def test_reset_deletes_the_workflow_children_first_and_keeps_detection(repo_root: Path) -> None:
+    reset = _rendered(repo_root, "dev")["06_reset_cases.sql"]
+    assert "PROCEDURE RISK_COPILOT_DEV.EVIDENCE_CHAIN.RESET_CASES_DEV(" in reset
+    deletes = re.findall(r"DELETE FROM RISK_COPILOT_DEV\.EVIDENCE_CHAIN\.(\w+);", reset)
+    # An attestation, review or artifact is never left pointing at a deleted parent.
+    assert deletes == list(WORKFLOW)
+    # Detection's output and the audit trail are never deleted.
+    for kept in ("SIGNAL", "CASE_SIGNAL", "CASE_RECORD", "AGENT_ACTION_LOG"):
+        assert not re.search(rf"DELETE FROM \S*\.{kept}\b", reset), kept
+
+
+def test_reset_reopens_every_case_field_the_tools_set(repo_root: Path) -> None:
+    reset = _rendered(repo_root, "dev")["06_reset_cases.sql"]
+    (update,) = re.findall(
+        r"UPDATE RISK_COPILOT_DEV\.EVIDENCE_CHAIN\.CASE_RECORD(.*?);", reset, re.S
+    )
+    assert "status = 'OPEN'" in update
+    # Everything DRAFT_STR and ATTEST_STR write on a case.
+    for column in ("suspicion_established_at", "sla_deadline", "closed_at", "closure_reason"):
+        assert f"{column} = NULL" in update
+
+
+def test_reset_is_one_transaction_logged_and_a_dry_run_changes_nothing(repo_root: Path) -> None:
+    reset = _rendered(repo_root, "dev")["06_reset_cases.sql"]
+    body = reset[reset.index("BEGIN TRANSACTION") :]
+    dry = body[body.index("IF (dry_run)") : body.index("END IF;")]
+    # The dry run counts, then leaves before any write.
+    assert "ROLLBACK" in dry and "RETURN" in dry
+    assert body.index("END IF;") < body.index("DELETE FROM")
+    insert = body.index("INSERT INTO RISK_COPILOT_DEV.AUDIT.AGENT_ACTION_LOG")
+    assert body.rindex("DELETE FROM") < insert < body.index("COMMIT")
+    assert "'OPERATOR'" in body and "'via', :via" in body
+    assert "WHEN OTHER THEN" in body and "ROLLBACK;" in body[body.index("WHEN OTHER") :]

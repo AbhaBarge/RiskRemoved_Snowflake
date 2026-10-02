@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from lib.db import DT, S, cached
+from lib.db import DT, PROC, S, cached, variant
 
 EV = S["evidence"]
 GOV = S["governance"]
@@ -323,3 +323,9 @@ def eval_runs() -> pd.DataFrame:
         FROM {GT}.EVAL_RUN ORDER BY finished_at DESC
         """
     )
+
+
+def reset_preview() -> dict[str, Any]:
+    """What a reset would delete and reopen. RESET_CASES with dry_run: changes nothing."""
+    df = cached(f"CALL {PROC['reset_cases']}(?, ?)", ("APP", True))
+    return variant(df.iloc[0, 0])

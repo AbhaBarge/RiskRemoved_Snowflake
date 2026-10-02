@@ -1090,3 +1090,26 @@ account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
 **State left behind:** the hero case is FILED, from the rehearsal. Case `CASE-15e77e72e5fbdf92` is INVESTIGATING, from the M47 test. The task is suspended and the app is deployed at `0c2a2fc` (app/ is unchanged since). Run `riskcopilot -p dev app reset-cases` before the demo.
 
 **Verification:** 593 passed, 3 skipped; ruff, mypy (32 files), lint (dev + demo, 20 templates and 6 verify queries each) clean; `doctor --profile dev` exit 0, 51 checks, 0 failed, 14 warnings.
+
+## Step 8b -- the reset as a procedure, and a button (D56)
+
+| # | Decision | Why |
+|---|---|---|
+| D56 | The reset moves into `RESET_CASES(via, dry_run)` (`sql/procedures/06_reset_cases.sql`). The Governance page, `app reset-cases` and a Snowsight worksheet all CALL it; `dry_run` counts and changes nothing, and `via` records the caller (APP / CLI / SQL) | One implementation instead of two. The user asked for a button, and had already run the same SQL by hand in Snowsight |
+
+**What changed**
+- New `06_reset_cases.sql`: the same transaction as step 8, plus the dry run. `conf/base.yml` `case_tools.reset_cases`. The app is given the procedure (`_APP_PROCEDURES`).
+- `pipeline/app.py`: `reset_cases(..., dry_run)` is now one CALL. The Python SQL and `workflow_counts` are gone.
+- `app_pages/governance.py`: a collapsed **Demo controls** expander with the rows to delete, the cases to reopen, and a form that runs only when RESET is typed. `lib/data.py` `reset_preview()` calls the dry run, cached for 10 s.
+- Tests:
+  - the CLI makes exactly one CALL, for both modes;
+  - an unexpected result is refused;
+  - the app config includes the procedure;
+  - the rendered procedure deletes children first and never touches SIGNAL, CASE_SIGNAL, CASE_RECORD rows or the audit log;
+  - it resets every case field the tools set;
+  - the dry run returns before any write;
+  - the audit insert comes after the deletes and before COMMIT, and an exception rolls back.
+
+**Live, on RISK_COPILOT_DEV**: `deploy --stage procedures` gave 6 files ok. The CLI dry run reported "Nothing to reset" (the user's two Snowsight resets had left dev clean; both are logged with `via: SNOWSIGHT`). Then, in the local app: Gather on the hero, the preview showed 18 + 4 rows and 1 case, a wrong word was refused, and RESET gave "22 workflow rows deleted, 1 case reopened". The audit log has an OPERATOR row with `via: APP`. The app was redeployed to SiS.
+
+**Verification:** 596 passed, 3 skipped; ruff, mypy (32 files), lint (dev + demo, 21 templates each) clean.

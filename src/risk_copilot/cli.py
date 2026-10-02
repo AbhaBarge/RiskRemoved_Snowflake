@@ -740,36 +740,38 @@ def app_reset_cases(
 ) -> None:
     """Reopen every case and delete its evidence, drafts, reviews and sign-offs.
 
-    For re-running the demo on the same cases. Signals, case-signal links and
+    For re-running the demo on the same cases. Calls the RESET_CASES procedure,
+    which the app's Governance page also calls. Signals, case-signal links and
     the audit log are kept; the reset logs itself there.
     """
-    from risk_copilot.pipeline.app import AppError, reset_cases, workflow_counts
+    from risk_copilot.pipeline.app import AppError, reset_cases
     from risk_copilot.session import SessionError, open_session
 
     settings = _settings()
     try:
         with open_session(settings, unattended=True) as session:
-            counts = workflow_counts(settings, session)
-            if not any(counts.values()):
+            preview = reset_cases(settings, session, dry_run=True)
+            if not preview.total_rows and not preview.cases_reopened:
                 console.print("Nothing to reset: every case is OPEN with no workflow rows.")
                 return
             table = Table(title=f"Reset in {settings.db()} (profile '{settings.profile}')")
             table.add_column("Table", style="cyan")
             table.add_column("Rows", justify="right")
-            for name, n in counts.items():
-                label = "CASE_RECORD (reopened)" if name == "CASE_RECORD" else f"{name} (deleted)"
-                table.add_row(label, f"{n:,}")
+            for name, n in preview.rows.items():
+                table.add_row(f"{name} (deleted)", f"{n:,}")
+            table.add_row("CASE_RECORD (reopened)", f"{preview.cases_reopened:,}")
             console.print(table)
             if not yes and not typer.confirm("Delete these rows and reopen the cases?"):
                 console.print("Cancelled; nothing changed.")
                 raise typer.Exit(code=1)
-            result = reset_cases(settings, session)
+            result = reset_cases(settings, session, dry_run=False)
     except (AppError, SessionError) as exc:
-        console.print(f"[red]Reset failed[/red]\n{exc}")
+        console.print(f"[red]Reset failed; nothing changed[/red]\n{exc}")
         raise typer.Exit(code=1) from exc
+    n = result.cases_reopened
     console.print(
-        f"[green]Reset[/green]: {sum(result.deleted.values()):,} workflow rows deleted, "
-        f"{result.cases_reopened} cases reopened. The audit log is kept."
+        f"[green]Reset[/green]: {result.total_rows:,} workflow rows deleted, "
+        f"{n} case{'' if n == 1 else 's'} reopened. The audit log is kept."
     )
 
 

@@ -155,18 +155,21 @@ It runs in Streamlit in Snowflake on the container runtime, with the owner's
 rights. Every button is one stored-procedure call, and every call writes a row
 to `AUDIT.AGENT_ACTION_LOG`.
 
-**Before the demo**
+**Before the demo**, reset every case. All three ways call the same procedure,
+`EVIDENCE_CHAIN.RESET_CASES_DEV`, and each shows what it will delete first:
 
-```bash
-riskcopilot -p dev app reset-cases        # every case back to OPEN; shows what it deletes, then asks
-riskcopilot -p dev app deploy             # only if app/ changed since the last deploy
-```
+- **In the app:** Governance & audit > *Demo controls: reset every case*, then type `RESET`.
+- **In a Snowsight worksheet:** `CALL RISK_COPILOT_DEV.EVIDENCE_CHAIN.RESET_CASES_DEV('SQL', TRUE);`
+  previews the reset, and `CALL ...RESET_CASES_DEV('SQL', FALSE);` runs it.
+- **From the CLI:** `riskcopilot -p dev app reset-cases`, which asks before it runs.
 
-`reset-cases` deletes the workflow's rows (EVIDENCE, EVIDENCE_QUERY_LOG, FINDING,
+Run `riskcopilot -p dev app deploy` only if `app/` changed since the last deploy.
+
+The reset deletes the workflow's rows (EVIDENCE, EVIDENCE_QUERY_LOG, FINDING,
 REVIEW, ARTIFACT, ATTESTATION) and reopens the cases, in one transaction. Signals
 and case links are untouched. The audit log is kept, and the reset adds its own
-row, so the trail shows both the earlier runs and the reset. This breaks the
-evidence chain's append-only rule on purpose, so use it only on a demo database.
+row, recording where it was run from (`via`). This breaks the evidence chain's
+append-only rule on purpose, so use it only on a demo database.
 
 Then open the deployed app once and check that it loads. Also click through one
 sign-off on a case you will not demo, then reset again. That sign-off has not yet

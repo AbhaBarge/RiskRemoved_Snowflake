@@ -140,6 +140,7 @@ case_tools:
   draft_str: DRAFT_STR                   # case -> FINDING + ARTIFACT (template narrative)
   review_str: REVIEW_STR                 # artifact -> REVIEW (deterministic checks)
   attest_str: ATTEST_STR                 # artifact -> ATTESTATION (the human gate)
+  reset_cases: RESET_CASES               # demo reset: workflow rows deleted, cases reopened
   render_template: RENDER_TEMPLATE       # JS UDF: {placeholder} -> display value
   format_inr: FORMAT_INR                 # JS UDF: Indian digit grouping
   # Data, not objects: the REF_FILING_TEMPLATES row DRAFT_STR fills, and the

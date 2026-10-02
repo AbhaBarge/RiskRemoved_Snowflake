@@ -24,7 +24,6 @@ from risk_copilot.pipeline.app import (
     app_files,
     render_app_config,
     reset_cases,
-    workflow_counts,
 )
 
 VERIFIED = "conf/generated/demo_entity.{profile}.verified.yml"
@@ -69,6 +68,7 @@ def test_dev_names_carry_the_suffix_and_tables_are_qualified_by_schema(
         "draft_str",
         "review_str",
         "attest_str",
+        "reset_cases",
     }
     assert cfg["role"]["compliance_officer"] == "COMPLIANCE_OFFICER_DEV"
     assert cfg["semantic_view"] == "RISK_COPILOT_DEV.CURATED.SV_RISK_COPILOT_DEV"
@@ -270,82 +270,47 @@ def test_artifact_repository_must_be_fully_qualified(repo_root: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _ResetSession:
-    """Answers COUNT/SELECT/DELETE with fixed rows; can fail on one statement."""
+class _CallSession:
+    """Answers one CALL with a canned RESET_CASES result, recording the binds."""
 
-    def __init__(self, *, fail_on: str | None = None) -> None:
-        self.statements: list[str] = []
-        self.params: list[Any] = []
-        self.fail_on = fail_on
+    def __init__(self, result: Any) -> None:
+        self.result = result
+        self.calls: list[tuple[str, Any]] = []
 
     def sql(self, text: str, params: Any = None) -> Any:
-        flat = " ".join(text.split())
-        self.statements.append(flat)
-        self.params.append(params)
-        if self.fail_on and flat.startswith(self.fail_on):
-            raise RuntimeError("boom")
-        rows: list[tuple[Any, ...]] = []
-        if flat.startswith("SELECT COUNT(*)"):
-            rows = [(3,)]
-        elif flat.startswith("SELECT case_id"):
-            rows = [("CASE-a",), ("CASE-b",)]
-        elif flat.startswith("DELETE"):
-            rows = [(2,)]
-        return SimpleNamespace(collect=lambda: rows)
+        self.calls.append((" ".join(text.split()), params))
+        return SimpleNamespace(collect=lambda: [(self.result,)])
 
 
-EV = "RISK_COPILOT_DEV.EVIDENCE_CHAIN"
+def _proc_result(*, dry_run: bool) -> str:
+    rows = dict.fromkeys(WORKFLOW_TABLES, 2)
+    return json.dumps(
+        {"dry_run": dry_run, "rows": rows, "cases_reopened": 2, "case_ids": ["CASE-a", "CASE-b"]}
+    )
 
 
-def test_reset_deletes_children_first_and_reopens_in_one_transaction(repo_root: Path) -> None:
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_reset_calls_the_one_procedure(repo_root: Path, dry_run: bool) -> None:
     settings = load_settings(repo_root=repo_root, profile="dev")
-    session = _ResetSession()
-    result = reset_cases(settings, session)
+    session = _CallSession(_proc_result(dry_run=dry_run))
+    result = reset_cases(settings, session, dry_run=dry_run)
 
-    s = session.statements
-    assert s[0] == "BEGIN" and s[-1] == "COMMIT"
-    deletes = [x for x in s if x.startswith("DELETE")]
-    assert deletes == [f"DELETE FROM {EV}.{t}" for t in WORKFLOW_TABLES]
-    # An attestation, review or artifact is never left pointing at a deleted parent.
-    assert WORKFLOW_TABLES.index("ATTESTATION") < WORKFLOW_TABLES.index("ARTIFACT")
-    assert WORKFLOW_TABLES.index("REVIEW") < WORKFLOW_TABLES.index("FINDING")
-    assert WORKFLOW_TABLES.index("EVIDENCE_QUERY_LOG") < WORKFLOW_TABLES.index("EVIDENCE")
-    update = next(x for x in s if x.startswith("UPDATE"))
-    assert update.startswith(f"UPDATE {EV}.CASE_RECORD SET status = 'OPEN'")
-    for column in ("suspicion_established_at", "sla_deadline", "closed_at", "closure_reason"):
-        assert f"{column} = NULL" in update
-    assert result.deleted == dict.fromkeys(WORKFLOW_TABLES, 2)
-    assert result.cases_reopened == 2
+    # The CLI never writes SQL of its own: it CALLs what the app's button calls.
+    assert session.calls == [
+        ("CALL RISK_COPILOT_DEV.EVIDENCE_CHAIN.RESET_CASES_DEV(?, ?)", ["CLI", dry_run])
+    ]
+    assert result.dry_run is dry_run
+    assert result.rows == dict.fromkeys(WORKFLOW_TABLES, 2)
+    assert result.case_ids == ("CASE-a", "CASE-b")
+    assert result.total_rows == 12 and result.cases_reopened == 2
 
 
-def test_reset_keeps_detection_output_and_logs_itself(repo_root: Path) -> None:
+def test_an_unexpected_procedure_result_is_refused(repo_root: Path) -> None:
     settings = load_settings(repo_root=repo_root, profile="dev")
-    session = _ResetSession()
-    reset_cases(settings, session)
-
-    touched = " ".join(x for x in session.statements if x.startswith(("DELETE", "UPDATE")))
-    for kept in (".SIGNAL", ".CASE_SIGNAL", "AGENT_ACTION_LOG"):
-        assert kept not in touched
-    i = next(i for i, x in enumerate(session.statements) if "INSERT INTO" in x)
-    assert "AGENT_ACTION_LOG" in session.statements[i]
-    deleted, case_ids, rows = session.params[i]
-    assert json.loads(deleted) == {"deleted": dict.fromkeys(WORKFLOW_TABLES, 2)}
-    assert json.loads(case_ids) == ["CASE-a", "CASE-b"]
-    assert rows == 2 * len(WORKFLOW_TABLES) + 2
-    assert i < session.statements.index("COMMIT")
+    with pytest.raises(AppError, match="unexpected result"):
+        reset_cases(settings, _CallSession("null"), dry_run=True)
 
 
-def test_a_failed_reset_rolls_back(repo_root: Path) -> None:
-    settings = load_settings(repo_root=repo_root, profile="dev")
-    session = _ResetSession(fail_on="UPDATE")
-    with pytest.raises(AppError, match="rolled back"):
-        reset_cases(settings, session)
-    assert session.statements[-1] == "ROLLBACK"
-    assert "COMMIT" not in session.statements
-
-
-def test_workflow_counts_covers_every_table_and_the_cases(repo_root: Path) -> None:
-    settings = load_settings(repo_root=repo_root, profile="dev")
-    counts = workflow_counts(settings, _ResetSession())
-    assert list(counts) == [*WORKFLOW_TABLES, "CASE_RECORD"]
-    assert set(counts.values()) == {3}
+def test_the_app_is_given_the_reset_procedure(repo_root: Path, tmp_path: Path) -> None:
+    cfg = app_config(_settings_at(repo_root, tmp_path))
+    assert cfg["procedure"]["reset_cases"] == "RISK_COPILOT_DEV.EVIDENCE_CHAIN.RESET_CASES_DEV"
