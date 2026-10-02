@@ -96,7 +96,7 @@ reg = data.attestations()
 if reg.empty:
     st.caption("No attestations yet.")
 else:
-    st.dataframe(reg, hide_index=True, use_container_width=True)
+    st.dataframe(reg, hide_index=True, width="stretch")
 bad = data.filing_integrity()
 st.metric(
     "Filed STRs without a matching, hash-bound attestation",

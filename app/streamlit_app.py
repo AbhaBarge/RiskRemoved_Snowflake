@@ -29,7 +29,7 @@ with st.sidebar:
     with st.container(border=True):
         st.markdown(f"{user['icon']} **{user['name']}**")
         st.caption(user["title"])
-        st.button("Sign out", on_click=auth.sign_out, use_container_width=True)
+        st.button("Sign out", on_click=auth.sign_out, width="stretch")
     st.markdown(f"**{CFG['title']}**")
     st.caption(f"Database `{CFG['database']}` · profile `{CFG['profile']}`")
     if HERO:

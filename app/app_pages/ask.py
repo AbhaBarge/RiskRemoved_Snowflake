@@ -24,7 +24,7 @@ if "ask_history" not in st.session_state:
 cols = st.columns(len(EXAMPLES))
 picked = None
 for col, q in zip(cols, EXAMPLES, strict=True):
-    if col.button(q, use_container_width=True):
+    if col.button(q, width="stretch"):
         picked = q
 typed = st.chat_input("Ask a question about the bank's data")
 question = typed or picked
@@ -57,7 +57,7 @@ for turn in reversed(st.session_state["ask_turns"]):
             st.write(turn["text"])
         df = turn.get("df")
         if df is not None:
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            st.dataframe(df, hide_index=True, width="stretch")
             numeric = df.select_dtypes("number").columns.tolist()
             if len(df.columns) == 2 and len(numeric) == 1 and 1 < len(df) <= 50:
                 label = next(c for c in df.columns if c not in numeric)

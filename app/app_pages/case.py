@@ -1,14 +1,16 @@
 """Case investigation: who, what fired, and the transactions behind it."""
 
+import html
 import json
 
 import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import auth, data
+from lib import auth, data, ui
 from lib.db import HERO, PROC, call, inr, lakh, reason
 from lib.str_view import STATUS_HELP, review_result, str_document
 
+ui.style()
 st.title("Case investigation")
 
 queue = data.case_queue()
@@ -42,23 +44,31 @@ chain = data.chain_counts(case_id)
 
 # ---- header and evidence-chain progress ---------------------------------- #
 st.subheader(f"{party['full_name']}  ·  {case['party_id']}")
-h = st.columns(4)
-h[0].metric("Status", case["status"])
-h[1].metric("Case type", case["case_type"])
-h[2].metric("Branch", case["branch_region"])
-h[3].metric("Opened", str(case["opened_at"])[:16])
+st.markdown(
+    ui.chip(str(case["status"]), ui.STATUS_COLOURS.get(case["status"], ui.SLATE))
+    + ui.chip(str(case["case_type"]), ui.NAVY)
+    + ui.chip(str(case["branch_region"]), ui.SKY)
+    + f" &nbsp;Opened {html.escape(str(case['opened_at'])[:16])}",
+    unsafe_allow_html=True,
+)
 
 steps = [
-    ("Signal", chain["signals"]),
-    ("Evidence", chain["evidence"]),
-    ("Finding", chain["findings"]),
-    ("STR draft", chain["artifacts"]),
-    ("Review", chain["reviews"]),
-    ("Attested", chain["attestations"]),
+    ("Signal", chain["signals"], "a rule fired"),
+    ("Evidence", chain["evidence"], "pointers + logged queries"),
+    ("Finding", chain["findings"], "facts the STR may state"),
+    ("STR draft", chain["artifacts"], "governed template"),
+    ("Review", chain["reviews"], "every figure re-run"),
+    ("Attested", chain["attestations"], "officer's signature"),
 ]
-st.markdown(
-    "  →  ".join(f"**{name}** ✓" if n else f"{name} ·" for name, n in steps),
-    help="The evidence chain: each step writes rows that point at the step before.",
+reached = max((i for i, (_, n, _) in enumerate(steps) if n), default=-1)
+ui.strip(
+    [(name, f"{int(n):,}" if n else "--", note) for name, n, note in steps],
+    active=reached + 1 if reached + 1 < len(steps) else None,
+    done=reached,
+)
+st.caption(
+    "The evidence chain: each step writes rows that point at the step before, so any "
+    "sentence in the STR traces back to the transactions. The highlighted tile is next."
 )
 
 # ---- party profile -------------------------------------------------------- #
@@ -80,13 +90,13 @@ with left:
     st.dataframe(
         pd.DataFrame(profile.items(), columns=["Field", "Value"]),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
     if party.get("kyc_note"):
         st.caption("KYC note (free text, untrusted input)")
         st.text(party["kyc_note"])
     st.markdown("#### Accounts")
-    st.dataframe(data.accounts(case["party_id"]), hide_index=True, use_container_width=True)
+    st.dataframe(data.accounts(case["party_id"]), hide_index=True, width="stretch")
 
 # ---- what fired ------------------------------------------------------------ #
 with right:
@@ -111,47 +121,121 @@ with right:
 
     if not txns.empty:
         st.markdown("#### The deposits")
-        ctr = None
+        d0: dict = {}
         if not signals.empty:
-            d0 = signals.iloc[0]["detail"]
-            d0 = json.loads(d0) if isinstance(d0, str) else (d0 or {})
-            ctr = d0.get("ctr_threshold_inr")
-        pts = (
-            alt.Chart(txns)
-            .mark_circle(size=120)
+            raw = signals.iloc[0]["detail"]
+            d0 = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        ctr, lo, hi = (d0.get(k) for k in ("ctr_threshold_inr", "band_lower_inr", "band_upper_inr"))
+        t = txns.sort_values("txn_timestamp").copy()
+        t["lakh"] = t["amount_inr"].astype(float) / 100000
+        t["amount"] = t["amount_inr"].map(inr)
+        t["running_lakh"] = t["lakh"].cumsum()
+        x = alt.X("txn_timestamp:T", title=None)
+        layers = []
+        if lo and hi:
+            band = pd.DataFrame({"lo": [float(lo) / 100000], "hi": [float(hi) / 100000]})
+            layers.append(
+                alt.Chart(band).mark_rect(color=ui.AMBER, opacity=0.15).encode(y="lo:Q", y2="hi:Q")
+            )
+        if ctr:
+            line = pd.DataFrame({"y": [float(ctr) / 100000]})
+            rule = alt.Chart(line)
+            layers.append(rule.mark_rule(strokeDash=[6, 4], color=ui.RED).encode(y="y:Q"))
+            layers.append(
+                rule.mark_text(align="left", dx=4, dy=-7, color=ui.RED, fontSize=11).encode(
+                    y="y:Q", text=alt.value(f"Reporting line {lakh(ctr)}"), x=alt.value(0)
+                )
+            )
+        layers.append(
+            alt.Chart(t)
+            .mark_circle(size=160, opacity=0.9, stroke="white", strokeWidth=1)
             .encode(
-                x=alt.X("txn_timestamp:T", title="Time"),
-                y=alt.Y("amount_inr:Q", title="Amount (INR)", scale=alt.Scale(zero=False)),
-                color=alt.Color("account_id:N", title="Account"),
-                tooltip=["txn_id", "txn_timestamp", "account_id", "amount_inr", "channel"],
+                x=x,
+                y=alt.Y("lakh:Q", title="Deposit (₹ lakh)", scale=alt.Scale(zero=False)),
+                color=alt.Color(
+                    "account_id:N",
+                    title="Account",
+                    scale=alt.Scale(range=ui.BRANCH_SCHEME),
+                    legend=alt.Legend(orient="bottom"),
+                ),
+                tooltip=[
+                    "txn_id:N",
+                    alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
+                    "account_id:N",
+                    "amount:N",
+                    "channel:N",
+                ],
             )
         )
-        layers = [pts]
-        if ctr:
-            rule = alt.Chart(pd.DataFrame({"y": [float(ctr)]}))
-            layers.append(rule.mark_rule(strokeDash=[6, 4], color="red").encode(y="y:Q"))
-        st.altair_chart(alt.layer(*layers), use_container_width=True)
-        st.caption("Dashed line: the cash transaction reporting threshold.")
+        st.altair_chart(alt.layer(*layers).properties(height=230), width="stretch")
+        cumulative = (
+            alt.Chart(t)
+            .mark_area(
+                interpolate="step-after", color=ui.NAVY, opacity=0.18, line={"color": ui.NAVY}
+            )
+            .encode(
+                x=x,
+                y=alt.Y("running_lakh:Q", title="Running total (₹ lakh)"),
+                tooltip=[
+                    alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
+                    alt.Tooltip("running_lakh:Q", title="Total (₹ lakh)", format=",.2f"),
+                ],
+            )
+            .properties(height=150)
+        )
+        st.altair_chart(cumulative, width="stretch")
+        st.caption(
+            "Top: every deposit sits in the shaded band just under the dashed reporting line. "
+            f"Bottom: together they add up to {lakh(t['amount_inr'].sum())}, none of it reported."
+        )
 
 if not txns.empty:
-    st.markdown("#### Evidence transactions")
+    head, switch = st.columns([4, 1], vertical_alignment="bottom")
+    head.markdown("#### Evidence transactions")
+    with switch:
+        show_visual = ui.visual("case_txns")
     shown = txns.assign(amount=txns["amount_inr"].map(inr))
-    st.dataframe(
-        shown[
-            [
-                "txn_id",
-                "txn_timestamp",
-                "account_id",
-                "amount",
-                "channel",
-                "txn_type",
-                "branch_code",
-                "source_ref",
-            ]
-        ],
-        hide_index=True,
-        use_container_width=True,
-    )
+    if show_visual:
+        per_account = (
+            alt.Chart(shown.assign(lakh=shown["amount_inr"].astype(float) / 100000))
+            .mark_bar(cornerRadiusEnd=4)
+            .encode(
+                y=alt.Y("account_id:N", title=None),
+                x=alt.X("sum(lakh):Q", title="Deposited (₹ lakh)"),
+                color=alt.Color(
+                    "channel:N",
+                    title="Channel",
+                    scale=alt.Scale(range=ui.BRANCH_SCHEME),
+                    legend=alt.Legend(orient="bottom"),
+                ),
+                tooltip=[
+                    "account_id:N",
+                    "channel:N",
+                    alt.Tooltip("count():Q", title="Deposits"),
+                    alt.Tooltip("sum(lakh):Q", title="₹ lakh", format=",.2f"),
+                ],
+            )
+            .properties(height={"step": 38})
+        )
+        st.altair_chart(per_account, width="stretch")
+        st.caption("How the cash was spread across accounts: splitting is part of the pattern.")
+    else:
+        st.dataframe(
+            shown[
+                [
+                    "txn_id",
+                    "txn_timestamp",
+                    "account_id",
+                    "amount",
+                    "channel",
+                    "txn_type",
+                    "branch_code",
+                    "source_ref",
+                ]
+            ],
+            hide_index=True,
+            width="stretch",
+        )
 
 
 # ---- the STR workflow: gather -> draft -> review ---------------------------- #
@@ -186,14 +270,12 @@ plant = b[3].toggle(
     "Watch the Reviewer catch both.",
     disabled=locked,
 )
-if b[0].button("1 · Gather evidence", use_container_width=True, disabled=locked):
+if b[0].button("1 · Gather evidence", width="stretch", disabled=locked):
     run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
-if b[1].button("2 · Draft STR", use_container_width=True, disabled=locked):
+if b[1].button("2 · Draft STR", width="stretch", disabled=locked):
     run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
 can_review = maker and latest is not None and latest["status"] == "DRAFT"
-if b[2].button(
-    "3 · Run Reviewer", type="primary", use_container_width=True, disabled=not can_review
-):
+if b[2].button("3 · Run Reviewer", type="primary", width="stretch", disabled=not can_review):
     run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
 if not maker and not filed:
     st.info(
@@ -218,7 +300,7 @@ else:
         s1.success(
             "The Reviewer approved this STR. It now needs the Principal Officer's signature."
         )
-        if s2.button("Go to sign-off", use_container_width=True):
+        if s2.button("Go to sign-off", width="stretch"):
             st.switch_page("app_pages/signoff.py")
     elif filed:
         st.success("STR attested by the Principal Officer and filed. The case is closed.")
@@ -235,19 +317,19 @@ else:
     with t2:
         hist = arts[["version", "artifact_id", "status", "review_decision", "created_at"]].copy()
         hist["meaning"] = hist["status"].map(STATUS_HELP)
-        st.dataframe(hist, hide_index=True, use_container_width=True)
+        st.dataframe(hist, hide_index=True, width="stretch")
         for _, row in arts.iterrows():
             if row["review_decision"] == "REJECT":
                 with st.expander(f"v{row['version']} -- why the Reviewer rejected it"):
                     review_result(row.to_dict())
     with t3:
         st.markdown("##### Evidence pointers")
-        st.dataframe(data.evidence_rows(case_id), hide_index=True, use_container_width=True)
+        st.dataframe(data.evidence_rows(case_id), hide_index=True, width="stretch")
         st.markdown("##### Logged queries (the source of every figure)")
         st.dataframe(
             data.query_logs(case_id).drop(columns=["sql_text"]),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(
             "Each query's exact text, bind value and canonical result hash are stored. "

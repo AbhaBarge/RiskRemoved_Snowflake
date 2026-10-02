@@ -1,10 +1,12 @@
 """Governance & audit: the governed thresholds, the rule registry, and every action logged."""
 
+import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import data
-from lib.db import PROC, call, reason
+from lib import data, ui
+from lib.db import PROC, call, reason, variant
 
+ui.style()
 st.title("Governance & audit")
 st.caption(
     "Changing a threshold is a governed data change with an audit trail, not a code change. "
@@ -16,13 +18,13 @@ t1, t2, t3, t4 = st.tabs(
 )
 
 with t1:
-    st.dataframe(data.policy_clauses(), hide_index=True, use_container_width=True)
+    st.dataframe(data.policy_clauses(), hide_index=True, width="stretch")
     st.caption("GOVERNANCE.V_POLICY_CLAUSE_CURRENT: the clauses effective today.")
 
 with t2:
     r = data.rules()
     r["rule_sql_hash"] = r["rule_sql_hash"].str[:16] + "…"
-    st.dataframe(r, hide_index=True, use_container_width=True)
+    st.dataframe(r, hide_index=True, width="stretch")
 
 with t3:
     log = data.audit_log()
@@ -30,11 +32,81 @@ with t3:
         st.info(
             "No actions logged yet. Every workflow step writes a row to AUDIT.AGENT_ACTION_LOG."
         )
+    elif ui.visual("gov_log"):
+        tl = log.copy()
+        tl["tool"] = tl["tools_invoked"].map(
+            lambda v: ", ".join(variant(v) or []) if isinstance(variant(v), list) else str(v)
+        )
+        outcomes = {"SUCCESS": ui.TEAL, "REFUSED": ui.RED, "ERROR": ui.AMBER}
+        present = [o for o in outcomes if o in set(tl["outcome"])]
+        others = sorted(set(tl["outcome"]) - set(outcomes))
+        chart = (
+            alt.Chart(tl)
+            .mark_point(filled=True, size=140, opacity=0.85)
+            .encode(
+                x=alt.X("logged_at:T", title=None),
+                y=alt.Y("tool:N", title=None, sort="-x"),
+                color=alt.Color(
+                    "outcome:N",
+                    title="Outcome",
+                    scale=alt.Scale(
+                        domain=present + others,
+                        range=[outcomes[o] for o in present] + [ui.SLATE] * len(others),
+                    ),
+                    legend=alt.Legend(orient="bottom"),
+                ),
+                shape=alt.Shape("agent_mode:N", title="Actor", legend=alt.Legend(orient="bottom")),
+                tooltip=[
+                    alt.Tooltip("logged_at:T", format="%d %b %H:%M:%S"),
+                    "tool:N",
+                    "agent_mode:N",
+                    "user_role:N",
+                    "outcome:N",
+                    "refusal_reason:N",
+                    "latency_ms:Q",
+                ],
+            )
+            .properties(height={"step": 34})
+        )
+        st.altair_chart(chart, width="stretch")
+        st.caption(
+            f"The last {len(tl)} actions: every tool call, question and reset, who ran it and "
+            "how it ended. Refusals are logged too. Switch to Table for the raw rows."
+        )
     else:
-        st.dataframe(log, hide_index=True, use_container_width=True)
+        st.dataframe(log, hide_index=True, width="stretch")
 
 with t4:
-    st.dataframe(data.eval_runs(), hide_index=True, use_container_width=True)
+    runs = data.eval_runs()
+    if not runs.empty and ui.visual("gov_eval"):
+        long = runs.melt(
+            id_vars=["finished_at"], value_vars=["recall", "precision"], var_name="metric"
+        )
+        trend = (
+            alt.Chart(long)
+            .mark_line(point={"size": 90})
+            .encode(
+                x=alt.X("finished_at:T", title="Verify run"),
+                y=alt.Y(
+                    "value:Q", title=None, axis=alt.Axis(format="%"), scale=alt.Scale(domain=[0, 1])
+                ),
+                color=alt.Color(
+                    "metric:N",
+                    title=None,
+                    scale=alt.Scale(range=[ui.NAVY, ui.SKY]),
+                    legend=alt.Legend(orient="bottom"),
+                ),
+                tooltip=[
+                    alt.Tooltip("finished_at:T", format="%d %b %H:%M"),
+                    "metric:N",
+                    alt.Tooltip("value:Q", format=".0%"),
+                ],
+            )
+            .properties(height=220)
+        )
+        st.altair_chart(trend, width="stretch")
+    else:
+        st.dataframe(runs, hide_index=True, width="stretch")
     st.caption(
         "Detection scored against the hidden answer key, in SQL, by `riskcopilot verify`. "
         "The app reads only these aggregate results, never a label."
@@ -66,7 +138,7 @@ with st.expander("Demo controls: reset every case", expanded=bool(done)):
                     {"table": list(to_delete), "rows to delete": list(to_delete.values())}
                 ),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         with right:
             st.metric("Cases to reopen", preview["cases_reopened"])

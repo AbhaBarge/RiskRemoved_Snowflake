@@ -49,6 +49,13 @@ def test_secrets_are_never_committable(repo_root: Path) -> None:
     assert {"secrets.toml", "*.streamlit-secrets.toml", "*.p8"} <= set(ignored)
 
 
+def test_every_app_file_compiles(repo_root: Path) -> None:
+    # The app is never imported by the suite (it needs a live session), so a
+    # syntax error would otherwise first show up on the hosted URL.
+    for path in (repo_root / "app").rglob("*.py"):
+        compile(path.read_text("utf-8"), str(path), "exec")
+
+
 # --------------------------------------------------------------------------- #
 # The public app role
 # --------------------------------------------------------------------------- #

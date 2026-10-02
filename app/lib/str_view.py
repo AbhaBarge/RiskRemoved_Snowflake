@@ -33,11 +33,14 @@ def str_document(a: dict[str, Any]) -> None:
     st.markdown(
         f"**Suspicious Transaction Report** · `{a['artifact_id']}` · version {a['version']}"
     )
-    c = st.columns(4)
-    c[0].metric("Status", a["status"], help=STATUS_HELP.get(a["status"]))
-    c[1].metric("Subject", subject.get("FULL_NAME", "-"))
-    c[2].metric("Typology", str(content.get("typology_id", "-")).replace("TYP_", ""))
-    c[3].metric("File by", str(content.get("filing_deadline", "-")))
+    status = a["status"]
+    st.markdown(
+        "| Status | Subject | Typology | File by |\n|---|---|---|---|\n"
+        f"| **{status}** | {subject.get('FULL_NAME', '-')} "
+        f"| {str(content.get('typology_id', '-')).replace('TYP_', '')} "
+        f"| {content.get('filing_deadline', '-')} |",
+        help=STATUS_HELP.get(status),
+    )
     st.markdown("##### Grounds of suspicion")
     st.info(content.get("grounds_of_suspicion", "-"))
 
@@ -52,7 +55,7 @@ def str_document(a: dict[str, Any]) -> None:
         for k, v in sorted(figures.items())
     ]
     with st.expander(f"Where every figure comes from ({len(rows)} figures)"):
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
         st.caption(
             f"Narrative written by `{a.get('author_model')}` from template "
             f"`{a.get('prompt_version')}`; it contains placeholders only. Each figure is "
@@ -62,7 +65,7 @@ def str_document(a: dict[str, Any]) -> None:
         st.write(", ".join(variant(content.get("cited_clause_ids")) or []))
         tx = variant(content.get("transactions")) or []
         if tx:
-            st.dataframe(pd.DataFrame(tx), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(tx), hide_index=True, width="stretch")
     st.caption(f"content_hash `{a['content_hash']}`")
 
 
@@ -79,10 +82,18 @@ def review_result(row: dict[str, Any]) -> None:
         + ("" if approve else f" -- {len(defects)} defect(s) found")
     )
     for key, label in CHECKS:
-        mark = ":red[FAIL]" if key in failed else ":green[PASS]"
-        st.markdown(f"{mark} &nbsp; {label}")
+        bad = [d for d in defects if d.get("check") == key]
+        with st.container(border=True):
+            if key in failed:
+                st.markdown(f":red[:material/cancel: **FAIL**]  \n{label}")
+                for d in bad:
+                    st.caption(d.get("message") or "")
+            else:
+                st.markdown(f":green[:material/check_circle: **PASS**]  \n{label}")
+    known = {k for k, _ in CHECKS}
     for d in defects:
-        st.markdown(f"- **{d.get('check')}**: {d.get('message')}")
+        if d.get("check") not in known:
+            st.markdown(f"- **{d.get('check')}**: {d.get('message')}")
     checks = variant(row.get("checks_run")) or {}
     if checks:
         st.caption(

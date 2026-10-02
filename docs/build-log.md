@@ -1144,3 +1144,22 @@ account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
 - The cases were reset afterwards (26 rows, 1 case) and the app redeployed to SiS (16 files).
 
 **Verification:** 605 passed, 3 skipped (including the 9 hosting tests); ruff, mypy and lint (dev + demo, 22 templates) are clean.
+
+## Step 10 -- visual-first pages (D61)
+
+| # | Decision | Why |
+|---|---|---|
+| D61 | Each data section leads with a chart, and a **Visual / Table** switch (`lib/ui.visual`) keeps the rows one click away. One palette and one status colour map (`lib/ui.py`) serve every page | The user's first priority: a new viewer reads the story at a glance, and an analyst can still filter the table |
+
+**What changed**
+- **Overview**: an eight-tile pipeline strip from transactions down to filed STRs (`data.funnel()`), recall and precision tiles, a demo-case callout, flagged-cash bars (the demo case outlined), cases by branch and status, signal bubbles, and the credit-activity area.
+- **Case**: status chips; the evidence chain as a stepper, with the next step highlighted; deposits drawn inside the structuring band under the dashed reporting line, plus a running-total step chart; per-account bars.
+- **Reviewer**: one pass/fail card per check, with the defect message on the card that caught it. **STR**: a form-style header table.
+- **Governance**: the action log as a timeline (tool x time, coloured by outcome, shaped by actor) and the recall / precision trend.
+- `use_container_width` is replaced by `width="stretch"` throughout.
+- The hardcoded "₹10 lakh" wording is gone: the line's value comes from the signal, which reads POLICY_CLAUSE.
+- Test: every app file compiles.
+
+**Live, on RISK_COPILOT_DEV, as the public service user**: Overview, Case (Gather, planted-defect Draft, Review REJECT with 2 defects on their cards) and the Governance timeline rendered with no exceptions. Cases reset afterwards; SiS redeployed (17 files).
+
+**Verification:** 606 passed, 3 skipped; ruff, mypy, lint clean.

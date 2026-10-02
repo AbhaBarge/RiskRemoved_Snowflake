@@ -30,6 +30,27 @@ def kpis() -> dict[str, Any]:
     return row.to_dict()
 
 
+def funnel() -> dict[str, Any]:
+    """How far the workflow has carried the data: transactions down to filed STRs."""
+    row = cached(
+        f"""
+        SELECT
+          (SELECT COUNT(DISTINCT txn_pair_id) FROM {DT["transactions_enriched"]}) AS txns,
+          (SELECT COALESCE(SUM(cash_credit_count), 0) FROM {DT["txn_daily_agg"]}) AS cash,
+          (SELECT COUNT(*) FROM {EV}.SIGNAL) AS signals,
+          (SELECT COUNT(*) FROM {EV}.CASE_RECORD) AS cases,
+          (SELECT COUNT(DISTINCT case_id) FROM {EV}.EVIDENCE) AS investigated,
+          (SELECT COUNT(DISTINCT f.case_id) FROM {EV}.ARTIFACT a
+             JOIN {EV}.FINDING f ON f.finding_id = a.finding_id) AS drafted,
+          (SELECT COUNT(DISTINCT f.case_id) FROM {EV}.ARTIFACT a
+             JOIN {EV}.FINDING f ON f.finding_id = a.finding_id
+            WHERE a.status IN ('REVIEWED', 'FILED')) AS approved,
+          (SELECT COUNT(*) FROM {EV}.ARTIFACT WHERE status = 'FILED') AS filed
+        """
+    ).iloc[0]
+    return {k.lower(): int(v or 0) for k, v in row.to_dict().items()}
+
+
 def latest_detection_eval() -> dict[str, Any] | None:
     """Recall/precision of the newest DETECTION run. Aggregates only, never labels."""
     df = cached(

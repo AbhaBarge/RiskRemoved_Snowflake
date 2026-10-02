@@ -25,7 +25,7 @@ def render() -> None:
         with st.form("sign_in", border=False):
             username = st.text_input("Username", key="login_user")
             password = st.text_input("Password", type="password", key="login_password")
-            submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
         if submitted:
             if auth.sign_in(username, password):
                 st.rerun()
@@ -45,7 +45,7 @@ def render() -> None:
                     key=f"use_{key}",
                     on_click=auth.fill,
                     args=(key,),
-                    use_container_width=True,
+                    width="stretch",
                 )
                 st.caption(persona["duty"])
                 u, p = st.columns(2)
