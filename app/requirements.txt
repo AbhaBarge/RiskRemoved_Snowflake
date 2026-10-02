@@ -1,0 +1,6 @@
+# Streamlit Community Cloud installs these (Python 3.11). Keep identical to the
+# dependencies in app/pyproject.toml, which Streamlit in Snowflake installs;
+# tests/unit/test_hosting.py checks that they match.
+streamlit[snowflake]>=1.50
+pandas>=2.0
+altair>=5.3

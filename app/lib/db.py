@@ -1,11 +1,14 @@
 """Data access for the app: one session, parameterised queries, config-driven names.
 
-Runs in two places with one code path:
+Runs in three places with one code path; only the session differs:
 
-* Streamlit in Snowflake -- ``st.connection("snowflake")`` gives the app owner's
-  session. The ``risk_copilot`` package is not uploaded, so its import fails.
+* Streamlit Community Cloud -- a ``[snowflake]`` section in the app's secrets
+  (written by ``riskcopilot app public-access``): a key-pair service user with a
+  least-privilege role. No visitor needs a Snowflake account.
 * Locally (``riskcopilot app run``) -- the package is installed, so the session
   comes from the same key-pair connection every other command uses.
+* Streamlit in Snowflake -- ``st.connection("snowflake")`` gives the app owner's
+  session. The ``risk_copilot`` package is not uploaded, so its import fails.
 
 Identifiers come from ``app_config.json`` (rendered from conf/, validated
 there); values are always bound, never interpolated.
@@ -30,8 +33,33 @@ PROC: dict[str, str] = CFG["procedure"]
 HERO: dict[str, Any] | None = CFG.get("hero")
 
 
+def _secrets() -> dict[str, Any] | None:
+    """The hosted app's [snowflake] secrets, or None (no secrets file is normal)."""
+    try:
+        return dict(st.secrets["snowflake"]) if "snowflake" in st.secrets else None
+    except Exception:  # no secrets.toml at all: local or Streamlit in Snowflake
+        return None
+
+
+def _secrets_session(cfg: dict[str, Any]) -> Any:
+    from cryptography.hazmat.primitives import serialization
+    from snowflake.snowpark import Session
+
+    key = serialization.load_pem_private_key(cfg.pop("private_key_pem").encode(), password=None)
+    cfg["private_key"] = key.private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    cfg["authenticator"] = "SNOWFLAKE_JWT"
+    cfg.setdefault("application", "risk_copilot_app")
+    return Session.builder.configs(cfg).create()
+
+
 @st.cache_resource(show_spinner=False)
 def session() -> Any:
+    if (cfg := _secrets()) is not None:  # Streamlit Community Cloud
+        return _secrets_session(cfg)
     try:
         from risk_copilot.config import load_settings
         from risk_copilot.session import create_session

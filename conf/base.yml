@@ -51,6 +51,7 @@ roles:
   admin: RC_ADMIN                       # owns all objects
   service: RC_SERVICE_ROLE              # agents + automations
   compliance_officer: COMPLIANCE_OFFICER # sees all data, may attest artifacts
+  public_app: RC_PUBLIC_APP             # the hosted app: reads the demo, runs the case tools
   # Branch analysts drive the row-access-policy demo: same question, two roles,
   # two answers. Keys must match branch_region values in conf/generation.yml.
   branch_analysts:
@@ -120,6 +121,9 @@ views:
   txn_velocity_features: V_TXN_VELOCITY_FEATURES
   # Pair-level transaction view over the leg-level physical table (GAP-03).
   transaction_pairs: V_TRANSACTION_PAIRS
+  # Run-level detection scores from GROUND_TRUTH.EVAL_RUN, for the app. Secure;
+  # aggregates only, so GROUND_TRUTH itself stays granted to nobody (sql/11_app_access).
+  eval_scores: V_EVAL_SCORES
 
 # Signal routing (step 6). The task is TRIGGERED by the stream (D38): it runs
 # within about 30 s of a DT_SIGNALS_FAST refresh that changed a signal, and
@@ -171,6 +175,9 @@ app:
   # mirror (usable by PUBLIC via SNOWFLAKE.PYPI_REPOSITORY_USER). The runtime
   # will not start without a dependency file, and an empty one has no Streamlit.
   artifact_repository: SNOWFLAKE.SNOWPARK.PYPI_SHARED_REPOSITORY
+  # The service user Streamlit Community Cloud connects as (key pair only, no
+  # password). `riskcopilot app public-access` creates it and writes the secrets.
+  public_user: RC_PUBLIC_APP_USER
 
 cortex:
   search_service: REGULATORY_SEARCH_SVC

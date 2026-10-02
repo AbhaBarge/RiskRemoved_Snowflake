@@ -278,11 +278,18 @@ class Roles(_Frozen):
     service: str
     compliance_officer: str
     branch_analysts: dict[str, str]
+    #: The hosted (Streamlit Community Cloud) app's role: read the demo, run the case tools.
+    public_app: str = ""
 
     @field_validator("admin", "service", "compliance_officer")
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="Role name")
+
+    @field_validator("public_app")
+    @classmethod
+    def _optional_identifier(cls, v: str) -> str:
+        return validate_identifier(v, what="Role name") if v else ""
 
     @field_validator("branch_analysts")
     @classmethod
@@ -619,11 +626,18 @@ class AppSpec(_Frozen):
     compute_pool: str = ""
     #: Fully qualified artifact repository for the app's packages; empty for none.
     artifact_repository: str = ""
+    #: Service user the hosted app connects as (key pair only); empty for none.
+    public_user: str = ""
 
     @field_validator("name", "stage")
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="App object name")
+
+    @field_validator("public_user")
+    @classmethod
+    def _user(cls, v: str) -> str:
+        return validate_identifier(v, what="App public user") if v else ""
 
     @field_validator("schema_key")
     @classmethod
@@ -1016,6 +1030,11 @@ class Settings(BaseModel):
                 "branch_analysts": {
                     region: self.obj(role) for region, role in self.roles.branch_analysts.items()
                 },
+                "public_app": self.obj(self.roles.public_app) if self.roles.public_app else "",
+            },
+            "app": {
+                "public_user": self.obj(self.app.public_user) if self.app.public_user else "",
+                "warehouse": self.obj(self.warehouse(self.app.warehouse).name),
             },
             "stage": {key: self.obj(getattr(self.stages, key)) for key in Stages.model_fields},
             "retention": self.retention.model_dump(),

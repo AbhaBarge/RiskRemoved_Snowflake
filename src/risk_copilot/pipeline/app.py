@@ -307,3 +307,173 @@ def reset_cases(settings: Settings, session: Any, *, dry_run: bool) -> ResetResu
         rows={t: int(out["rows"][t]) for t in WORKFLOW_TABLES},
         case_ids=tuple(str(c) for c in out.get("case_ids") or ()),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Public access -- the service user Streamlit Community Cloud connects as
+# --------------------------------------------------------------------------- #
+
+#: Where the key pair and the secrets file go: outside the repository, always.
+DEFAULT_KEY_DIR = Path.home() / ".snowflake" / "keys"
+_B64 = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+
+
+@dataclass(frozen=True)
+class PublicAccess:
+    user: str
+    role: str
+    warehouse: str
+    key_file: Path
+    secrets_file: Path
+    key_created: bool
+    checks: dict[str, Any]
+
+
+def _key_pair(key_file: Path) -> tuple[bytes, str, bool]:
+    """(PKCS8 PEM private key, base64 DER public key, created). Reuses an existing key."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    created = not key_file.is_file()
+    if created:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(pem)
+    pem = key_file.read_bytes()
+    private = serialization.load_pem_private_key(pem, password=None)
+    der = private.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    import base64
+
+    return pem, base64.b64encode(der).decode("ascii"), created
+
+
+def secrets_toml(
+    *, account: str, user: str, role: str, warehouse: str, database: str, pem: bytes
+) -> str:
+    """The [snowflake] section lib/db.py reads on Streamlit Community Cloud."""
+    for name, value in (
+        ("account", account),
+        ("user", user),
+        ("role", role),
+        ("warehouse", warehouse),
+        ("database", database),
+    ):
+        if not value or '"' in value or "\n" in value:
+            raise AppError(f"Refusing to write secrets: bad {name} {value!r}")
+    return (
+        "# Streamlit Community Cloud > your app > Settings > Secrets: paste this file.\n"
+        "# It holds a private key. Never commit it; rotate with `riskcopilot app public-access`.\n"
+        "[snowflake]\n"
+        f'account = "{account}"\n'
+        f'user = "{user}"\n'
+        f'role = "{role}"\n'
+        f'warehouse = "{warehouse}"\n'
+        f'database = "{database}"\n'
+        f'private_key_pem = """\n{pem.decode("ascii").strip()}\n"""\n'
+    )
+
+
+def provision_public_access(
+    settings: Settings,
+    session: Any,
+    *,
+    key_dir: Path = DEFAULT_KEY_DIR,
+    account: str,
+    rotate: bool = False,
+) -> PublicAccess:
+    """Create (or update) the hosted app's service user and write its secrets file.
+
+    The user is TYPE = SERVICE with only a public key: it cannot sign in with a
+    password or interactively. Its role is granted by the app_access stage.
+    """
+    if not settings.app.public_user or not settings.roles.public_app:
+        raise AppError("Set conf/base.yml app.public_user and roles.public_app first.")
+    user = settings.obj(settings.app.public_user)
+    role = settings.obj(settings.roles.public_app)
+    warehouse = settings.obj(settings.warehouse(settings.app.warehouse).name)
+    key_file = key_dir / f"{user.lower()}.p8"
+    if rotate and key_file.is_file():
+        key_file.unlink()
+    pem, public_b64, created = _key_pair(key_file)
+    if not set(public_b64) <= _B64:  # it is interpolated into ALTER USER below
+        raise AppError("Public key is not base64; refusing to continue.")
+
+    execute(session, "USE ROLE ACCOUNTADMIN")
+    try:
+        execute(
+            session,
+            f"CREATE USER IF NOT EXISTS {user} TYPE = SERVICE "
+            "COMMENT = 'Streamlit Community Cloud demo app. Key pair only.'",
+        )
+        execute(
+            session,
+            f"ALTER USER {user} SET RSA_PUBLIC_KEY = '{public_b64}' "
+            f"DEFAULT_ROLE = {role} DEFAULT_WAREHOUSE = {warehouse}",
+        )
+        execute(session, f"GRANT ROLE {role} TO USER {user}")
+    finally:
+        execute(session, f"USE ROLE {settings.obj(settings.roles.admin)}")
+
+    secrets_file = key_dir / f"{user.lower()}.streamlit-secrets.toml"
+    secrets_file.write_text(
+        secrets_toml(
+            account=account,
+            user=user,
+            role=role,
+            warehouse=warehouse,
+            database=settings.db(),
+            pem=pem,
+        ),
+        encoding="utf-8",
+    )
+    return PublicAccess(user, role, warehouse, key_file, secrets_file, created, checks={})
+
+
+def check_public_access(settings: Settings, secrets_file: Path) -> dict[str, Any]:
+    """Sign in exactly as the hosted app will, and run what its pages run."""
+    import tomllib
+
+    from cryptography.hazmat.primitives import serialization
+    from snowflake.snowpark import Session
+
+    cfg = dict(tomllib.loads(secrets_file.read_text("utf-8"))["snowflake"])
+    key = serialization.load_pem_private_key(cfg.pop("private_key_pem").encode(), password=None)
+    cfg["private_key"] = key.private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    cfg["authenticator"] = "SNOWFLAKE_JWT"
+    s = Session.builder.configs(cfg).create()
+    try:
+        ev = settings.fq("evidence")
+        who = s.sql("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE()").collect()[0]
+        cases = s.sql(f"SELECT COUNT(*) FROM {ev}.CASE_RECORD").collect()[0][0]
+        scores = s.sql(
+            f"SELECT COUNT(*) FROM {settings.fq('curated', settings.views['eval_scores'])}"
+        ).collect()[0][0]
+        proc = settings.fq("evidence", settings.case_tools["reset_cases"])
+        dry = s.sql(f"CALL {proc}('CHECK', TRUE)").collect()[0][0]
+        try:
+            s.sql(f"SELECT COUNT(*) FROM {settings.fq('ground_truth')}.TXN_LABELS").collect()
+            labels = "READABLE"
+        except Exception:
+            labels = "refused"
+        return {
+            "user": who[0],
+            "role": who[1],
+            "warehouse": who[2],
+            "cases": int(cases),
+            "eval_runs": int(scores),
+            "reset_dry_run": "ok" if dry else "empty",
+            "ground_truth_labels": labels,
+        }
+    finally:
+        s.close()

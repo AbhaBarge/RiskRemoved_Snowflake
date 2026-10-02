@@ -1,0 +1,47 @@
+{
+  "database": "RISK_COPILOT_DEV",
+  "dt": {
+    "dim_party": "RISK_COPILOT_DEV.CURATED.DT_DIM_PARTY_DEV",
+    "party_relationship": "RISK_COPILOT_DEV.CURATED.DT_PARTY_RELATIONSHIP_DEV",
+    "sanctions_consolidated": "RISK_COPILOT_DEV.CURATED.DT_SANCTIONS_CONSOLIDATED_DEV",
+    "signals_aggregate": "RISK_COPILOT_DEV.CURATED.DT_SIGNALS_AGGREGATE_DEV",
+    "signals_fast": "RISK_COPILOT_DEV.CURATED.DT_SIGNALS_FAST_DEV",
+    "transactions_enriched": "RISK_COPILOT_DEV.CURATED.DT_TRANSACTIONS_ENRICHED_DEV",
+    "txn_daily_agg": "RISK_COPILOT_DEV.CURATED.DT_TXN_DAILY_AGG_DEV",
+    "txn_velocity_1h": "RISK_COPILOT_DEV.CURATED.DT_TXN_VELOCITY_1H_DEV"
+  },
+  "hero": {
+    "case_ids": [
+      "CASE-4399c4c86db5c6ea"
+    ],
+    "party_id": "P-754971478708"
+  },
+  "procedure": {
+    "attest_str": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.ATTEST_STR_DEV",
+    "draft_str": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.DRAFT_STR_DEV",
+    "gather_evidence": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.GATHER_EVIDENCE_DEV",
+    "reset_cases": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.RESET_CASES_DEV",
+    "review_str": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.REVIEW_STR_DEV",
+    "route_signals": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.ROUTE_SIGNALS_DEV"
+  },
+  "profile": "dev",
+  "role": {
+    "compliance_officer": "COMPLIANCE_OFFICER_DEV"
+  },
+  "schema": {
+    "audit": "RISK_COPILOT_DEV.AUDIT",
+    "curated": "RISK_COPILOT_DEV.CURATED",
+    "evidence": "RISK_COPILOT_DEV.EVIDENCE_CHAIN",
+    "governance": "RISK_COPILOT_DEV.GOVERNANCE",
+    "ground_truth": "RISK_COPILOT_DEV.GROUND_TRUTH",
+    "ml": "RISK_COPILOT_DEV.ML",
+    "raw": "RISK_COPILOT_DEV.RAW"
+  },
+  "semantic_view": "RISK_COPILOT_DEV.CURATED.SV_RISK_COPILOT_DEV",
+  "title": "Risk & Compliance Copilot",
+  "view": {
+    "eval_scores": "RISK_COPILOT_DEV.CURATED.V_EVAL_SCORES_DEV",
+    "transaction_pairs": "RISK_COPILOT_DEV.CURATED.V_TRANSACTION_PAIRS_DEV",
+    "txn_velocity_features": "RISK_COPILOT_DEV.CURATED.V_TXN_VELOCITY_FEATURES_DEV"
+  }
+}

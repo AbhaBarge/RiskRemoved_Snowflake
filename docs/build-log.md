@@ -1113,3 +1113,34 @@ account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
 **Live, on RISK_COPILOT_DEV**: `deploy --stage procedures` gave 6 files ok. The CLI dry run reported "Nothing to reset" (the user's two Snowsight resets had left dev clean; both are logged with `via: SNOWSIGHT`). Then, in the local app: Gather on the hero, the preview showed 18 + 4 rows and 1 case, a wrong word was refused, and RESET gave "22 workflow rows deleted, 1 case reopened". The audit log has an OPERATOR row with `via: APP`. The app was redeployed to SiS.
 
 **Verification:** 596 passed, 3 skipped; ruff, mypy (32 files), lint (dev + demo, 21 templates each) clean.
+
+## Step 9 -- demo sign-in and public hosting (D57-D60)
+
+| # | Decision | Why |
+|---|---|---|
+| D57 | A demo sign-in with two personas: the AML Analyst (maker: gather, draft, review) and the Principal Officer (checker: sign). The credentials are shown on the sign-in page, with a **Use** button that fills the form | The user wanted the security model visible but never a blocker for a judge. The page says plainly that a bank would use SSO; the binding control stays in `ATTEST_STR` |
+| D58 | The app also runs on Streamlit Community Cloud. `lib/db.py` builds its session from a `[snowflake]` secrets section when one is present, then falls back to the local package, then to `st.connection` (SiS) | The user wanted a URL that works without a Snowflake account. Same code on all three runtimes |
+| D59 | The hosted app connects as `RC_PUBLIC_APP_USER_DEV`: TYPE = SERVICE, RSA key only. Its role `RC_PUBLIC_APP_DEV` (`sql/11_app_access`) inherits the compliance and service roles, and gets USAGE on the five case tools, SELECT on RAW_ACCOUNTS and on the semantic view | Least privilege that still runs every page. `ATTEST_STR` runs with caller's rights, so the role must hold the compliance role it checks |
+| D60 | The app reads detection scores from `CURATED.V_EVAL_SCORES_DEV`, a secure view of run-level aggregates, instead of `GROUND_TRUTH.EVAL_RUN` | Obligation 4 and its test: nothing is granted on GROUND_TRUTH. The public role is refused `TXN_LABELS` (checked live) |
+
+**What changed**
+- `app/lib/auth.py`, `app/lib/login.py`: the personas, a constant-time digest check, and sign out with a pre-filled switch ("Switch to the Principal Officer" on sign-off). Every page stays registered and the menu is hidden until sign-in, so a deep link lands on its page afterwards. The Case buttons need the maker; the sign-off form needs the checker.
+- `riskcopilot app public-access [--rotate]` creates the key pair and the secrets file under `~/.snowflake/keys` (never the repo). It creates or updates the service user, then signs in as it and checks: user, role, warehouse, cases, scores, a reset dry run, and that labels are refused.
+- `app/app_config.json` is now committed (Community Cloud runs from git), plus `app/requirements.txt` and a root `.streamlit/config.toml`. `.gitignore` covers `secrets.toml` and `*.streamlit-secrets.toml`.
+- `tests/unit/test_hosting.py`:
+  - the committed config equals the rendered one;
+  - requirements.txt matches the SiS pyproject;
+  - the two themes match, and secrets are ignored;
+  - every GRANT signature matches a CREATE PROCEDURE, and every case tool is granted;
+  - no app_access GRANT names GROUND_TRUTH;
+  - the secrets file refuses unsafe values;
+  - maker and checker are different personas, and sign-in checks the password.
+
+**Live, on RISK_COPILOT_DEV**:
+- `deploy --stage app_access`: 17 statements ok. `app public-access`: user RC_PUBLIC_APP_USER_DEV, role RC_PUBLIC_APP_DEV, warehouse RC_DEMO_WH_DEV; 10 cases, 3 eval runs, dry run ok, labels refused.
+- Then the app ran locally on those secrets, which is the Community Cloud path. Sign-in as the analyst, then Overview, Gather (INVESTIGATING), Draft and Review (APPROVE) all ran as the service user.
+- The analyst was shown "Only the Principal Officer can sign". The switch pre-filled the officer, whose name was pre-filled in the form.
+- `ATTEST_STR` as the service user FILED the STR and CLOSED the case. It was called directly, because the browser tool cannot tick a Streamlit form checkbox. Cortex Analyst answered as the service user (REST 200, SQL ran).
+- The cases were reset afterwards (26 rows, 1 case) and the app redeployed to SiS (16 files).
+
+**Verification:** 605 passed, 3 skipped (including the 9 hosting tests); ruff, mypy and lint (dev + demo, 22 templates) are clean.

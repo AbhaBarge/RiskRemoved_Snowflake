@@ -10,6 +10,9 @@ connections.toml
 *.key
 secrets/
 .secrets/
+# Streamlit secrets hold the hosted app's private key.
+secrets.toml
+*.streamlit-secrets.toml
 
 # ---------------------------------------------------------------------------
 # Large source datasets (fetched, not committed -- see data/MANIFEST.yml)
@@ -35,8 +38,9 @@ data/staging/
 # inputs, not build output. No credentials are written there.
 !conf/generated/
 
-# Rendered per profile by `riskcopilot app render`; never hand-edited.
-app/app_config.json
+# Rendered by `riskcopilot app render` (never hand-edited) and committed, because
+# Streamlit Community Cloud runs the app from the repository. Object names only;
+# tests/unit/test_app.py fails if it drifts from conf/.
 
 # ---------------------------------------------------------------------------
 # Python

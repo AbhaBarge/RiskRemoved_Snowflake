@@ -775,6 +775,53 @@ def app_reset_cases(
     )
 
 
+@app_cli.command("public-access")
+def app_public_access(
+    rotate: Annotated[
+        bool, typer.Option("--rotate", help="Replace the key pair (the old key stops working).")
+    ] = False,
+) -> None:
+    """Create the hosted app's service user and write its Streamlit secrets file.
+
+    Run `deploy --stage app_access` first (the role and its grants). The key pair
+    and the secrets file are written under ~/.snowflake/keys, never the repo.
+    Then it signs in as that user and checks what the hosted app will do.
+    """
+    from risk_copilot.pipeline.app import (
+        AppError,
+        check_public_access,
+        provision_public_access,
+    )
+    from risk_copilot.session import SessionError, build_connect_params, open_session
+
+    settings = _settings()
+    try:
+        account = str(build_connect_params(settings)["account"])
+        with open_session(settings, unattended=True) as session:
+            result = provision_public_access(settings, session, account=account, rotate=rotate)
+        checks = check_public_access(settings, result.secrets_file)
+    except (AppError, SessionError, KeyError) as exc:
+        console.print(f"[red]Public access failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]Service user[/green] {result.user} (role {result.role}, warehouse "
+        f"{result.warehouse}); key {'created' if result.key_created else 'reused'}."
+    )
+    table = Table(title="Signed in as the hosted app")
+    table.add_column("Check", style="cyan")
+    table.add_column("Result")
+    for name, value in checks.items():
+        table.add_row(name, str(value))
+    console.print(table)
+    console.print(
+        f"Paste [bold]{result.secrets_file}[/bold] into Streamlit Community Cloud > "
+        "app settings > Secrets. Never commit it."
+    )
+    if checks.get("ground_truth_labels") != "refused":
+        console.print("[red]The service user can read GROUND_TRUTH labels: fix the grants.[/red]")
+        raise typer.Exit(code=1)
+
+
 # --------------------------------------------------------------------------- #
 # Stubs -- implemented in later phases, declared now so the surface is stable.
 # --------------------------------------------------------------------------- #

@@ -48,6 +48,8 @@ STAGE_ORDER: tuple[tuple[str, str], ...] = (
     ("ml", "09_ml"),
     ("automations", "10_automations"),
     ("procedures", "procedures"),
+    # Grants on procedures and the semantic view, so after both.
+    ("app_access", "11_app_access"),
 )
 
 #: Queries run by ``riskcopilot verify``, rendered like stage files but never
@@ -62,7 +64,7 @@ INCLUDED_DIRS = ("rules", f"{VERIFY_DIR}/controls")
 #: regression where someone pastes working ad-hoc SQL into a file and the
 #: profile suffix stops being applied.
 _FORBIDDEN_LITERALS = re.compile(
-    r"\b(RISK_COPILOT|RC_DEV_WH|RC_PIPELINE_WH|RC_DEMO_WH|RC_ADMIN|RC_SERVICE_ROLE"
+    r"\b(RISK_COPILOT|RC_DEV_WH|RC_PIPELINE_WH|RC_DEMO_WH|RC_ADMIN|RC_SERVICE_ROLE|RC_PUBLIC_APP\w*"
     r"|COMPLIANCE_OFFICER|BRANCH_ANALYST_\w+)\b"
 )
 

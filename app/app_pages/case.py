@@ -5,7 +5,7 @@ import json
 import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import data
+from lib import auth, data
 from lib.db import HERO, PROC, call, inr, lakh, reason
 from lib.str_view import STATUS_HELP, review_result, str_document
 
@@ -178,21 +178,29 @@ def run(label: str, fn) -> None:
 
 
 b = st.columns([1, 1, 1, 2], vertical_alignment="center")
+maker = auth.can("can_investigate")
+locked = filed or not maker
 plant = b[3].toggle(
     "Plant a defect in the next draft",
     help="Demo: inflates the deposit total by 10% and cites a clause that does not exist. "
     "Watch the Reviewer catch both.",
-    disabled=filed,
+    disabled=locked,
 )
-if b[0].button("1 · Gather evidence", use_container_width=True, disabled=filed):
+if b[0].button("1 · Gather evidence", use_container_width=True, disabled=locked):
     run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
-if b[1].button("2 · Draft STR", use_container_width=True, disabled=filed):
+if b[1].button("2 · Draft STR", use_container_width=True, disabled=locked):
     run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
-can_review = latest is not None and latest["status"] == "DRAFT"
+can_review = maker and latest is not None and latest["status"] == "DRAFT"
 if b[2].button(
     "3 · Run Reviewer", type="primary", use_container_width=True, disabled=not can_review
 ):
     run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
+if not maker and not filed:
+    st.info(
+        "Maker-checker: the Principal Officer signs STRs but does not draft them. "
+        "Sign in as the AML Analyst to investigate.",
+        icon=":material/lock:",
+    )
 
 last = st.session_state.pop("last_action", None)
 if last:

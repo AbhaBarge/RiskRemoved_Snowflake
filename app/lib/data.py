@@ -6,13 +6,12 @@ from typing import Any
 
 import pandas as pd
 
-from lib.db import DT, PROC, S, cached, variant
+from lib.db import DT, PROC, VIEW, S, cached, variant
 
 EV = S["evidence"]
 GOV = S["governance"]
 AUD = S["audit"]
 RAW = S["raw"]
-GT = S["ground_truth"]
 
 
 def kpis() -> dict[str, Any]:
@@ -40,7 +39,7 @@ def latest_detection_eval() -> dict[str, Any] | None:
                d.value:recall::FLOAT AS recall, d.value:precision::FLOAT AS precision,
                d.value:true_positive::INT AS tp, d.value:expected::INT AS expected,
                d.value:predicted::INT AS predicted
-        FROM {GT}.EVAL_RUN, LATERAL FLATTEN(input => metrics:detection) d
+        FROM {VIEW["eval_scores"]}, LATERAL FLATTEN(input => detection) d
         WHERE suite_name = 'DETECTION'
         QUALIFY RANK() OVER (ORDER BY finished_at DESC) = 1
         """
@@ -317,10 +316,10 @@ def eval_runs() -> pd.DataFrame:
     return cached(
         f"""
         SELECT run_id, suite_name, profile, git_commit, generation_seed, passed,
-               metrics:detection[0]:recall::FLOAT AS recall,
-               metrics:detection[0]:precision::FLOAT AS precision,
-               metrics:hero:status::STRING AS hero_status, finished_at
-        FROM {GT}.EVAL_RUN ORDER BY finished_at DESC
+               detection[0]:recall::FLOAT AS recall,
+               detection[0]:precision::FLOAT AS precision,
+               hero_status, finished_at
+        FROM {VIEW["eval_scores"]} ORDER BY finished_at DESC
         """
     )
 

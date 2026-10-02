@@ -150,10 +150,28 @@ never supply a number that appears in an artifact.
 
 ## Demo runbook
 
-Judges open the app in Snowsight (Projects > Streamlit > `RISK_COPILOT_APP_DEV`).
-It runs in Streamlit in Snowflake on the container runtime, with the owner's
-rights. Every button is one stored-procedure call, and every call writes a row
-to `AUDIT.AGENT_ACTION_LOG`.
+The same app runs in two hosted places:
+
+- **Streamlit Community Cloud**, a public URL that needs no Snowflake account. It
+  connects as the key-pair service user `RC_PUBLIC_APP_USER_DEV`, whose role can read
+  the demo and run the case tools and nothing else. To host it:
+  1. Run `riskcopilot -p dev deploy --stage app_access` and
+     `riskcopilot -p dev app public-access` (it signs in as the user and checks it).
+  2. Push the branch.
+  3. At share.streamlit.io, create an app from the repository. Set the main file to
+     `app/streamlit_app.py` and Python to 3.11.
+  4. Paste `~/.snowflake/keys/rc_public_app_user_dev.streamlit-secrets.toml` into
+     Settings > Secrets. Never commit that file.
+- **Streamlit in Snowflake**, in Snowsight under Projects > Streamlit >
+  `RISK_COPILOT_APP_DEV`. It runs on the container runtime with the owner's rights.
+
+Both open on a sign-in page that shows the two demo accounts. The **AML Analyst**
+(`analyst` / `Analyst@2026`) investigates, drafts and reviews. The **Principal
+Officer** (`officer` / `Officer@2026`) signs. Each persona sees only their own
+duty's controls (maker-checker).
+
+Every button is one stored-procedure call, and every call writes a row to
+`AUDIT.AGENT_ACTION_LOG`.
 
 **Before the demo**, reset every case. All three ways call the same procedure,
 `EVIDENCE_CHAIN.RESET_CASES_DEV`, and each shows what it will delete first:
@@ -185,7 +203,7 @@ been exercised from inside Streamlit in Snowflake; Ask has, and works there.
 | 4 | Case | Turn on **Plant a defect**, then **2 · Draft STR** | Draft v1 claims ₹1,03,42,961 and cites `CTR_CASH_THRESHOLD_2026` | ~5 s |
 | 5 | Case | **3 · Run Reviewer** | **REJECT**, with 2 defects: the stated total vs the ₹94,02,691 its query returns, and a clause that does not exist. 4 queries re-run, no model | ~4 s |
 | 6 | Case | Turn the defect off, then **2 · Draft STR**, then **3 · Run Reviewer** | v2 states ₹94,02,691 and gets **APPROVE**: all 4 checks pass; v1 stays in the version history | ~9 s |
-| 7 | Case | **Go to sign-off** | The approved STR, its hash, the Reviewer's checklist | -- |
+| 7 | Case | **Go to sign-off**, then **Switch to the Principal Officer** and sign in | The approved STR, its hash, the Reviewer's checklist; the analyst is told only the officer can sign | -- |
 | 8 | Sign-off | Name, Attest, **Sign** without ticking the box | Refused: "Tick the confirmation to sign." | -- |
 | 9 | Sign-off | Tick, **Sign** | ATTESTED: the STR is FILED, the attestation records its hash; "filed without attestation" stays 0 | ~2 s |
 | 10 | Ask the data | "How many cases are there by status?" | Cortex Analyst's SQL and a chart: 1 CLOSED, 9 OPEN | ~5 s |
