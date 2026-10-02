@@ -235,3 +235,15 @@ def test_configured_pool_wins_over_the_account_default(repo_root: Path, tmp_path
     session = _Session(default_pool="POOL_A", pools=("POOL_A", "POOL_B"))
     assert AppDeployer(settings, session, echo=lambda _: None).compute_pool() == "POOL_B"
     assert not any(x.startswith("SHOW PARAMETERS") for x in session.statements)
+
+
+def test_the_app_ships_an_empty_dependency_file(repo_root: Path) -> None:
+    # The container runtime will not start without a dependency file ("Installing
+    # dependencies failed because the pyproject.toml file does not exist"), and any
+    # package listed in it needs a package index, which the trial cannot reach.
+    import tomllib
+
+    files = {p.as_posix() for p in app_files(repo_root / "app")}
+    assert "pyproject.toml" in files
+    project = tomllib.loads((repo_root / "app" / "pyproject.toml").read_text("utf-8"))["project"]
+    assert project["dependencies"] == []

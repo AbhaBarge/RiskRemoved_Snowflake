@@ -1,0 +1,13 @@
+# Dependency file for the Streamlit-in-Snowflake container runtime.
+#
+# The runtime refuses to start without one, but any package listed here must be
+# fetched from a package index, which this trial account cannot reach (no
+# external access). The list is therefore empty on purpose: Streamlit, pandas,
+# altair and snowflake-snowpark-python are pre-installed in the runtime, and the
+# app imports nothing else. Local development installs `pip install -e .[app]`
+# from the repository's own pyproject.toml instead.
+[project]
+name = "risk-copilot-app"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
