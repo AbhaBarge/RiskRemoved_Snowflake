@@ -77,7 +77,7 @@ def test_one_row_per_config_entry(detection: dict[str, Any]) -> None:
         ("channels", "channels"),
     ):
         assert len(seed[table]) == len(detection[block])
-    assert len(seed["clauses"]) == 15
+    assert len(seed["clauses"]) == 18
 
 
 def test_clause_rows_keep_provenance_and_exact_thresholds(detection: dict[str, Any]) -> None:

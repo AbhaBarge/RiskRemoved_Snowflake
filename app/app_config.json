@@ -41,6 +41,7 @@
   "title": "Risk & Compliance Copilot",
   "view": {
     "eval_scores": "RISK_COPILOT_DEV.CURATED.V_EVAL_SCORES_DEV",
+    "structural_liquidity": "RISK_COPILOT_DEV.CURATED.V_STRUCTURAL_LIQUIDITY_DEV",
     "transaction_pairs": "RISK_COPILOT_DEV.CURATED.V_TRANSACTION_PAIRS_DEV",
     "txn_velocity_features": "RISK_COPILOT_DEV.CURATED.V_TXN_VELOCITY_FEATURES_DEV"
   }

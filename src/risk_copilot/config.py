@@ -1100,6 +1100,9 @@ class Settings(BaseModel):
             # evidence legs onto EVAL_GRAIN_PARTY_MONTH exactly as generation
             # built it (D40).
             "eval_grain": {"month_format": _sql_literal(_month_bucket_sql_format(), "VARCHAR")},
+            # The illustrative ALM book as ALM_CASHFLOW rows, for sql/01_ddl/05_liquidity.
+            # Amounts and clause ids only; the tolerance limits stay in POLICY_CLAUSE.
+            "alm_book": _alm_book_rows(self.generation, self.detection),
         }
 
 
@@ -1120,6 +1123,12 @@ def _routing_context(detection: dict[str, Any]) -> dict[str, str]:
     from risk_copilot.policy import routing_context
 
     return routing_context(detection)
+
+
+def _alm_book_rows(generation: dict[str, Any], detection: dict[str, Any]) -> list[dict[str, str]]:
+    from risk_copilot.policy import alm_book_rows
+
+    return alm_book_rows(generation, detection)
 
 
 def _sql_literal(value: Any, sql_type: str) -> str:

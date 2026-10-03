@@ -92,6 +92,21 @@ CHANNEL_COLUMNS: dict[str, str] = {
 #: ``RULE_DEFINITION.detection_grain`` values (the DDL's comment).
 DETECTION_GRAINS = ("TRANSACTION", "ACCOUNT_WINDOW", "PARTY_WINDOW")
 
+#: ``CURATED.ALM_CASHFLOW`` (``sql/01_ddl/05_liquidity.sql``), one row per line
+#: item and maturity bucket.
+ALM_COLUMNS: dict[str, str] = {
+    "as_of_date": "DATE",
+    "line_item": "VARCHAR",
+    "side": "VARCHAR",
+    "bucket_id": "NUMBER(10,0)",
+    "bucket_label": "VARCHAR",
+    "from_day": "NUMBER(10,0)",
+    "to_day": "NUMBER(10,0)",
+    "tolerance_clause_id": "VARCHAR",
+    "amount_inr": "NUMBER(20,2)",
+}
+ALM_SIDES = ("INFLOW", "OUTFLOW")
+
 
 def sql_literal(value: Any, sql_type: str) -> str:
     """``value`` as a Snowflake literal cast to ``sql_type``.
@@ -333,3 +348,50 @@ def rule_context(detection: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             "dynamic_table": str(r.get("dynamic_table") or ""),
         }
     return out
+
+
+def alm_book_rows(
+    generation: Mapping[str, Any], detection: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """``conf/generation.yml`` ``alm_book`` as ALM_CASHFLOW rows of SQL literals.
+
+    Amounts are crore in config and rupees here. A bucket's tolerance is a clause
+    id, never a limit: V_STRUCTURAL_LIQUIDITY joins it to V_POLICY_CLAUSE_CURRENT.
+    Refused: an unknown side, bucket or tolerance clause, or a duplicate bucket.
+    No ``alm_book`` gives no rows.
+    """
+    book = generation.get("alm_book")
+    if not book:
+        return []
+    known_clauses = {c["clause_id"] for c in detection.get("clauses") or []}
+    buckets = {int(b["bucket_id"]): b for b in book["buckets"]}
+    _unique([b["bucket_id"] for b in book["buckets"]], "alm_book bucket")
+    for b in buckets.values():
+        clause = b.get("tolerance_clause")
+        if clause is not None and clause not in known_clauses:
+            raise ConfigError(f"alm_book: bucket {b['bucket_id']} names unknown clause {clause!r}")
+    unit = Decimal(str(book["unit_inr"]))
+    rows = []
+    for line in book["lines"]:
+        side = str(line["side"]).upper()
+        if side not in ALM_SIDES:
+            raise ConfigError(f"alm_book: {line['line_item']!r} has side {side!r}")
+        for bucket_id, crore in sorted(line["amounts"].items()):
+            b = buckets.get(int(bucket_id))
+            if b is None:
+                raise ConfigError(
+                    f"alm_book: {line['line_item']!r} uses unknown bucket {bucket_id}"
+                )
+            values = {
+                "as_of_date": book["as_of_date"],
+                "line_item": line["line_item"],
+                "side": side,
+                "bucket_id": b["bucket_id"],
+                "bucket_label": b["label"],
+                "from_day": b["from_day"],
+                "to_day": b.get("to_day"),
+                "tolerance_clause_id": b.get("tolerance_clause"),
+                "amount_inr": Decimal(str(crore)) * unit,
+            }
+            rows.append(_row(values, ALM_COLUMNS))
+    return rows

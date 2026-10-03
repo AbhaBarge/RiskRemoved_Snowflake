@@ -124,6 +124,9 @@ views:
   # Run-level detection scores from GROUND_TRUTH.EVAL_RUN, for the app. Secure;
   # aggregates only, so GROUND_TRUTH itself stays granted to nobody (sql/11_app_access).
   eval_scores: V_EVAL_SCORES
+  # Statement of Structural Liquidity over CURATED.ALM_CASHFLOW: cumulative
+  # mismatch per bucket against the POLICY_CLAUSE tolerance limits.
+  structural_liquidity: V_STRUCTURAL_LIQUIDITY
 
 # Signal routing (step 6). The task is TRIGGERED by the stream (D38): it runs
 # within about 30 s of a DT_SIGNALS_FAST refresh that changed a signal, and

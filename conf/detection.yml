@@ -253,6 +253,49 @@ clauses:
       The Principal Officer bears the filing obligation. Autonomous filing is
       legally invalid, not merely imprudent. Enforced in code, not in prose.
 
+  # -------------------------------------------------------------------------
+  # Liquidity: Statement of Structural Liquidity tolerance limits for NBFCs.
+  # Net cumulative negative mismatch as a percentage of cumulative cash
+  # outflows, per bucket. CURATED.V_STRUCTURAL_LIQUIDITY reads these; the
+  # bucket-to-clause mapping is conf/generation.yml:alm_book.buckets. The NBFC
+  # set (10/10/20) is distinct from the bank ALM framework's finer buckets.
+  # -------------------------------------------------------------------------
+  - clause_id: LIQ_MISMATCH_1_7D
+    metric: cumulative_negative_mismatch_pct_of_outflows
+    operator: "<="
+    threshold_lower: 10
+    threshold_upper: null
+    action_required: ESCALATE_TO_ALCO
+    effective_from: "2020-12-01"
+    provenance:
+      source_document: RBI - Liquidity Risk Management Framework for NBFCs and CICs (4 Nov 2019)
+      section_heading: Statement of Structural Liquidity - tolerance limit, 1-7 day bucket
+      source_page: null
+
+  - clause_id: LIQ_MISMATCH_8_14D
+    metric: cumulative_negative_mismatch_pct_of_outflows
+    operator: "<="
+    threshold_lower: 10
+    threshold_upper: null
+    action_required: ESCALATE_TO_ALCO
+    effective_from: "2020-12-01"
+    provenance:
+      source_document: RBI - Liquidity Risk Management Framework for NBFCs and CICs (4 Nov 2019)
+      section_heading: Statement of Structural Liquidity - tolerance limit, 8-14 day bucket
+      source_page: null
+
+  - clause_id: LIQ_MISMATCH_15_30D
+    metric: cumulative_negative_mismatch_pct_of_outflows
+    operator: "<="
+    threshold_lower: 20
+    threshold_upper: null
+    action_required: ESCALATE_TO_ALCO
+    effective_from: "2020-12-01"
+    provenance:
+      source_document: RBI - Liquidity Risk Management Framework for NBFCs and CICs (4 Nov 2019)
+      section_heading: Statement of Structural Liquidity - tolerance limit, 15-30 day bucket
+      source_page: null
+
 # ---------------------------------------------------------------------------
 # Typology catalogue -- seed for GOVERNANCE.TYPOLOGY.
 #
