@@ -1103,6 +1103,31 @@ class Settings(BaseModel):
             # The illustrative ALM book as ALM_CASHFLOW rows, for sql/01_ddl/05_liquidity.
             # Amounts and clause ids only; the tolerance limits stay in POLICY_CLAUSE.
             "alm_book": _alm_book_rows(self.generation, self.detection),
+            # The case-event alert (sql/10_automations). The recipient comes from the
+            # environment, never from a committed file; empty means skip the stage.
+            "case_alert": self._case_alert_context(),
+        }
+
+    def _case_alert_context(self) -> dict[str, Any]:
+        notifications = self.external.get("notifications") or {}
+        spec = notifications.get("case_alert") or {}
+        recipient = (os.environ.get(str(spec.get("recipient_env") or "")) or "").strip()
+        if recipient and not re.fullmatch(r"[^@\s',]+@[^@\s',]+\.[^@\s',]+", recipient):
+            raise ConfigError(f"{spec.get('recipient_env')} is not an email address")
+        if not spec:
+            return {"recipient": ""}
+        schedule = str(spec["schedule"]).strip().upper()
+        if not re.fullmatch(r"\d+ MINUTES?", schedule):
+            raise ConfigError(f"notifications.case_alert.schedule {schedule!r}: use 'N MINUTE'")
+        # The address passed the pattern above, which admits no quote or comma.
+        return {
+            "recipient": recipient,
+            "recipient_literal": f"'{recipient}'" if recipient else "",
+            "integration": self.obj(str(notifications["integration_name"])),
+            "alert": self.obj(str(spec["alert_name"])),
+            "procedure": self.obj(str(spec["procedure_name"])),
+            "schedule": f"'{schedule}'",
+            "resume": bool(spec.get("resume")),
         }
 
 

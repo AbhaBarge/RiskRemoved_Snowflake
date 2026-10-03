@@ -76,6 +76,16 @@ notifications:
   # Email recipients must be verified Snowflake users; left empty so deploy
   # does not fail on an unverified address.
   email_recipients: []
+  # Case-event alert (sql/10_automations): emails when a case opens or an STR is
+  # filed. The recipient is read from this environment variable at deploy time,
+  # so no address is committed; unset, the stage deploys nothing. The alert is
+  # serverless and created SUSPENDED: it spends nothing until resumed.
+  case_alert:
+    recipient_env: RC_ALERT_EMAIL
+    alert_name: CASE_EVENTS_ALERT
+    procedure_name: NOTIFY_CASE_EVENTS
+    schedule: 1 MINUTE
+    resume: false
 
 automations:
   timezone: Asia/Kolkata
