@@ -1,0 +1,6 @@
+.env
+keys/
+*.p8
+*.pem
+__pycache__/
+*.pyc
