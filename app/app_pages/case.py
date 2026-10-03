@@ -6,7 +6,7 @@ import json
 import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import auth, data, ui
+from lib import agent, auth, data, ui
 from lib.db import HERO, PROC, call, inr, lakh, reason
 from lib.str_view import STATUS_HELP, review_result, str_document
 
@@ -319,6 +319,66 @@ if last:
         st.toast(f"{label}: done")
     else:
         st.error(f"{label} refused: {result}")
+
+
+# ---- the agentic path: Cortex Agent in the agent account ------------------- #
+with st.container(border=True):
+    a1, a2 = st.columns([3, 1], vertical_alignment="center")
+    a1.markdown(
+        "**AI STR (Cortex Agent)**: `RC_STR_AGENT`, in a separate Snowflake account, drafts the "
+        "narrative with an Anthropic model, a non-Anthropic model cross-reviews it, and every "
+        "amount, count and date is traced to this case's logged evidence. An approved draft is "
+        "written back here as a new version and re-checked by the Reviewer."
+    )
+    ok_agent, why = agent.available()
+    if a2.button(
+        "4 · AI STR + PDF",
+        type="secondary",
+        width="stretch",
+        disabled=locked or not ok_agent,
+        help=why or "Runs the cross-account agent pipeline (a few minutes).",
+    ):
+        with st.status("Running the STR agent...", expanded=True) as box:
+            res = agent.generate(
+                case_id,
+                progress=lambda step, msg: box.write(f"`{step}` {msg}"),
+                user=(auth.current() or {}).get("username", "unknown"),
+            )
+            box.update(
+                label=f"STR agent: {res.get('status')}",
+                state="error" if res.get("error") else "complete",
+            )
+        st.session_state.setdefault("ai_str", {})[case_id] = res
+        st.cache_data.clear()
+    elif not ok_agent:
+        a2.caption(why)
+    res = st.session_state.get("ai_str", {}).get(case_id)
+    if res:
+        air, dr = res.get("ai_review") or {}, res.get("data_review") or {}
+        if res.get("error") and not res.get("sections"):
+            st.error(f"STR agent failed: {res['error']}")
+        else:
+            (st.success if res.get("status") == "READY_FOR_ATTESTATION" else st.warning)(
+                f"**{res.get('status')}** · drafted by `{air.get('drafter_model')}` (attempt "
+                f"{res.get('attempt')}) · agent reviewer `{air.get('reviewer_model')}`: "
+                f"**{air.get('decision')}** · data-account Reviewer: **{dr.get('decision', 'not run')}**"
+            )
+            for d in (air.get("defects") or []):
+                st.caption(f"- {d}")
+            if res.get("pdf_bytes"):
+                st.download_button(
+                    "Download STR PDF",
+                    data=res["pdf_bytes"],
+                    file_name=res.get("pdf_name", f"STR_{case_id}.pdf"),
+                    mime="application/pdf",
+                    icon=":material/picture_as_pdf:",
+                )
+            st.caption(
+                f"package `{res.get('package_id')}` · run `{res.get('run_id')}` · "
+                f"PDF SHA-256 `{(res.get('pdf_sha256') or '')[:16]}...`"
+            )
+        if st.button("Refresh the STR below", key="ai_refresh"):
+            st.rerun()
 
 
 def evidence_chain() -> None:

@@ -8,6 +8,25 @@
 > **Who this is for:** Someone who has the generated database already running and wants
 > to understand the full picture before touching any code.
 
+> **As built (Oct 2026): the agent runs in a second Snowflake account.** The data
+> account (`HTQQLHX-GI22223`, `RISK_COPILOT_DEV`) is a trial with no `AI_COMPLETE`, so the
+> agentic layer is deployed in `HQRWRXK-UZ26728` as `RISK_COPILOT_AGENT.STR.RC_STR_AGENT`
+> (`agent_account/`). The two accounts are in different organisations and regions, so
+> neither data sharing nor external access is available; the bridge
+> (`src/risk_copilot/agentic`, used by the Slack bot and the case page's
+> "4 · AI STR + PDF" button) holds one key-pair connection to each:
+>
+> 1. data account: current draft or `DRAFT_STR` (deterministic, hashed evidence) + 2 Cortex Analyst questions
+> 2. agent account: hashed `EVIDENCE_PACKAGE` -> agent: `draft_str_narrative` (claude-sonnet-4-6)
+>    -> `review_str_draft` (openai-gpt-5.1, plus every amount/count/date traced to the evidence;
+>    fails closed) -> one redraft on REJECT
+> 3. data account, only if approved: `SUBMIT_AI_DRAFT` writes FINDING v(n+1) + ARTIFACT with the
+>    figures unchanged, then `REVIEW_STR` re-checks it deterministically
+> 4. agent account: `RENDER_STR_PDF` (FIU-IND layout, evidence trail, both verdicts) -> Slack / app
+>
+> The human gate is unchanged: only the Principal Officer attests (`ATTEST_STR`). Setup and
+> commands: `bridge/SLACK_SETUP.md`. Sections below describe the original single-account design.
+
 ---
 
 ## Table of Contents

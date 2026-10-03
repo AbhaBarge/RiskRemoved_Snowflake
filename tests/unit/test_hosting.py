@@ -87,10 +87,14 @@ def test_the_public_role_can_run_every_case_tool(repo_root: Path) -> None:
     # Each grant names a real signature; a mismatch fails only at deploy time otherwise.
     for name, types in grants.items():
         assert procs.get(name) == types, f"{name}{types} does not match {procs.get(name)}"
+    # SUBMIT_AI_DRAFT is called by the agent bridge (src/risk_copilot/agentic), never by
+    # the public app: the public role must not be able to write a narrative.
+    bridge_only = {deployer.settings.fq("evidence", deployer.settings.case_tools["submit_ai_draft"]).upper()}
     tools = {
         deployer.settings.fq("evidence", t).upper() for t in deployer.settings.case_tools.values()
-    }
+    } - bridge_only
     assert tools & set(procs) <= set(grants), "a case tool the app calls is not granted"
+    assert not bridge_only & set(grants), "the public role must not be granted the write-back"
 
 
 def test_the_public_role_gets_nothing_on_ground_truth(repo_root: Path) -> None:

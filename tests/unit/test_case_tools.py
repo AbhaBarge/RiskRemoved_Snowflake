@@ -26,8 +26,9 @@ def test_procedures_stage_renders_one_object_per_statement(repo_root: Path, prof
         "04_review_str.sql",
         "05_attest_str.sql",
         "06_reset_cases.sql",
+        "07_submit_ai_draft.sql",
     ]
-    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1, 1, 1]
+    assert [len(split_statements(s)) for s in files.values()] == [3, 1, 1, 1, 1, 1, 1]
 
 
 def test_tool_names_carry_the_profile_suffix(repo_root: Path) -> None:
