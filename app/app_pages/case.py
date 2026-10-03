@@ -6,7 +6,7 @@ import json
 import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import auth, data, ui
+from lib import auth, data, triage, ui
 from lib.db import HERO, PROC, call, inr, lakh, reason
 from lib.str_view import STATUS_HELP, review_result, str_document
 
@@ -236,6 +236,32 @@ if not txns.empty:
             "source_ref",
         ]
         st.dataframe(ui.pretty(shown[cols]), hide_index=True, width="stretch")
+
+    # A model reads the same legs and describes the pattern. Beside the evidence, never in it.
+    with st.container(border=True):
+        h, go = st.columns([4, 1], vertical_alignment="center")
+        h.markdown("#### Triage summary · Cortex AI")
+        asked = go.button("Summarise", key=f"triage_{case_id}", width="stretch")
+        if asked:
+            st.session_state.setdefault("triage", {})[case_id] = True
+        if st.session_state.get("triage", {}).get(case_id):
+            with st.spinner("Cortex AI is reading the evidence legs..."):
+                summary = triage.summarise(case_id)
+            if summary.get("error"):
+                st.warning(f"The model is unavailable here: {summary['error'][:200]}")
+            else:
+                st.markdown(summary["text"])
+                st.caption(
+                    f"{triage.MODEL} over the {summary['legs']} evidence legs "
+                    f"({triage.PROMPT_VERSION}, {summary['latency_ms']:,} ms), logged to the audit "
+                    "trail. An analyst aid, not evidence: it is never written into the STR, "
+                    "whose every figure comes from SQL."
+                )
+        else:
+            st.caption(
+                "Ask a Cortex model to describe the pattern in these legs. It reads the same "
+                "rows as above; nothing it writes reaches the filing."
+            )
 
 
 # ---- the STR workflow: gather -> draft -> review ---------------------------- #

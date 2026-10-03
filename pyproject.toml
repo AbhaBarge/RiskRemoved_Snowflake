@@ -112,6 +112,7 @@ ignore = [
 # parameter; nothing a user types reaches the SQL text.
 "app/lib/data.py" = ["S608"]
 "app/lib/analyst.py" = ["S608"]
+"app/lib/triage.py" = ["S608"]
 # Replay reuses the loader's builders under the same rule: configured and live,
 # validated identifiers only; every timestamp, party id and cohort is bound.
 "src/risk_copilot/pipeline/replay.py" = ["S608"]
