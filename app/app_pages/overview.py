@@ -55,7 +55,13 @@ def _pipeline() -> None:
             f"{ev['predicted']} signals raised",
             delta_color="off",
         )
-    st.caption(f"Data through {k['data_through']} · scores from the latest `verify` run")
+    scope = (
+        f"rule {ev['rule_id']}, scored against {ev['expected']} planted patterns, "
+        "plus a legitimate near-threshold deposit as the false-positive control"
+        if ev
+        else "no `verify` run yet"
+    )
+    st.caption(f"Data through {k['data_through']} · detection scores: {scope}")
 
 
 def _hero(q: pd.DataFrame) -> None:
@@ -151,7 +157,10 @@ def _cases(q: pd.DataFrame) -> None:
             .properties(height=180)
         )
         st.altair_chart(status, width="stretch")
-        st.caption("Cases by branch and status. Analysts see only their own branch's rows.")
+        st.caption(
+            "Cases by branch and status. Branch-scoped analyst roles exist; enforcing them "
+            "row by row needs row access policies (Enterprise edition)."
+        )
 
 
 def _signals() -> None:
