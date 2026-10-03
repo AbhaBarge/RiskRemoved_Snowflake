@@ -264,18 +264,46 @@ def run(label: str, fn) -> None:
 b = st.columns([1, 1, 1, 2], vertical_alignment="center")
 maker = auth.can("can_investigate")
 locked = filed or not maker
+gathered = chain["evidence"] > 0
+can_review = maker and latest is not None and latest["status"] == "DRAFT"
+# The next step is the primary button, so the page always says what to do next.
+# An approved STR's next step is the officer's sign-off, so no button is primary.
+redraft = latest is None or latest["status"] == "REJECTED"
+next_step = (
+    None
+    if locked
+    else "review"
+    if can_review
+    else ("draft" if gathered else "gather")
+    if redraft
+    else None
+)
 plant = b[3].toggle(
     "Plant a defect in the next draft",
     help="Demo: inflates the deposit total by 10% and cites a clause that does not exist. "
     "Watch the Reviewer catch both.",
     disabled=locked,
 )
-if b[0].button("1 · Gather evidence", width="stretch", disabled=locked):
+if b[0].button(
+    "1 · Gather evidence",
+    type="primary" if next_step == "gather" else "secondary",
+    width="stretch",
+    disabled=locked,
+):
     run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
-if b[1].button("2 · Draft STR", width="stretch", disabled=locked):
+if b[1].button(
+    "2 · Draft STR",
+    type="primary" if next_step == "draft" else "secondary",
+    width="stretch",
+    disabled=locked,
+):
     run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
-can_review = maker and latest is not None and latest["status"] == "DRAFT"
-if b[2].button("3 · Run Reviewer", type="primary", width="stretch", disabled=not can_review):
+if b[2].button(
+    "3 · Run Reviewer",
+    type="primary" if next_step == "review" else "secondary",
+    width="stretch",
+    disabled=not can_review,
+):
     run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
 if not maker and not filed:
     st.info(
@@ -292,8 +320,35 @@ if last:
     else:
         st.error(f"{label} refused: {result}")
 
-if latest is None:
-    st.info("No STR drafted yet. Gather the evidence, then draft.")
+
+def evidence_chain() -> None:
+    st.markdown("##### Evidence pointers")
+    st.dataframe(ui.pretty(data.evidence_rows(case_id)), hide_index=True, width="stretch")
+    st.markdown("##### Logged queries (the source of every figure)")
+    st.dataframe(
+        ui.pretty(data.query_logs(case_id).drop(columns=["sql_text"])),
+        hide_index=True,
+        width="stretch",
+    )
+    st.caption(
+        "Each query's exact text, bind value and canonical result hash are stored. "
+        "The Reviewer re-runs them and compares."
+    )
+
+
+if latest is None and not gathered:
+    st.info("No evidence gathered yet. Start with **1 · Gather evidence**.")
+elif latest is None:
+    queries = len(data.query_logs(case_id))
+    st.success(
+        f"Evidence gathered: {chain['evidence']:,} pointer(s) and {queries:,} logged "
+        "query(ies). No STR drafted yet. Next: **2 · Draft STR**."
+        if maker
+        else f"Evidence gathered: {chain['evidence']:,} pointer(s) and {queries:,} logged "
+        "query(ies). The AML Analyst drafts the STR next."
+    )
+    with st.expander("What was gathered", expanded=True):
+        evidence_chain()
 else:
     if latest["status"] == "REVIEWED":
         s1, s2 = st.columns([3, 1], vertical_alignment="center")
@@ -323,15 +378,4 @@ else:
                 with st.expander(f"v{row['version']} -- why the Reviewer rejected it"):
                     review_result(row.to_dict())
     with t3:
-        st.markdown("##### Evidence pointers")
-        st.dataframe(ui.pretty(data.evidence_rows(case_id)), hide_index=True, width="stretch")
-        st.markdown("##### Logged queries (the source of every figure)")
-        st.dataframe(
-            ui.pretty(data.query_logs(case_id).drop(columns=["sql_text"])),
-            hide_index=True,
-            width="stretch",
-        )
-        st.caption(
-            "Each query's exact text, bind value and canonical result hash are stored. "
-            "The Reviewer re-runs them and compares."
-        )
+        evidence_chain()
