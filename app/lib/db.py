@@ -17,11 +17,14 @@ there); values are always bound, never interpolated.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import pandas as pd
 import streamlit as st
+
+T = TypeVar("T")
 
 CFG: dict[str, Any] = json.loads(
     (Path(__file__).resolve().parents[1] / "app_config.json").read_text("utf-8")
@@ -68,9 +71,35 @@ def session() -> Any:
     return create_session(load_settings(), unattended=True)
 
 
+# 390114 token expired, 390112 session gone, 390111 session expired; Snowpark's own
+# message when it finds the connection closed. All are refused before the statement
+# runs, so sending it again on a new session cannot run anything twice.
+_EXPIRED = ("390114", "390112", "390111", "session has been closed")
+
+
+def expired(exc: BaseException) -> bool:
+    text = str(exc)
+    return any(marker in text for marker in _EXPIRED)
+
+
+def run(fn: Callable[[Any], T]) -> T:
+    """``fn(session)``, reconnecting once if the cached session has expired.
+
+    A hosted app runs for days, and a laptop sleeps: either outlives the session's
+    token, and without this every page fails until the server restarts.
+    """
+    try:
+        return fn(session())
+    except Exception as exc:
+        if not expired(exc):
+            raise
+        session.clear()
+        return fn(session())
+
+
 def query(sql: str, params: list[Any] | None = None) -> pd.DataFrame:
     """Run one statement; columns lower-cased."""
-    df = session().sql(sql, params=params or []).to_pandas()
+    df = run(lambda s: s.sql(sql, params=params or []).to_pandas())
     df.columns = [c.lower() for c in df.columns]
     return df
 
@@ -84,7 +113,7 @@ def cached(sql: str, params: tuple[Any, ...] = ()) -> pd.DataFrame:
 def call(proc: str, *args: Any) -> Any:
     """CALL a procedure; returns its result (parsed if JSON) and drops cached reads."""
     marks = ", ".join("?" for _ in args)
-    rows = session().sql(f"CALL {proc}({marks})", params=list(args)).collect()
+    rows = run(lambda s: s.sql(f"CALL {proc}({marks})", params=list(args)).collect())
     st.cache_data.clear()
     value = rows[0][0] if rows else None
     if isinstance(value, str):

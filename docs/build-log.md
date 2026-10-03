@@ -1181,3 +1181,38 @@ account ASHWINRAVI004 (ZC14131), dev profile only. Narratives are templated
 **Live, on RISK_COPILOT_DEV, as the public service user:** "How many cash deposits were made each day?" was drawn as a 10-day series; "How many cases by status?" (one row, all OPEN) fell back to the table with readable headings; the Case fact sheet rendered with no exceptions. Nothing needed resetting; SiS redeployed (17 files).
 
 **Verification:** 612 passed, 3 skipped; ruff, mypy (32 files) and lint (dev + demo, 22 templates) are clean.
+
+## Step 12 -- the live-streaming rehearsal (D63, D64)
+
+The Phase 3 step 8 sequence, run end to end on RISK_COPILOT_DEV as the admin role, with the app open on Overview in Live mode as the public service user.
+
+| # | Step | Result |
+|---|---|---|
+| 0 | Baseline, read-only | fingerprint (10,064, 3958693971320019007); chain 10 / 10 / 10; stream empty; task suspended; 10 cases OPEN |
+| 1 | `load --replace` (hold-back from 2022-09-03) | exit 0; RAW 3,764 legs; 6,118 source + 182 pending held back; every check OK (as M37) |
+| 2 | Refresh | 2 signals; stream 12 rows (8 deletes + 2 update pairs) |
+| 3 | Clear the 30 chain rows (D46), `CALL ROUTE_SIGNALS(TRUE)` | 2 / 2 / 2, stream consumed, baseline ids `CASE-0d9ff34cd488cd25`, `CASE-906bf50becb8febf` |
+| 4 | Resume the task | `started` |
+| 5 | `replay --inject structuring_burst`, refresh | 20 legs released (09-03 04:54 .. 09-08 04:28); task run 15:02:00 PDT routed 1 signal, opened the demo case `CASE-4399c4c86db5c6ea` |
+| 6 | `replay`, with one operator refresh at tick 16 | 32 ticks, 6,300 of 6,300 legs, 0 unresolved, 0 duplicates, no interruption. The mid-stream refresh fired the task **6 s** later (15:09:10): 6 signals inserted, 2 updated, 6 cases opened. Overview, without a reload: transactions 1,892 -> 3,462, signals and cases 3 -> 9 |
+| 7 | Refresh, then suspend | task run 15:11:06: 1 inserted, 6 updated, 1 case opened. 4 SUCCEEDED runs in all, 0 FAILED; suspended; stream empty |
+| 8 | Fingerprint and ids | **(10,064, 3958693971320019007)**, equal to step 0; the same 10 case ids; chain 10 / 10 / 10 |
+| 9 | `verify` | exit 0: yield 10, recall and precision 10/10, FP control 0 of 1, demo case CONFIRMED_BY_DETECTION; the verified file and `app/app_config.json` unchanged (no git diff); EVAL_RUN `EVAL-defb554425654602` |
+| 10 | Reset | nothing to reset; SiS redeployed |
+
+| # | Measurement | Source | Note |
+|---|---|---|---|
+| M48 | **The rehearsal reproduces M37-M41 with the app watching.** Hold-back + inject + replay ends at the full-load fingerprint and the same 10 case ids; the triggered task routed every change within 6-8 s of each refresh | Live, admin role; TASK_HISTORY | No interruption this time, so no resume was needed |
+| M49 | **One Overview tile did not move during the replay.** Cash deposits stayed at 699: TXN_DAILY_AGG is not upstream of the signal table, so the refreshes in steps 2-7 never touched it, and its first scheduled refresh (15:11:37) came after the replay had ended. 699 is the full-load figure, so the tile showed the end state from the start | DYNAMIC_TABLE_REFRESH_HISTORY | D63 |
+| M50 | **The app's cached session outlived its token.** After the rehearsal the machine slept (System log: sleep, then Modern Standby until 11:10 IST); the next Live-mode re-read failed with `390114 Authentication token has expired`, and every query would have failed until a restart | The app server's log | D64. A hosted app runs for days, so this would have reached the public URL |
+
+| # | Decision | Why |
+|---|---|---|
+| D63 | **`riskcopilot refresh`** refreshes every configured dynamic table that is deployed, in one `ALTER DYNAMIC TABLE a, b, ... REFRESH`, at one data timestamp. It never routes. It is the operator's refresh in the live demo | M49. One statement keeps every tile the app reads in step; listing only deployed configured tables means an unbuilt table is skipped and nothing else is touched |
+| D64 | **The app reconnects once on an expired session** (`lib/db.run`): 390114, 390112, 390111 or Snowpark's "session has been closed" clear the cached session and send the statement again; any other error is raised as before. Cortex Analyst's REST call does the same on HTTP 401 | M50. Snowflake refuses the request before running it, so sending it again cannot run a CALL twice |
+
+**Tests:** `tests/unit/test_refresh.py` (only deployed configured tables, sorted; nothing deployed refreshes nothing; one statement for all); `test_hosting.py` adds an expired session reconnecting once, other errors never retried, and a second expiry raised.
+
+**Verification:** 618 passed, 3 skipped; ruff, mypy (33 files) and lint (dev + demo, 22 templates) are clean. `riskcopilot -p dev refresh`: exit 0, 5 tables.
+
+**State left behind:** the dev data equals the full load again (M48); the task is suspended and the stream empty; 10 cases OPEN with no workflow rows; SiS deployed with D64.

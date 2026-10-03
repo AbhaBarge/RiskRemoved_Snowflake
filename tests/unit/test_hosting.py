@@ -192,3 +192,65 @@ def test_auto_chart_picks_by_shape(ui) -> None:  # type: ignore[no-untyped-def]
     assert not ui.auto_chart(pd.DataFrame({"A": ["x", "y"], "B": ["p", "q"]}))
     assert not ui.auto_chart(pd.DataFrame({"A": ["x"], "B": [1]}))
     assert not ui.auto_chart(pd.DataFrame())
+
+
+# --------------------------------------------------------------------------- #
+# Session expiry (app/lib/db.py): reconnect once, never retry anything else
+# --------------------------------------------------------------------------- #
+
+
+class _Sessions:
+    """Stands in for the cached ``session()``: a new object after each clear."""
+
+    def __init__(self) -> None:
+        self.made = 0
+        self.cleared = 0
+
+    def __call__(self) -> int:
+        self.made += 1
+        return self.cleared
+
+    def clear(self) -> None:
+        self.cleared += 1
+
+
+@pytest.fixture
+def db(repo_root: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    monkeypatch.syspath_prepend(str(repo_root / "app"))
+    from lib import db as module
+
+    fake = _Sessions()
+    monkeypatch.setattr(module, "session", fake)
+    module.fake = fake
+    return module
+
+
+def test_an_expired_session_reconnects_once(db) -> None:  # type: ignore[no-untyped-def]
+    def fn(generation: int) -> str:
+        if generation == 0:
+            raise RuntimeError("(1304): 390114 (08001): Authentication token has expired.")
+        return "ok"
+
+    assert db.run(fn) == "ok"
+    assert db.fake.cleared == 1
+
+
+def test_other_errors_are_not_retried(db) -> None:  # type: ignore[no-untyped-def]
+    calls = []
+
+    def fn(generation: int) -> None:
+        calls.append(generation)
+        raise RuntimeError("002003 (42S02): Object does not exist or not authorized.")
+
+    with pytest.raises(RuntimeError, match="002003"):
+        db.run(fn)
+    assert calls == [0] and db.fake.cleared == 0
+
+
+def test_a_second_expiry_is_raised(db) -> None:  # type: ignore[no-untyped-def]
+    def fn(generation: int) -> None:
+        raise RuntimeError("390112: Your session no longer exists.")
+
+    with pytest.raises(RuntimeError, match="390112"):
+        db.run(fn)
+    assert db.fake.cleared == 1

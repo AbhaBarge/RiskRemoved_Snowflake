@@ -667,6 +667,30 @@ def replay(
         raise typer.Exit(code=1)
 
 
+@app.command("refresh")
+def refresh_tables() -> None:
+    """Refresh every deployed dynamic table now, at one data timestamp.
+
+    The operator's refresh during a live replay: the signals and every table the
+    app reads move together. It never routes; the routing task does that.
+    """
+    from risk_copilot.pipeline.refresh import refresh_all
+    from risk_copilot.session import SessionError, open_session
+
+    settings = _settings()
+    try:
+        with open_session(settings, unattended=True) as session:
+            done = refresh_all(settings, session)
+    except (SessionError, ConfigError) as exc:
+        console.print(f"[red]Refresh failed[/red]\n{exc}")
+        raise typer.Exit(code=1) from exc
+    if not done:
+        console.print("[yellow]No configured dynamic table is deployed.[/yellow]")
+        raise typer.Exit(code=1)
+    for r in done:
+        console.print(f"{r.name}: {r.statistics}")
+
+
 # --------------------------------------------------------------------------- #
 # app -- the Streamlit-in-Snowflake demo surface
 # --------------------------------------------------------------------------- #

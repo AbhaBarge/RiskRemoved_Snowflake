@@ -16,27 +16,34 @@ from typing import Any
 
 from snowflake.connector.vendored import requests
 
-from lib.db import CFG, S, session
+from lib.db import CFG, S, run, session
 
 ENDPOINT = "/api/v2/cortex/analyst/message"
 
 
+def _post(messages: list[dict[str, Any]]) -> Any:
+    conn = session().connection
+    return requests.post(
+        f"https://{conn.host}{ENDPOINT}",
+        json={"messages": messages, "semantic_view": CFG["semantic_view"]},
+        headers={
+            "Authorization": f'Snowflake Token="{conn.rest.token}"',
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        timeout=120,
+    )
+
+
 def ask(question: str, history: list[dict[str, Any]]) -> dict[str, Any]:
     """One Analyst turn. Returns {text, sql, suggestions, request_id} or {error}."""
-    conn = session().connection
     messages = [*history, {"role": "user", "content": [{"type": "text", "text": question}]}]
     started = time.time()
     try:
-        r = requests.post(
-            f"https://{conn.host}{ENDPOINT}",
-            json={"messages": messages, "semantic_view": CFG["semantic_view"]},
-            headers={
-                "Authorization": f'Snowflake Token="{conn.rest.token}"',
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            timeout=120,
-        )
+        r = _post(messages)
+        if r.status_code == 401:  # the session's token expired: reconnect once
+            session.clear()
+            r = _post(messages)
     except Exception as exc:  # network path unavailable in this runtime
         return {"error": f"Cortex Analyst could not be reached: {exc}"}
     if not r.ok:
@@ -64,8 +71,9 @@ def log_turn(question: str, result: dict[str, Any]) -> None:
     """Audit row for one question. Best effort: a logging failure must not hide the answer."""
     sql = result.get("sql")
     with contextlib.suppress(Exception):
-        session().sql(
-            f"""
+        run(
+            lambda s: s.sql(
+                f"""
             INSERT INTO {S["audit"]}.AGENT_ACTION_LOG (
                 log_id, session_id, turn_number, agent_mode, invoked_by, snowflake_user,
                 user_role, question_text, tools_invoked, sql_text, sql_hash, model_version,
@@ -77,13 +85,14 @@ def log_turn(question: str, result: dict[str, Any]) -> None:
                    'INVESTIGATOR', 'USER', CURRENT_USER(), CURRENT_ROLE(), ?,
                    ARRAY_CONSTRUCT('CORTEX_ANALYST'), ?, ?, 'CORTEX_ANALYST', ?, ?, ?, ?
             """,
-            params=[
-                question,
-                sql,
-                hashlib.sha256(sql.encode()).hexdigest() if sql else None,
-                str(result.get("request_id") or "n/a"),
-                result.get("latency_ms"),
-                "ERROR" if result.get("error") else "SUCCESS",
-                result.get("error"),
-            ],
-        ).collect()
+                params=[
+                    question,
+                    sql,
+                    hashlib.sha256(sql.encode()).hexdigest() if sql else None,
+                    str(result.get("request_id") or "n/a"),
+                    result.get("latency_ms"),
+                    "ERROR" if result.get("error") else "SUCCESS",
+                    result.get("error"),
+                ],
+            ).collect()
+        )
