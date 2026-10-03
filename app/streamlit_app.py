@@ -15,6 +15,7 @@ pages = [
     st.Page("app_pages/case.py", title="Case investigation", icon=":material/manage_search:"),
     st.Page("app_pages/signoff.py", title="Officer sign-off", icon=":material/verified:"),
     st.Page("app_pages/ask.py", title="Ask the data", icon=":material/chat:"),
+    st.Page("app_pages/liquidity.py", title="Liquidity (ALM)", icon=":material/water_drop:"),
     st.Page("app_pages/governance.py", title="Governance & audit", icon=":material/policy:"),
 ]
 user = auth.current()

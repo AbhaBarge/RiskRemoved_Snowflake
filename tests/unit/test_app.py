@@ -162,6 +162,7 @@ def test_the_repository_app_has_its_entry_point_and_pages(repo_root: Path) -> No
         "lib/str_view.py",
         "lib/analyst.py",
         "app_pages/ask.py",
+        "app_pages/liquidity.py",
     } <= files
 
 

@@ -12,6 +12,7 @@ EV = S["evidence"]
 GOV = S["governance"]
 AUD = S["audit"]
 RAW = S["raw"]
+CUR = S["curated"]
 
 
 def kpis() -> dict[str, Any]:
@@ -349,3 +350,21 @@ def reset_preview() -> dict[str, Any]:
     """What a reset would delete and reopen. RESET_CASES with dry_run: changes nothing."""
     df = cached(f"CALL {PROC['reset_cases']}(?, ?)", ("APP", True))
     return variant(df.iloc[0, 0])
+
+
+# ---- liquidity ------------------------------------------------------------- #
+
+
+def structural_liquidity() -> pd.DataFrame:
+    """The Statement of Structural Liquidity, one row per maturity bucket."""
+    return cached(f"SELECT * FROM {VIEW['structural_liquidity']} ORDER BY as_of_date, bucket_id")
+
+
+def alm_lines() -> pd.DataFrame:
+    """The ALM book's line items behind the statement."""
+    return cached(
+        f"""
+        SELECT as_of_date, bucket_id, bucket_label, side, line_item, amount_inr
+        FROM {CUR}.ALM_CASHFLOW ORDER BY bucket_id, side DESC, amount_inr DESC
+        """
+    )
