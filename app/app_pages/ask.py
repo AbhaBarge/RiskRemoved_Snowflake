@@ -1,34 +1,44 @@
 """Ask: plain-English questions about transactions, customers, cases and STRs."""
 
+import html
+
 import streamlit as st
 from lib import ui
 from lib.analyst import ask, log_turn
-from lib.db import query, reason
+from lib.db import CFG, query, reason
 
-ui.style()
-st.title("Ask the data")
-st.caption(
-    "Cortex Analyst writes the SQL from a governed semantic view (SV_RISK_COPILOT). The view "
-    "excludes the answer key and identity numbers. You see the SQL behind every answer."
+ui.page_header(
+    "Ask the data",
+    "Cortex Analyst writes the SQL from the governed semantic view. Identity numbers are "
+    "excluded, and every answer shows the SQL behind it.",
+    glyph="forum",
+    eyebrow="Natural-language analytics",
+    meta=[
+        ui.pill("Cortex Analyst", "violet", glyph="auto_awesome"),
+        ui.pill(CFG["semantic_view"].split(".")[-1], "slate", glyph="schema"),
+    ],
 )
 
 EXAMPLES = [
-    "Which branch region received the most cash deposits by value?",
-    "How many cases are there by status?",
-    "Show the 5 customers with the highest total cash deposits",
-    "How many cash deposits were made each day?",
+    ("Which branch region received the most cash deposits by value?", "location_on", "navy"),
+    ("How many cases are there by status?", "folder_managed", "rose"),
+    ("Show the 5 customers with the highest total cash deposits", "leaderboard", "emerald"),
+    ("How many cash deposits were made each day?", "calendar_month", "amber"),
 ]
 
 if "ask_history" not in st.session_state:
     st.session_state["ask_history"] = []  # Analyst message format
     st.session_state["ask_turns"] = []  # what we render
 
-st.markdown("##### Try one")
-cols = st.columns(len(EXAMPLES))
+ui.section("Try one", "each question runs live against the semantic view")
+cols = st.columns(len(EXAMPLES), gap="small")
 picked = None
-for col, q in zip(cols, EXAMPLES, strict=True):
-    with col.container(border=True):
-        st.caption(q)
+for i, (col, (q, glyph, tone)) in enumerate(zip(cols, EXAMPLES, strict=True)):
+    with col, ui.card(f"ask-{i}", glyph=glyph, tone=tone):
+        st.markdown(
+            f'<div class="rc-qcard">{ui.icon(glyph)} &nbsp;{html.escape(q)}</div>',
+            unsafe_allow_html=True,
+        )
         if st.button("Ask", key=f"ex_{q}", icon=":material/arrow_forward:", width="stretch"):
             picked = q
 typed = st.chat_input("Ask a question about the bank's data")
@@ -51,10 +61,17 @@ if question:
             result["message"],
         ]
 
+if not st.session_state["ask_turns"]:
+    ui.empty(
+        "Ask in plain English, or pick a question above. Answers are charted when the shape "
+        "allows, with the table and SQL one click away.",
+        glyph="tips_and_updates",
+    )
+
 for i, turn in enumerate(reversed(st.session_state["ask_turns"])):
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=":material/person:"):
         st.write(turn["q"])
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=":material/auto_awesome:"):
         if turn.get("error"):
             st.error(turn["error"])
             continue
@@ -70,12 +87,14 @@ for i, turn in enumerate(reversed(st.session_state["ask_turns"])):
         if turn.get("run_error"):
             st.error(f"The generated SQL did not run: {turn['run_error']}")
         if turn.get("sql"):
-            with st.expander("SQL written by Cortex Analyst"):
+            with st.expander("SQL written by Cortex Analyst", icon=":material/code:"):
                 st.code(turn["sql"], language="sql")
         for s in turn.get("suggestions") or []:
             st.caption(f"Try: {s}")
         st.caption(f"{turn.get('latency_ms', 0) / 1000:.1f}s · logged to AGENT_ACTION_LOG")
 
-if st.session_state["ask_turns"] and st.button("Clear conversation"):
+if st.session_state["ask_turns"] and st.button(
+    "Clear conversation", icon=":material/delete_sweep:", type="tertiary"
+):
     st.session_state["ask_history"], st.session_state["ask_turns"] = [], []
     st.rerun()

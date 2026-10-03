@@ -1,35 +1,43 @@
 """Case investigation: who, what fired, and the transactions behind it."""
 
-import html
 import json
 
 import altair as alt
 import pandas as pd
 import streamlit as st
-from lib import auth, data, triage, ui
+from lib import auth, data, filters, triage, ui
 from lib.db import HERO, PROC, call, inr, lakh, reason
 from lib.str_view import STATUS_HELP, review_result, str_document
 
-ui.style()
-st.title("Case investigation")
-
-queue = data.case_queue()
-if queue.empty:
-    st.info("No cases yet.")
+F = filters.current()
+everything = data.case_queue()
+if everything.empty:
+    ui.page_header("Case investigation", glyph="manage_search", eyebrow="Investigation")
+    ui.empty("No cases yet. Signals are routed into cases by ROUTE_SIGNALS.")
     st.stop()
 
+queue = filters.cases(everything, F)
+names = everything.set_index("case_id")["full_name"].to_dict()
+wanted = st.session_state.get("case_id") or (HERO["case_ids"][0] if HERO else None)
 ids = queue["case_id"].tolist()
-names = queue.set_index("case_id")["full_name"].to_dict()
-wanted = st.session_state.get("case_id") or (HERO["case_ids"][0] if HERO else ids[0])
-case_id = st.selectbox(
-    "Case",
-    ids,
-    index=ids.index(wanted) if wanted in ids else 0,
-    format_func=lambda c: (
-        f"{c} -- {names.get(c) or 'unknown party'}"
-        + ("  (demo hero)" if HERO and c in HERO["case_ids"] else "")
-    ),
-)
+if wanted in names and wanted not in ids:  # opened from elsewhere: keep it selectable
+    ids = [wanted, *ids]
+if not ids:
+    ui.page_header("Case investigation", glyph="manage_search", eyebrow="Investigation")
+    ui.empty("No case matches the sidebar filters. Clear them to see every case.")
+    st.stop()
+
+head = st.container()  # the header names the selected case, so it is filled below
+with st.container(key="case-picker"):
+    case_id = st.selectbox(
+        "Case",
+        ids,
+        index=ids.index(wanted) if wanted in ids else 0,
+        format_func=lambda c: (
+            f"{c} -- {names.get(c) or 'unknown party'}"
+            + ("  (demo hero)" if HERO and c in HERO["case_ids"] else "")
+        ),
+    )
 st.session_state["case_id"] = case_id
 
 case = data.case(case_id)
@@ -41,15 +49,87 @@ if not case or not party:
 signals = data.case_signals(case_id)
 txns = data.evidence_transactions(case_id)
 chain = data.chain_counts(case_id)
+pal = ui.palette()
+status_tone = {"OPEN": "slate", "INVESTIGATING": "blue", "DRAFTED": "amber", "REVIEWED": "emerald"}
 
-# ---- header and evidence-chain progress ---------------------------------- #
-st.subheader(f"{party['full_name']}  ·  {case['party_id']}")
-st.markdown(
-    ui.chip(str(case["status"]), ui.STATUS_COLOURS.get(case["status"], ui.SLATE))
-    + ui.chip(str(case["case_type"]), ui.NAVY)
-    + ui.chip(str(case["branch_region"]), ui.SKY)
-    + f" &nbsp;Opened {html.escape(str(case['opened_at'])[:16])}",
-    unsafe_allow_html=True,
+with head:
+    ui.page_header(
+        str(party["full_name"]),
+        f"Case {case_id} for customer {case['party_id']}, opened "
+        f"{str(case['opened_at'])[:16]}. Who they are, what fired, and the deposits behind it.",
+        glyph="manage_search",
+        eyebrow="Case investigation",
+        meta=[
+            ui.pill(
+                str(case["status"]).title(), status_tone.get(case["status"], "navy"), glyph="flag"
+            ),
+            ui.pill(str(case["case_type"]), "violet", glyph="category"),
+            ui.pill(str(case["branch_region"]).title(), "cyan", glyph="location_on"),
+            *(
+                [ui.pill("Demo case", "rose", live=True)]
+                if HERO and case_id in HERO["case_ids"]
+                else []
+            ),
+        ],
+    )
+
+
+def _detail(raw: object) -> dict:
+    return json.loads(raw) if isinstance(raw, str) else (raw or {})  # type: ignore[return-value]
+
+
+# ---- the case at a glance --------------------------------------------------- #
+d0 = _detail(signals.iloc[0]["detail"]) if not signals.empty else {}
+ctr = d0.get("ctr_threshold_inr")
+amounts = txns["amount_inr"].astype(float) if not txns.empty else pd.Series(dtype=float)
+total_value, total_unit = ui.rupees(amounts.sum() if not amounts.empty else 0)
+closest = (amounts.max() / float(ctr)) if ctr and not amounts.empty else None
+ui.kpis(
+    [
+        ui.Kpi(
+            "Cash deposited",
+            total_value,
+            total_unit,
+            note="across the evidence legs",
+            glyph="payments",
+            tone="navy",
+        ),
+        ui.Kpi(
+            "Deposits in band",
+            str(d0.get("deposit_count", len(txns))),
+            note="each just under the line",
+            delta=f"band {lakh(d0.get('band_lower_inr'))} to {lakh(d0.get('band_upper_inr'))}"
+            if d0
+            else "",
+            state="warn" if d0 else None,
+            glyph="price_check",
+            tone="amber",
+        ),
+        ui.Kpi(
+            "Accounts used",
+            str(len(d0.get("accounts", []))) if d0 else str(txns["account_id"].nunique()),
+            note="splitting is part of the pattern",
+            glyph="account_tree",
+            tone="violet",
+        ),
+        ui.Kpi(
+            "Closest to the line",
+            f"{closest:.1%}" if closest else "-",
+            note=f"of the {lakh(ctr)} reporting line" if ctr else "",
+            delta="never crossed" if closest and closest < 1 else "",
+            state="bad" if closest and closest < 1 else None,
+            glyph="speed",
+            tone="rose",
+        ),
+        ui.Kpi(
+            "Observation window",
+            f"{d0.get('window_days', '-')}",
+            "days",
+            note=f"from {signals.iloc[0]['window_bucket']}" if not signals.empty else "",
+            glyph="date_range",
+            tone="cyan",
+        ),
+    ]
 )
 
 steps = [
@@ -61,20 +141,25 @@ steps = [
     ("Attested", chain["attestations"], "officer's signature"),
 ]
 reached = max((i for i, (_, n, _) in enumerate(steps) if n), default=-1)
+ui.section("Evidence chain", "each step points at the one before; the outlined tile is next")
 ui.strip(
     [(name, f"{int(n):,}" if n else "--", note) for name, n, note in steps],
     active=reached + 1 if reached + 1 < len(steps) else None,
     done=reached,
 )
-st.caption(
-    "The evidence chain: each step writes rows that point at the step before, so any "
-    "sentence in the STR traces back to the transactions. The highlighted tile is next."
-)
 
-# ---- party profile -------------------------------------------------------- #
-left, right = st.columns([2, 3])
-with left:
-    st.markdown("#### Customer profile (KYC)")
+# ---- party profile and what fired ------------------------------------------- #
+left, right = st.columns([2, 3], gap="medium")
+with (
+    left,
+    ui.card(
+        "kyc",
+        "Customer profile (KYC)",
+        "The record the bank holds on this customer.",
+        glyph="badge",
+        tone="navy",
+    ),
+):
     profile = {
         "Party type": party["party_type"],
         "Occupation": party["occupation"],
@@ -96,26 +181,26 @@ with left:
     if party.get("kyc_note"):
         st.caption("KYC note (free text, untrusted input)")
         st.text(party["kyc_note"])
-    st.markdown("#### Accounts")
+    st.markdown("##### Accounts")
     st.dataframe(ui.pretty(data.accounts(case["party_id"])), hide_index=True, width="stretch")
 
-# ---- what fired ------------------------------------------------------------ #
 with right:
-    st.markdown("#### Why it was flagged")
-    for _, s in signals.iterrows():
-        detail = json.loads(s["detail"]) if isinstance(s["detail"], str) else (s["detail"] or {})
-        with st.container(border=True):
-            st.markdown(f"**{s['rule_id']}** v{s['rule_version']} · severity **{s['severity']}**")
+    with ui.card(
+        "fired",
+        "Why it was flagged",
+        "The rule that fired and the governed thresholds it read.",
+        glyph="policy_alert",
+        tone="rose",
+    ):
+        for _, s in signals.iterrows():
+            detail = _detail(s["detail"])
+            st.markdown(
+                f"**{s['rule_id']}** v{s['rule_version']} &nbsp;"
+                + ui.pill(f"severity {s['severity']}", "rose", glyph="priority_high"),
+                unsafe_allow_html=True,
+            )
             if s.get("rule_description"):
                 st.caption(s["rule_description"])
-            ui.strip(
-                [
-                    ("Cash deposits in band", str(detail.get("deposit_count", "-")), ""),
-                    ("Total deposited", lakh(detail.get("deposit_total_inr")), ""),
-                    ("Accounts used", str(len(detail.get("accounts", []))), ""),
-                ],
-                arrows=False,
-            )
             band = (detail.get("band_lower_inr"), detail.get("band_upper_inr"))
             st.caption(
                 f"Each deposit between {inr(band[0])} and {inr(band[1])}, just under the "
@@ -125,123 +210,141 @@ with right:
             )
 
     if not txns.empty:
-        st.markdown("#### The deposits")
-        d0: dict = {}
-        if not signals.empty:
-            raw = signals.iloc[0]["detail"]
-            d0 = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        ctr, lo, hi = (d0.get(k) for k in ("ctr_threshold_inr", "band_lower_inr", "band_upper_inr"))
-        t = txns.sort_values("txn_timestamp").copy()
-        t["lakh"] = t["amount_inr"].astype(float) / 100000
-        t["amount"] = t["amount_inr"].map(inr)
-        t["running_lakh"] = t["lakh"].cumsum()
-        x = alt.X("txn_timestamp:T", title=None)
-        layers = []
-        if lo and hi:
-            band = pd.DataFrame({"lo": [float(lo) / 100000], "hi": [float(hi) / 100000]})
-            layers.append(
-                alt.Chart(band).mark_rect(color=ui.AMBER, opacity=0.15).encode(y="lo:Q", y2="hi:Q")
+        with ui.card(
+            "deposits",
+            "The deposits",
+            "Every deposit sits in the shaded band just under the dashed reporting line.",
+            glyph="scatter_plot",
+            tone="amber",
+        ):
+            ctr, lo, hi = (
+                d0.get(k) for k in ("ctr_threshold_inr", "band_lower_inr", "band_upper_inr")
             )
-        if ctr:
-            line = pd.DataFrame({"y": [float(ctr) / 100000]})
-            rule = alt.Chart(line)
-            layers.append(rule.mark_rule(strokeDash=[6, 4], color=ui.RED).encode(y="y:Q"))
+            t = txns.sort_values("txn_timestamp").copy()
+            t["lakh"] = t["amount_inr"].astype(float) / 100000
+            t["amount"] = t["amount_inr"].map(inr)
+            t["running_lakh"] = t["lakh"].cumsum()
+            x = alt.X("txn_timestamp:T", title=None, axis=alt.Axis(format="%d %b", tickCount="day"))
+            layers = []
+            if lo and hi:
+                band_df = pd.DataFrame({"lo": [float(lo) / 100000], "hi": [float(hi) / 100000]})
+                layers.append(
+                    alt.Chart(band_df)
+                    .mark_rect(color=pal["band"], opacity=0.16)
+                    .encode(y="lo:Q", y2="hi:Q")
+                )
+            if ctr:
+                line = alt.Chart(pd.DataFrame({"y": [float(ctr) / 100000]}))
+                layers.append(
+                    line.mark_rule(strokeDash=[6, 4], color=pal["rose"], strokeWidth=2).encode(
+                        y="y:Q"
+                    )
+                )
+                layers.append(
+                    line.mark_text(
+                        align="left", dx=4, dy=-8, color=pal["rose"], fontSize=11, fontWeight=600
+                    ).encode(y="y:Q", text=alt.value(f"Reporting line {lakh(ctr)}"), x=alt.value(0))
+                )
             layers.append(
-                rule.mark_text(align="left", dx=4, dy=-7, color=ui.RED, fontSize=11).encode(
-                    y="y:Q", text=alt.value(f"Reporting line {lakh(ctr)}"), x=alt.value(0)
+                alt.Chart(t)
+                .mark_circle(size=190, opacity=0.95, stroke=pal["ink"], strokeWidth=0.8)
+                .encode(
+                    x=x,
+                    y=alt.Y("lakh:Q", title="Deposit (₹ lakh)", scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        "account_id:N", title="Account", scale=alt.Scale(range=ui.series())
+                    ),
+                    tooltip=[
+                        "txn_id:N",
+                        alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
+                        "account_id:N",
+                        "amount:N",
+                        "channel:N",
+                    ],
                 )
             )
-        layers.append(
-            alt.Chart(t)
-            .mark_circle(size=160, opacity=0.9, stroke="white", strokeWidth=1)
-            .encode(
-                x=x,
-                y=alt.Y("lakh:Q", title="Deposit (₹ lakh)", scale=alt.Scale(zero=False)),
-                color=alt.Color(
-                    "account_id:N",
-                    title="Account",
-                    scale=alt.Scale(range=ui.BRANCH_SCHEME),
-                    legend=alt.Legend(orient="bottom"),
-                ),
-                tooltip=[
-                    "txn_id:N",
-                    alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
-                    "account_id:N",
-                    "amount:N",
-                    "channel:N",
-                ],
+            ui.chart(alt.layer(*layers).properties(height=230))
+            cumulative = (
+                alt.Chart(t)
+                .mark_area(
+                    interpolate="step-after",
+                    color=pal["blue"],
+                    opacity=0.2,
+                    line={"color": pal["navy"], "strokeWidth": 2},
+                )
+                .encode(
+                    x=x,
+                    y=alt.Y("running_lakh:Q", title="Running total (₹ lakh)"),
+                    tooltip=[
+                        alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
+                        alt.Tooltip("running_lakh:Q", title="Total (₹ lakh)", format=",.2f"),
+                    ],
+                )
+                .properties(height=150)
             )
-        )
-        st.altair_chart(alt.layer(*layers).properties(height=230), width="stretch")
-        cumulative = (
-            alt.Chart(t)
-            .mark_area(
-                interpolate="step-after", color=ui.NAVY, opacity=0.18, line={"color": ui.NAVY}
+            ui.chart(cumulative)
+            st.caption(
+                f"Together they add up to {lakh(t['amount_inr'].sum())}, none of it reported."
             )
-            .encode(
-                x=x,
-                y=alt.Y("running_lakh:Q", title="Running total (₹ lakh)"),
-                tooltip=[
-                    alt.Tooltip("txn_timestamp:T", format="%d %b %H:%M"),
-                    alt.Tooltip("running_lakh:Q", title="Total (₹ lakh)", format=",.2f"),
-                ],
-            )
-            .properties(height=150)
-        )
-        st.altair_chart(cumulative, width="stretch")
-        st.caption(
-            "Top: every deposit sits in the shaded band just under the dashed reporting line. "
-            f"Bottom: together they add up to {lakh(t['amount_inr'].sum())}, none of it reported."
-        )
 
 if not txns.empty:
-    head, switch = st.columns([4, 1], vertical_alignment="bottom")
-    head.markdown("#### Evidence transactions")
-    with switch:
+    with ui.card(
+        "txns",
+        "Evidence transactions",
+        "How the cash was spread across accounts: splitting is part of the pattern.",
+        glyph="receipt_long",
+        tone="blue",
+    ):
         show_visual = ui.visual("case_txns")
-    shown = txns.assign(amount=txns["amount_inr"].map(inr))
-    if show_visual:
-        per_account = (
-            alt.Chart(shown.assign(lakh=shown["amount_inr"].astype(float) / 100000))
-            .mark_bar(cornerRadiusEnd=4)
-            .encode(
-                y=alt.Y("account_id:N", title=None),
-                x=alt.X("sum(lakh):Q", title="Deposited (₹ lakh)"),
-                color=alt.Color(
-                    "channel:N",
-                    title="Channel",
-                    scale=alt.Scale(range=ui.BRANCH_SCHEME),
-                    legend=alt.Legend(orient="bottom"),
-                ),
-                tooltip=[
-                    "account_id:N",
-                    "channel:N",
-                    alt.Tooltip("count():Q", title="Deposits"),
-                    alt.Tooltip("sum(lakh):Q", title="₹ lakh", format=",.2f"),
-                ],
+        shown = txns.assign(amount=txns["amount_inr"].map(inr))
+        if show_visual:
+            per_account = (
+                alt.Chart(shown.assign(lakh=shown["amount_inr"].astype(float) / 100000))
+                .mark_bar(cornerRadiusEnd=6, height={"band": 0.62})
+                .encode(
+                    y=alt.Y("account_id:N", title=None),
+                    x=alt.X("sum(lakh):Q", title="Deposited (₹ lakh)"),
+                    color=alt.Color(
+                        "channel:N", title="Channel", scale=alt.Scale(range=ui.series())
+                    ),
+                    tooltip=[
+                        "account_id:N",
+                        "channel:N",
+                        alt.Tooltip("count():Q", title="Deposits"),
+                        alt.Tooltip("sum(lakh):Q", title="₹ lakh", format=",.2f"),
+                    ],
+                )
+                .properties(height={"step": 40})
             )
-            .properties(height={"step": 38})
-        )
-        st.altair_chart(per_account, width="stretch")
-        st.caption("How the cash was spread across accounts: splitting is part of the pattern.")
-    else:
-        cols = [
-            "txn_id",
-            "txn_timestamp",
-            "account_id",
-            "amount",
-            "channel",
-            "txn_type",
-            "branch_code",
-            "source_ref",
-        ]
-        st.dataframe(ui.pretty(shown[cols]), hide_index=True, width="stretch")
+            ui.chart(per_account)
+        else:
+            cols = [
+                "txn_id",
+                "txn_timestamp",
+                "account_id",
+                "amount",
+                "channel",
+                "txn_type",
+                "branch_code",
+                "source_ref",
+            ]
+            st.dataframe(ui.pretty(shown[cols]), hide_index=True, width="stretch")
 
     # A model reads the same legs and describes the pattern. Beside the evidence, never in it.
-    with st.container(border=True):
-        h, go = st.columns([4, 1], vertical_alignment="center")
-        h.markdown("#### Triage summary · Cortex AI")
-        asked = go.button("Summarise", key=f"triage_{case_id}", width="stretch")
+    with ui.card(
+        "triage",
+        "Triage summary",
+        "A Cortex model reads the same legs and describes the pattern. Nothing it writes "
+        "reaches the filing.",
+        glyph="auto_awesome",
+        tone="violet",
+        aside=ui.pill("Cortex AI", "violet", glyph="auto_awesome"),
+    ):
+        asked = st.button(
+            "Summarise the evidence",
+            key=f"triage_{case_id}",
+            icon=":material/auto_awesome:",
+        )
         if asked:
             st.session_state.setdefault("triage", {})[case_id] = True
         if st.session_state.get("triage", {}).get(case_id):
@@ -257,21 +360,9 @@ if not txns.empty:
                     "trail. An analyst aid, not evidence: it is never written into the STR, "
                     "whose every figure comes from SQL."
                 )
-        else:
-            st.caption(
-                "Ask a Cortex model to describe the pattern in these legs. It reads the same "
-                "rows as above; nothing it writes reaches the filing."
-            )
 
 
 # ---- the STR workflow: gather -> draft -> review ---------------------------- #
-st.divider()
-st.header("Investigate, draft and review the STR")
-st.caption(
-    "Each button calls one stored procedure: the same tools a Cortex Agent will call "
-    "once this account allows agents. Every step is written to the audit log."
-)
-
 arts = data.case_artifacts(case_id)
 latest = arts.iloc[0].to_dict() if not arts.empty else None
 filed = bool((arts["status"] == "FILED").any()) if not arts.empty else False
@@ -287,7 +378,6 @@ def run(label: str, fn) -> None:
     st.rerun()
 
 
-b = st.columns([1, 1, 1, 2], vertical_alignment="center")
 maker = auth.can("can_investigate")
 locked = filed or not maker
 gathered = chain["evidence"] > 0
@@ -304,45 +394,57 @@ next_step = (
     if redraft
     else None
 )
-plant = b[3].toggle(
-    "Plant a defect in the next draft",
-    help="Demo: inflates the deposit total by 10% and cites a clause that does not exist. "
-    "Watch the Reviewer catch both.",
-    disabled=locked,
-)
-if b[0].button(
-    "1 · Gather evidence",
-    type="primary" if next_step == "gather" else "secondary",
-    width="stretch",
-    disabled=locked,
+with ui.card(
+    "workflow",
+    "Investigate, draft and review the STR",
+    "Each step calls one governed stored procedure, and every step is written to the audit log.",
+    glyph="account_tree",
+    tone="emerald",
+    aside=ui.pill("Maker" if maker else "Checker", "violet" if maker else "emerald"),
 ):
-    run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
-if b[1].button(
-    "2 · Draft STR",
-    type="primary" if next_step == "draft" else "secondary",
-    width="stretch",
-    disabled=locked,
-):
-    run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
-if b[2].button(
-    "3 · Run Reviewer",
-    type="primary" if next_step == "review" else "secondary",
-    width="stretch",
-    disabled=not can_review,
-):
-    run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
-if not maker and not filed:
-    st.info(
-        "Maker-checker: the Principal Officer signs STRs but does not draft them. "
-        "Sign in as the AML Analyst to investigate.",
-        icon=":material/lock:",
+    b = st.columns([1, 1, 1, 2], vertical_alignment="center")
+    plant = b[3].toggle(
+        "Plant a defect in the next draft",
+        help="Demo: inflates the deposit total by 10% and cites a clause that does not exist. "
+        "Watch the Reviewer catch both.",
+        disabled=locked,
     )
+    if b[0].button(
+        "1 · Gather evidence",
+        type="primary" if next_step == "gather" else "secondary",
+        width="stretch",
+        disabled=locked,
+        icon=":material/travel_explore:",
+    ):
+        run("Gathering evidence", lambda: call(PROC["gather_evidence"], case_id))
+    if b[1].button(
+        "2 · Draft STR",
+        type="primary" if next_step == "draft" else "secondary",
+        width="stretch",
+        disabled=locked,
+        icon=":material/edit_document:",
+    ):
+        run("Drafting the STR", lambda: call(PROC["draft_str"], case_id, bool(plant)))
+    if b[2].button(
+        "3 · Run Reviewer",
+        type="primary" if next_step == "review" else "secondary",
+        width="stretch",
+        disabled=not can_review,
+        icon=":material/rule:",
+    ):
+        run("Reviewing", lambda: call(PROC["review_str"], latest["artifact_id"]))
+    if not maker and not filed:
+        st.info(
+            "Maker-checker: the Principal Officer signs STRs but does not draft them. "
+            "Sign in as the AML Analyst to investigate.",
+            icon=":material/lock:",
+        )
 
 last = st.session_state.pop("last_action", None)
 if last:
     ok, label, result = last
     if ok:
-        st.toast(f"{label}: done")
+        st.toast(f"{label}: done", icon=":material/check_circle:")
     else:
         st.error(f"{label} refused: {result}")
 
@@ -363,7 +465,7 @@ def evidence_chain() -> None:
 
 
 if latest is None and not gathered:
-    st.info("No evidence gathered yet. Start with **1 · Gather evidence**.")
+    ui.empty("No evidence gathered yet. Start with 1 · Gather evidence.", glyph="travel_explore")
 elif latest is None:
     queries = len(data.query_logs(case_id))
     st.success(
@@ -371,29 +473,48 @@ elif latest is None:
         "query(ies). No STR drafted yet. Next: **2 · Draft STR**."
         if maker
         else f"Evidence gathered: {chain['evidence']:,} pointer(s) and {queries:,} logged "
-        "query(ies). The AML Analyst drafts the STR next."
+        "query(ies). The AML Analyst drafts the STR next.",
+        icon=":material/inventory:",
     )
-    with st.expander("What was gathered", expanded=True):
+    with st.expander("What was gathered", expanded=True, icon=":material/inventory_2:"):
         evidence_chain()
 else:
     if latest["status"] == "REVIEWED":
         s1, s2 = st.columns([3, 1], vertical_alignment="center")
         s1.success(
-            "The Reviewer approved this STR. It now needs the Principal Officer's signature."
+            "The Reviewer approved this STR. It now needs the Principal Officer's signature.",
+            icon=":material/verified:",
         )
-        if s2.button("Go to sign-off", width="stretch"):
+        if s2.button("Go to sign-off", width="stretch", icon=":material/arrow_forward:"):
             st.switch_page("app_pages/signoff.py")
     elif filed:
-        st.success("STR attested by the Principal Officer and filed. The case is closed.")
-    t1, t2, t3 = st.tabs(["Latest STR", "Version history", "Evidence chain"])
+        st.success(
+            "STR attested by the Principal Officer and filed. The case is closed.",
+            icon=":material/task_alt:",
+        )
+    t1, t2, t3 = st.tabs(
+        [
+            ":material/description: Latest STR",
+            ":material/history: Version history",
+            ":material/link: Evidence chain",
+        ]
+    )
     with t1:
-        left, right = st.columns([3, 2])
-        with left:
+        left, right = st.columns([3, 2], gap="medium")
+        with left, ui.card("str", glyph="description"):
             a = data.artifact(latest["artifact_id"])
             if a:
                 str_document(a)
-        with right:
-            st.markdown("##### Reviewer")
+        with (
+            right,
+            ui.card(
+                "review",
+                "Reviewer",
+                "Deterministic checks, no model involved.",
+                glyph="fact_check",
+                tone="emerald",
+            ),
+        ):
             review_result(latest)
     with t2:
         hist = arts[["version", "artifact_id", "status", "review_decision", "created_at"]].copy()
@@ -401,7 +522,9 @@ else:
         st.dataframe(ui.pretty(hist), hide_index=True, width="stretch")
         for _, row in arts.iterrows():
             if row["review_decision"] == "REJECT":
-                with st.expander(f"v{row['version']} -- why the Reviewer rejected it"):
+                with st.expander(
+                    f"v{row['version']} -- why the Reviewer rejected it", icon=":material/cancel:"
+                ):
                     review_result(row.to_dict())
     with t3:
         evidence_chain()

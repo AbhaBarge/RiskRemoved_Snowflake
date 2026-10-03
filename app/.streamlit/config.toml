@@ -1,9 +1,112 @@
+# One theme, two modes. Both [theme.light] and [theme.dark] are defined, so the
+# app follows the viewer's system setting until the sidebar's appearance toggle
+# picks one (lib/ui.py:theme_hook). Fonts are bundled under app/static because
+# Streamlit in Snowflake cannot fetch font stylesheets from a CDN.
+#
+# The repository root's .streamlit/config.toml must stay identical to this file
+# (tests/unit/test_hosting.py): Community Cloud reads that one.
+
 [theme]
-base = "light"
-primaryColor = "#29B5E8"
-textColor = "#11567F"
+font = "Inter, -apple-system, 'Segoe UI', Roboto, sans-serif"
+codeFont = "'JetBrains Mono', ui-monospace, Consolas, monospace"
+codeFontSize = "0.84rem"
+baseFontSize = 15
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+headingFontSizes = ["2.05rem", "1.5rem", "1.22rem", "1.04rem", "0.95rem", "0.85rem"]
+baseRadius = "12px"
+buttonRadius = "10px"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-Regular.ttf"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-Medium.ttf"
+weight = 500
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-SemiBold.ttf"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-Bold.ttf"
+weight = 700
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/JetBrainsMono-Regular.ttf"
+weight = 400
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/JetBrainsMono-Medium.ttf"
+weight = 500
+
+# Studio white: executive navy, emerald for success, slate for secondary text.
+[theme.light]
+primaryColor = "#1E3A8A"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F2F7FA"
+secondaryBackgroundColor = "#F4F6FA"
+textColor = "#0F172A"
+linkColor = "#1D4ED8"
+borderColor = "#E2E8F0"
+codeBackgroundColor = "#F1F5F9"
+codeTextColor = "#0F172A"
+dataframeBorderColor = "#E2E8F0"
+dataframeHeaderBackgroundColor = "#F1F5F9"
+blueColor = "#2563EB"
+greenColor = "#10B981"
+orangeColor = "#F59E0B"
+yellowColor = "#EAB308"
+redColor = "#E11D48"
+violetColor = "#7C3AED"
+grayColor = "#64748B"
+chartCategoricalColors = ["#1E3A8A", "#10B981", "#F59E0B", "#0EA5E9", "#8B5CF6", "#F43F5E", "#64748B", "#14B8A6"]
+chartSequentialColors = ["#EFF6FF", "#DBEAFE", "#BFDBFE", "#93C5FD", "#60A5FA", "#3B82F6", "#2563EB", "#1D4ED8", "#1E40AF", "#1E3A8A"]
+
+[theme.light.sidebar]
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#EEF2F7"
+borderColor = "#E2E8F0"
+textColor = "#0F172A"
+
+# Deep slate: the same hues, lifted so they read on #0D1117.
+[theme.dark]
+primaryColor = "#3B82F6"
+backgroundColor = "#0D1117"
+secondaryBackgroundColor = "#161B22"
+textColor = "#E6EDF3"
+linkColor = "#60A5FA"
+borderColor = "#30363D"
+codeBackgroundColor = "#161B22"
+codeTextColor = "#E6EDF3"
+dataframeBorderColor = "#30363D"
+dataframeHeaderBackgroundColor = "#161B22"
+blueColor = "#60A5FA"
+greenColor = "#10B981"
+orangeColor = "#FBBF24"
+yellowColor = "#FACC15"
+redColor = "#FB7185"
+violetColor = "#A78BFA"
+grayColor = "#94A3B8"
+chartCategoricalColors = ["#60A5FA", "#10B981", "#FBBF24", "#22D3EE", "#A78BFA", "#FB7185", "#94A3B8", "#2DD4BF"]
+chartSequentialColors = ["#0B1B3A", "#0F2A5F", "#13398A", "#1D4ED8", "#2563EB", "#3B82F6", "#60A5FA", "#93C5FD", "#BFDBFE", "#DBEAFE"]
+
+[theme.dark.sidebar]
+backgroundColor = "#010409"
+secondaryBackgroundColor = "#0D1117"
+borderColor = "#21262D"
+textColor = "#E6EDF3"
+
+[server]
+enableStaticServing = true
 
 [client]
 toolbarMode = "minimal"
