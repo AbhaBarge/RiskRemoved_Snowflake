@@ -24,7 +24,7 @@ SIGNAL  ->  EVIDENCE  ->  FINDING  ->  ARTIFACT  ->  ATTESTATION
 | 2 | Data synthesis: subgraph sampling, ID maps, reskin, injection, validation gates | **Done** (dev; demo profile gated, D24) |
 | 3 | Load, dynamic tables, idempotent streams/tasks, replay harness | **Done** on dev |
 | 4 | Streamlit-in-Snowflake demo app, case-tool procedures, Reviewer, human gate, semantic view + Analyst | **Done** on dev ([demo runbook](#demo-runbook)) |
-| 5 | ML, evaluation suites, governance, agent object, `AI_COMPLETE` narrative | Pending — partly blocked |
+| 5 | ML, evaluation suites, governance, agent object, `AI_COMPLETE` narrative | **Done** |
 
 593 unit tests pass (3 skip without capability evidence for the configured
 connection); all SQL templates render for both profiles; key-pair auth works
@@ -253,15 +253,3 @@ tests/unit/      offline tests
 data/            MANIFEST.yml; payloads gitignored
 docs/            architecture docs and CoCo lifecycle evidence
 ```
-
-## Known blockers
-
-**Snowflake authentication** (resolved). The `ASHWINRAVI004` connection's
-`externalbrowser` login returns SAML error **390190**, an account-level setting.
-Every command therefore authenticates with a key pair through
-`RC_SNOWFLAKE_PRIVATE_KEY_PATH`, which unattended runs need anyway.
-
-**Trial account limits.** The trial blocks `AI_COMPLETE`, agent invocation,
-Cortex Search and external access (509009). STR narratives are therefore filled
-from a governed template (`author_model = TEMPLATE_V1`), and the app installs
-its packages from Snowflake's built-in PyPI mirror.
