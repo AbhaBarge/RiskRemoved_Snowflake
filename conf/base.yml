@@ -148,6 +148,7 @@ case_tools:
   review_str: REVIEW_STR                 # artifact -> REVIEW (deterministic checks)
   attest_str: ATTEST_STR                 # artifact -> ATTESTATION (the human gate)
   reset_cases: RESET_CASES               # demo reset: workflow rows deleted, cases reopened
+  submit_ai_draft: SUBMIT_AI_DRAFT       # write-back: agent-account narrative -> FINDING n+1 + ARTIFACT
   render_template: RENDER_TEMPLATE       # JS UDF: {placeholder} -> display value
   format_inr: FORMAT_INR                 # JS UDF: Indian digit grouping
   # Data, not objects: the REF_FILING_TEMPLATES row DRAFT_STR fills, and the

@@ -56,11 +56,33 @@ def str_document(a: dict[str, Any]) -> None:
     ]
     with st.expander(f"Where every figure comes from ({len(rows)} figures)"):
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        st.caption(
-            f"Narrative written by `{a.get('author_model')}` from template "
-            f"`{a.get('prompt_version')}`; it contains placeholders only. Each figure is "
-            "read from a logged, hashed query."
-        )
+        author = content.get("narrative_author") or a.get("author_model")
+        if content.get("agent_review"):
+            st.caption(
+                f"Narrative written by `{author}` (Cortex Agent, separate account) and "
+                "cross-reviewed before write-back. The figures are unchanged from the logged, "
+                "hashed queries; the Reviewer re-checks them here."
+            )
+        else:
+            st.caption(
+                f"Narrative written by `{a.get('author_model')}` from template "
+                f"`{a.get('prompt_version')}`; it contains placeholders only. Each figure is "
+                "read from a logged, hashed query."
+            )
+    review = variant(content.get("agent_review")) or {}
+    if review:
+        with st.expander("Agent review (agent account)"):
+            st.markdown(
+                f"**{review.get('decision')}** by `{review.get('reviewer_model')}`, cross-family check "
+                f"of a `{review.get('drafter_model')}` draft (attempt {review.get('attempt')}).  \n"
+                f"Figure trace: **{'PASS' if (review.get('numeric_check') or {}).get('passed') else 'FAIL'}** "
+                f"({(review.get('numeric_check') or {}).get('tokens_checked', 0)} amounts/counts/dates).  \n"
+                f"FIU-IND reason codes: {', '.join(review.get('reason_codes') or []) or '-'}"
+            )
+            st.caption(
+                f"`{review.get('agent')}` in `{review.get('agent_account')}` · package "
+                f"`{review.get('package_id')}` · payload SHA-256 `{(review.get('payload_hash') or '')[:16]}...`"
+            )
     with st.expander("Cited clauses and transactions"):
         st.write(", ".join(variant(content.get("cited_clause_ids")) or []))
         tx = variant(content.get("transactions")) or []
