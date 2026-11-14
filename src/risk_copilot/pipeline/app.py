@@ -35,11 +35,14 @@ CONFIG_FILE = "app_config.json"
 #: What gets uploaded. Anything else under app/ (caches, notes) stays local.
 UPLOAD_SUFFIXES = frozenset({".py", ".toml", ".json", ".css", ".ttf", ".png", ".svg"})
 _SKIP_DIRS = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"})
+#: Never uploaded, whatever the suffix: a local secrets file holds private keys,
+#: and anything put on the app stage is readable by whoever can read the app.
+_NEVER_UPLOAD = frozenset({"secrets.toml"})
 
 CONFIRMED = "CONFIRMED_BY_DETECTION"
 #: case_tools the app calls (the UDFs and data keys are not its business).
 _APP_PROCEDURES = frozenset(
-    {"gather_evidence", "draft_str", "review_str", "attest_str", "reset_cases"}
+    {"gather_evidence", "draft_str", "review_str", "attest_str", "reset_cases", "sim_control"}
 )
 
 
@@ -120,6 +123,8 @@ def app_files(root: Path) -> list[Path]:
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
         if not path.is_file() or _SKIP_DIRS.intersection(rel.parts):
+            continue
+        if path.name.lower() in _NEVER_UPLOAD or path.name.lower().startswith("secrets.toml"):
             continue
         if path.suffix.lower() in UPLOAD_SUFFIXES:
             files.append(rel)
@@ -355,9 +360,17 @@ def _key_pair(key_file: Path) -> tuple[bytes, str, bool]:
 
 
 def secrets_toml(
-    *, account: str, user: str, role: str, warehouse: str, database: str, pem: bytes
+    *,
+    account: str,
+    user: str,
+    role: str,
+    warehouse: str,
+    database: str,
+    pem: bytes,
+    section: str = "snowflake",
+    extra: str = "",
 ) -> str:
-    """The [snowflake] section lib/db.py reads on Streamlit Community Cloud."""
+    """A secrets section lib/db.py reads on Streamlit Community Cloud ([snowflake] by default)."""
     for name, value in (
         ("account", account),
         ("user", user),
@@ -370,13 +383,14 @@ def secrets_toml(
     return (
         "# Streamlit Community Cloud > your app > Settings > Secrets: paste this file.\n"
         "# It holds a private key. Never commit it; rotate with `riskcopilot app public-access`.\n"
-        "[snowflake]\n"
+        f"[{section}]\n"
         f'account = "{account}"\n'
         f'user = "{user}"\n'
         f'role = "{role}"\n'
         f'warehouse = "{warehouse}"\n'
         f'database = "{database}"\n'
         f'private_key_pem = """\n{pem.decode("ascii").strip()}\n"""\n'
+        f"{extra}"
     )
 
 
@@ -387,16 +401,29 @@ def provision_public_access(
     key_dir: Path = DEFAULT_KEY_DIR,
     account: str,
     rotate: bool = False,
+    officer: bool = False,
 ) -> PublicAccess:
     """Create (or update) the hosted app's service user and write its secrets file.
 
     The user is TYPE = SERVICE with only a public key: it cannot sign in with a
     password or interactively. Its role is granted by the app_access stage.
+
+    ``officer`` does the same for the Principal Officer's user (its own key and
+    secrets file, section ``[snowflake_officer]``), and adds the officer's
+    sign-in password, generated once, so it is no longer shown on the page.
     """
-    if not settings.app.public_user or not settings.roles.public_app:
-        raise AppError("Set conf/base.yml app.public_user and roles.public_app first.")
-    user = settings.obj(settings.app.public_user)
-    role = settings.obj(settings.roles.public_app)
+    if officer:
+        if not settings.app.public_officer_user or not settings.roles.public_officer:
+            raise AppError(
+                "Set conf/base.yml app.public_officer_user and roles.public_officer first."
+            )
+        user = settings.obj(settings.app.public_officer_user)
+        role = settings.obj(settings.roles.public_officer)
+    else:
+        if not settings.app.public_user or not settings.roles.public_app:
+            raise AppError("Set conf/base.yml app.public_user and roles.public_app first.")
+        user = settings.obj(settings.app.public_user)
+        role = settings.obj(settings.roles.public_app)
     warehouse = settings.obj(settings.warehouse(settings.app.warehouse).name)
     key_file = key_dir / f"{user.lower()}.p8"
     if rotate and key_file.is_file():
@@ -422,6 +449,10 @@ def provision_public_access(
         execute(session, f"USE ROLE {settings.obj(settings.roles.admin)}")
 
     secrets_file = key_dir / f"{user.lower()}.streamlit-secrets.toml"
+    extra = ""
+    if officer:
+        password = _officer_password(secrets_file)
+        extra = f'\n[demo_auth]\nofficer_password = "{password}"\n'
     secrets_file.write_text(
         secrets_toml(
             account=account,
@@ -430,20 +461,36 @@ def provision_public_access(
             warehouse=warehouse,
             database=settings.db(),
             pem=pem,
+            section="snowflake_officer" if officer else "snowflake",
+            extra=extra,
         ),
         encoding="utf-8",
     )
     return PublicAccess(user, role, warehouse, key_file, secrets_file, created, checks={})
 
 
-def check_public_access(settings: Settings, secrets_file: Path) -> dict[str, Any]:
+def _officer_password(secrets_file: Path) -> str:
+    """The officer's sign-in password: kept from an earlier secrets file, else new."""
+    import secrets
+    import tomllib
+
+    if secrets_file.is_file():
+        old = tomllib.loads(secrets_file.read_text("utf-8")).get("demo_auth", {})
+        if isinstance(old.get("officer_password"), str) and old["officer_password"]:
+            return str(old["officer_password"])
+    return secrets.token_urlsafe(12)  # URL-safe: no quote or backslash to escape in TOML
+
+
+def check_public_access(
+    settings: Settings, secrets_file: Path, section: str = "snowflake"
+) -> dict[str, Any]:
     """Sign in exactly as the hosted app will, and run what its pages run."""
     import tomllib
 
     from cryptography.hazmat.primitives import serialization
     from snowflake.snowpark import Session
 
-    cfg = dict(tomllib.loads(secrets_file.read_text("utf-8"))["snowflake"])
+    cfg = dict(tomllib.loads(secrets_file.read_text("utf-8"))[section])
     key = serialization.load_pem_private_key(cfg.pop("private_key_pem").encode(), password=None)
     cfg["private_key"] = key.private_bytes(
         serialization.Encoding.DER,

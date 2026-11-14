@@ -69,6 +69,31 @@ CREATE TABLE IF NOT EXISTS DATA_QUALITY_LOG (
 )
 COMMENT = 'Data metric function results. Lets the agent qualify an answer by data freshness.';
 
+-- --------------------------------------------------------------------------
+-- One conversation across channels.
+--
+-- The dashboard's Ask page and the Slack bot each kept their own history (a
+-- Streamlit session, a bot process's memory), so a question asked in Slack was
+-- invisible on the dashboard and vice versa. Both now append every turn here,
+-- and the Ask page reads the shared feed. Append-only, like the action log.
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS CHAT_MESSAGE (
+    message_id      VARCHAR NOT NULL,
+    channel         VARCHAR NOT NULL COMMENT 'APP | SLACK.',
+    thread_ref      VARCHAR COMMENT 'Slack thread ts, or the app session id: groups follow-ups.',
+    author          VARCHAR NOT NULL COMMENT 'Slack user id or app persona; never a password or token.',
+    question        VARCHAR NOT NULL,
+    answer_text     VARCHAR,
+    answer_kind     VARCHAR COMMENT 'ANALYST | AGENT | STR | PDF | ERROR.',
+    sql_text        VARCHAR COMMENT 'Cortex Analyst SQL, when the answer came from it.',
+    row_count       NUMBER(38,0),
+    case_id         VARCHAR,
+    latency_ms      NUMBER(38,0),
+    asked_at        TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP() NOT NULL,
+    CONSTRAINT pk_chat_message PRIMARY KEY (message_id)
+)
+COMMENT = 'Ask-the-data turns from every channel (app and Slack), one shared feed. Append-only.';
+
 -- ===========================================================================
 -- GROUND_TRUTH -- isolated. No consumer role has USAGE on this schema.
 -- ===========================================================================

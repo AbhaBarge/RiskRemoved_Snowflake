@@ -2,8 +2,9 @@
 
 import html
 
+import pandas as pd
 import streamlit as st
-from lib import ui
+from lib import auth, chat, ui
 from lib.analyst import ask, log_turn
 from lib.db import CFG, query, reason
 
@@ -55,6 +56,14 @@ if question:
         except Exception as exc:  # Analyst SQL that fails to run is shown, not hidden
             turn["run_error"] = reason(exc)
     st.session_state["ask_turns"].append(turn)
+    user = auth.current()
+    chat.record(
+        question,
+        result,
+        author=f"app:{user['username']}" if user else "app",
+        thread_ref=st.session_state.setdefault("ask_thread", f"APP-{id(st.session_state):x}"),
+        rows=len(turn["df"]) if turn.get("df") is not None else None,
+    )
     if not result.get("error"):
         st.session_state["ask_history"] += [
             {"role": "user", "content": [{"type": "text", "text": question}]},
@@ -98,3 +107,35 @@ if st.session_state["ask_turns"] and st.button(
 ):
     st.session_state["ask_history"], st.session_state["ask_turns"] = [], []
     st.rerun()
+
+# One conversation across channels: every turn asked here or in Slack.
+shared = chat.feed()
+ui.section(
+    "Shared conversation",
+    "every question asked here or to the Slack bot, newest first (AUDIT.CHAT_MESSAGE)",
+)
+if shared.empty:
+    ui.empty(
+        "No questions yet. Ask one above, or mention the Risk Copilot bot in Slack: both "
+        "channels write to the same feed.",
+        glyph="forum",
+    )
+else:
+    counts = shared["channel"].value_counts()
+    labels = {"APP": "the app", "SLACK": "Slack"}
+    st.caption(" · ".join(f"{n} from {labels.get(ch, ch)}" for ch, n in counts.items()))
+    for row in shared.itertuples():
+        when = pd.to_datetime(row.asked_at)
+        badge = ":material/chat: Slack" if row.channel == "SLACK" else ":material/web: App"
+        with st.container(border=True):
+            st.markdown(
+                f"**{html.escape(str(row.question))}**  \n"
+                f"<span style='opacity:.7'>{badge} · {html.escape(str(row.author))} · "
+                f"{when:%d %b %H:%M}</span>",
+                unsafe_allow_html=True,
+            )
+            if row.answer_text:
+                st.write(str(row.answer_text)[:600])
+            if row.sql_text:
+                with st.expander("SQL", icon=":material/code:"):
+                    st.code(str(row.sql_text), language="sql")

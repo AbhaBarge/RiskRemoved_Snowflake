@@ -23,6 +23,7 @@
 {% set untouched = "status = 'OPEN' AND suspicion_established_at IS NULL AND sla_deadline IS NULL AND closed_at IS NULL AND closure_reason IS NULL" %}
 
 CREATE OR REPLACE PROCEDURE {{ EV }}.{{ T.reset_cases }}(VIA VARCHAR DEFAULT 'SQL', DRY_RUN BOOLEAN DEFAULT FALSE)
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Demo reset: deletes the case workflow rows and reopens every case. Keeps signals and the audit log.'

@@ -97,7 +97,10 @@ def render() -> None:
                 with u:
                     st.code(key, language=None)
                 with p:
-                    st.code(auth.DEMO_PASSWORDS[key], language=None)
+                    if auth.hidden(key):
+                        st.caption("Password held by the Principal Officer")
+                    else:
+                        st.code(auth.DEMO_PASSWORDS[key], language=None)
                 use.button(
                     "Use",
                     key=f"use_{key}",

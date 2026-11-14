@@ -38,6 +38,7 @@ sys.path.insert(0, str(HERE.parent / "src"))  # the shared risk_copilot.agentic 
 
 from analyst_client import AnalystClient  # noqa: E402
 from risk_copilot.agentic.agent_client import create_thread  # noqa: E402
+from risk_copilot.agentic.chat_log import record_turn  # noqa: E402
 from risk_copilot.agentic.str_pipeline import ask_agent, generate_ai_str, latest_report  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -288,6 +289,12 @@ def _run_str(channel: str, thread_ts: str, case_id: str, user: str) -> None:
             pass
 
     res = generate_ai_str(case_id, progress=on_progress, requested_by=f"slack:{user}", channel="slack")
+    review = (res.get("data_review") or {}).get("decision", "not run")
+    record_turn(f"str {case_id}",
+                res.get("error") or f"AI STR {res.get('artifact_id') or ''}: {res.get('status')}, "
+                f"data-account REVIEW_STR {review}",
+                kind="ERROR" if res.get("error") else "STR", author=f"slack:{user}",
+                thread_ref=thread_ts, case_id=case_id)
     if current["step"]:
         done.append(current["step"])
     app.client.chat_update(channel=channel, ts=progress["ts"], text="STR run finished",
@@ -317,6 +324,8 @@ def _run_agent(channel: str, thread_ts: str, question: str, case_id: str | None 
         with _threads_lock:
             _threads[thread_ts]["parent"] = r.assistant_message_id
     text = r.text or (f":x: {r.error}" if r.error else "The agent returned no answer.")
+    record_turn(question, text, kind="ERROR" if r.error else "AGENT", author="slack",
+                thread_ref=thread_ts, case_id=case_id, latency_ms=r.latency_ms)
     tools = ", ".join(c.get("name") for c in r.tool_calls) or "none"
     app.client.chat_update(channel=channel, ts=thinking["ts"], text=text[:3000], blocks=[
         {"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}},
@@ -325,9 +334,15 @@ def _run_agent(channel: str, thread_ts: str, question: str, case_id: str | None 
     ])
 
 
-def _run_analyst(channel: str, thread_ts: str | None, question: str, update_ts: str | None = None) -> None:
+def _run_analyst(channel: str, thread_ts: str | None, question: str, update_ts: str | None = None,
+                 user: str = "unknown") -> None:
     result = analyst.ask(question)
     log.info("Answer: %s (%dms, demo=%s)", result.get("text", "")[:80], result.get("latency_ms", 0), result.get("demo"))
+    if not result.get("demo"):  # canned demo answers are not part of the shared record
+        record_turn(question, result.get("text") or result.get("error") or "",
+                    kind="ERROR" if result.get("error") else "ANALYST", author=f"slack:{user}",
+                    thread_ref=thread_ts, sql=result.get("sql"), rows=len(result.get("rows") or []),
+                    latency_ms=result.get("latency_ms"))
     blocks = _format_blocks(question, result)
     try:
         if update_ts:
@@ -351,7 +366,7 @@ def _dispatch(channel: str, thread_ts: str, question: str, user: str, in_thread:
         _workers.submit(_guard, _run_agent, channel, thread_ts, _AGENT_RE.sub("", question), case_id)
     else:
         thinking = say(text=":hourglass_flowing_sand: Querying the data...", thread_ts=thread_ts)
-        _workers.submit(_guard, _run_analyst, channel, thread_ts, question, thinking["ts"])
+        _workers.submit(_guard, _run_analyst, channel, thread_ts, question, thinking["ts"], user)
 
 
 def _guard(fn, channel: str, thread_ts: str | None, *args) -> None:
@@ -420,7 +435,7 @@ if __name__ == "__main__":
     log.info("Starting Risk Copilot Slack bot (%s mode)...", mode)
     log.info("Semantic view: %s", analyst.semantic_view)
     log.info("STR agent: %s in %s", os.getenv("AGENT_NAME", "RC_STR_AGENT"),
-             os.getenv("AGENT_SNOWFLAKE_ACCOUNT", "HQRWRXK-UZ26728"))
+             os.getenv("AGENT_SNOWFLAKE_ACCOUNT", "<AGENT_SNOWFLAKE_ACCOUNT not set>"))
 
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     handler.start()  # blocks forever, listening for Slack events

@@ -38,6 +38,7 @@ OBJECT_CONSTRUCT('value', GET({{ src }}.r, '{{ column }}'), 'display', {{ displa
 {%- endmacro %}
 
 CREATE OR REPLACE PROCEDURE {{ EV }}.{{ T.draft_str }}(CASE_ID VARCHAR, PLANT_DEFECT BOOLEAN DEFAULT FALSE)
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Drafter tool: new FINDING version + STR ARTIFACT from logged evidence. TRUE plants a defect for the Reviewer.'
