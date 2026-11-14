@@ -158,6 +158,19 @@ def _round_to(value: Decimal, step: int) -> Decimal:
     return (value / step).quantize(Decimal(1), rounding=ROUND_HALF_UP) * step
 
 
+def _compress(value: Decimal, pivot: Decimal | None, exponent: Decimal) -> Decimal:
+    """``pivot * (value / pivot) ** exponent`` above ``pivot``; unchanged at or below.
+
+    Annualising ten days of account turnover overstates what a person earns: an
+    active account turns over many times its holder's income. Compression keeps
+    income rank-ordered with inflow (GAP-04) while bringing the tail to plausible
+    figures. Strictly increasing, so no party overtakes another.
+    """
+    if pivot is None or value <= pivot:
+        return value
+    return pivot * (value / pivot) ** exponent
+
+
 def _pan(rng: Any, holder_code: str, name: str) -> str:
     initial = next((c for c in name.upper() if c in _LETTERS), rng.choice(_LETTERS))
     head = "".join(rng.choice(_LETTERS) for _ in range(3))
@@ -253,6 +266,13 @@ def build_entities(
     annualise = Decimal(int(income["annualise_to_days"])) / Decimal(window.span_days)
     floor_inr = Decimal(int(income["floor_inr"]))
     under = Decimal(str(income["illicit_cohort_under_declare_factor"]))
+    compress = income.get("compress") or {}
+    compress_pivot = Decimal(str(compress["pivot_inr"])) if compress.get("enabled") else None
+    compress_exponent = Decimal(str(compress.get("exponent", 1)))
+    if compress_pivot is not None and (
+        compress_pivot <= 0 or not Decimal(0) < compress_exponent <= Decimal(1)
+    ):
+        raise EntityError("entities.income.compress: pivot_inr must be > 0 and 0 < exponent <= 1")
 
     faker = Faker(str(ent["faker_locale"]))
     cbs: list[dict[str, Any]] = []
@@ -320,6 +340,7 @@ def build_entities(
         noise = math.exp(irng.gauss(0.0, float(income["noise_lognormal_sigma"])))
         declared = legit_inflow.get(pid, Decimal(0)) * annualise
         declared = declared / Decimal(repr(coverage)) * Decimal(repr(noise))
+        declared = _compress(declared, compress_pivot, compress_exponent)
         if pid in illicit_parties:
             declared *= under
         declared = _round_to(max(declared, floor_inr), int(income["round_to_inr"]))

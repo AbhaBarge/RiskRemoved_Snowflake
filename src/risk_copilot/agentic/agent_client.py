@@ -12,16 +12,19 @@ thread, then pass thread_id and the last assistant message id each turn.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import jwt
 import requests
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from risk_copilot.agentic.connections import _key_path, agent_target
 
@@ -29,7 +32,7 @@ _TOKEN: dict[str, Any] = {"value": None, "exp": 0.0}
 
 
 def _account() -> str:
-    return os.getenv("AGENT_SNOWFLAKE_ACCOUNT", "HQRWRXK-UZ26728")
+    return os.environ["AGENT_SNOWFLAKE_ACCOUNT"]
 
 
 def _base_url() -> str:
@@ -39,11 +42,13 @@ def _base_url() -> str:
 def _jwt() -> str:
     """A key-pair JWT, cached until five minutes before it expires."""
     if _TOKEN["value"] and time.time() < _TOKEN["exp"] - 300:
-        return _TOKEN["value"]
+        return str(_TOKEN["value"])
     key = serialization.load_pem_private_key(
         _key_path("AGENT_PRIVATE_KEY_PATH", "keys/rc_agent_svc.p8").read_bytes(),
         password=(os.getenv("AGENT_PRIVATE_KEY_PASSPHRASE") or "").encode() or None,
     )
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise TypeError("AGENT_PRIVATE_KEY_PATH must hold an RSA key (Snowflake key-pair auth)")
     der = key.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     )
@@ -54,10 +59,11 @@ def _jwt() -> str:
     exp = now + 3600
     _TOKEN["value"] = jwt.encode(
         {"iss": f"{account}.{user}.{fp}", "sub": f"{account}.{user}", "iat": now, "exp": exp},
-        key, algorithm="RS256",
+        key,
+        algorithm="RS256",
     )
     _TOKEN["exp"] = float(exp)
-    return _TOKEN["value"]
+    return str(_TOKEN["value"])
 
 
 def _headers(stream: bool = False) -> dict[str, str]:
@@ -82,12 +88,18 @@ class AgentResult:
 
     def result_of(self, tool_name: str) -> list[dict[str, Any]]:
         """Parsed JSON results of every call to `tool_name`, in order."""
-        return [r["result"] for r in self.tool_results if r.get("name") == tool_name and r.get("result")]
+        return [
+            r["result"] for r in self.tool_results if r.get("name") == tool_name and r.get("result")
+        ]
 
 
 def create_thread(origin: str = "risk_copilot") -> int | None:
-    r = requests.post(f"{_base_url()}/api/v2/cortex/threads", headers=_headers(),
-                      json={"origin_application": origin}, timeout=30)
+    r = requests.post(
+        f"{_base_url()}/api/v2/cortex/threads",
+        headers=_headers(),
+        json={"origin_application": origin},
+        timeout=30,
+    )
     if not r.ok:
         return None
     body = r.json() if r.text.strip().startswith(("{", "[")) else r.text.strip()
@@ -107,10 +119,8 @@ def _tool_payload(content: Any) -> Any:
             if isinstance(js, dict) and set(js) == {"result"}:
                 js = js["result"]
             if isinstance(js, str):
-                try:
+                with contextlib.suppress(ValueError):
                     js = json.loads(js)
-                except ValueError:
-                    pass
             return js
         if block.get("type") == "text":
             try:
@@ -131,13 +141,17 @@ def run_agent(
     """One agent:run turn. `on_event(kind, data)` sees each SSE event as it arrives."""
     t = agent_target()
     url = f"{_base_url()}/api/v2/databases/{t.database}/schemas/{t.schema}/agents/{t.agent}:run"
-    body: dict[str, Any] = {"messages": [{"role": "user", "content": [{"type": "text", "text": message}]}]}
+    body: dict[str, Any] = {
+        "messages": [{"role": "user", "content": [{"type": "text", "text": message}]}]
+    }
     if thread_id is not None:
         body.update(thread_id=thread_id, parent_message_id=parent_message_id)
     out = AgentResult(thread_id=thread_id)
     started = time.time()
     try:
-        with requests.post(url, headers=_headers(stream=True), json=body, stream=True, timeout=timeout) as r:
+        with requests.post(
+            url, headers=_headers(stream=True), json=body, stream=True, timeout=timeout
+        ) as r:
             out.request_id = r.headers.get("X-Snowflake-Request-Id")
             if not r.ok:
                 out.error = f"agent:run returned {r.status_code}: {r.text[:500]}"
@@ -149,8 +163,16 @@ def run_agent(
     return out
 
 
-def _consume(r: requests.Response, out: AgentResult, on_event) -> None:
-    event, data_lines = None, []
+def _consume(
+    r: requests.Response,
+    out: AgentResult,
+    on_event: Callable[[str, dict[str, Any]], None] | None,
+) -> None:
+    # Server-Sent Events are UTF-8 by definition. Without a charset on the
+    # Content-Type, requests would decode as ISO-8859-1 and mangle the rupee sign.
+    r.encoding = "utf-8"
+    event: str | None = None
+    data_lines: list[str] = []
     deltas: list[str] = []
     final_text: str | None = None
     names: dict[str, str] = {}
@@ -175,11 +197,13 @@ def _consume(r: requests.Response, out: AgentResult, on_event) -> None:
             names[data.get("tool_use_id", "")] = data.get("name")
             out.tool_calls.append({"name": data.get("name"), "input": data.get("input")})
         elif kind == "response.tool_result":
-            out.tool_results.append({
-                "name": data.get("name") or names.get(data.get("tool_use_id", "")),
-                "status": data.get("status"),
-                "result": _tool_payload(data.get("content")),
-            })
+            out.tool_results.append(
+                {
+                    "name": data.get("name") or names.get(data.get("tool_use_id", "")),
+                    "status": data.get("status"),
+                    "result": _tool_payload(data.get("content")),
+                }
+            )
         elif kind == "metadata":
             meta = data.get("metadata", data)
             if meta.get("role") == "assistant" and meta.get("message_id") is not None:
@@ -192,8 +216,7 @@ def _consume(r: requests.Response, out: AgentResult, on_event) -> None:
                     final_text = (final_text or "") + part.get("text", "")
 
     for line in r.iter_lines(decode_unicode=True):
-        if line is None:
-            continue
+        line = str(line)
         if line == "":
             dispatch()
             event, data_lines = None, []

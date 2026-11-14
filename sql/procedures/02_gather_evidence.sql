@@ -113,6 +113,7 @@ WHERE c.case_id = ?
 {% endmacro %}
 
 CREATE OR REPLACE PROCEDURE {{ fq.evidence }}.{{ T.gather_evidence }}(CASE_ID VARCHAR)
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Investigator tool: evidence pointers + logged, hashed queries for one case. Idempotent.'
@@ -224,9 +225,14 @@ BEGIN
     SET status = 'INVESTIGATING', updated_at = :run_at
     WHERE case_id = :case_id AND status = 'OPEN';
 
-    {{ audit("INVESTIGATOR", T.gather_evidence, "OBJECT_CONSTRUCT('case_id', :case_id)", "SUCCESS",
-             "'NONE_DETERMINISTIC'", "'n/a'",
-             evidence="(SELECT ARRAY_AGG(evidence_id) WITHIN GROUP (ORDER BY evidence_id) FROM " ~ fq.evidence ~ ".EVIDENCE WHERE case_id = :case_id)") }};
+    -- Logged only when something was gathered. DRAFT_STR calls this first to make
+    -- sure the evidence exists; logging that no-op put a phantom "Gather" row
+    -- before every Draft (build log M47).
+    IF ((ev_after - ev_before) + logged > 0) THEN
+        {{ audit("INVESTIGATOR", T.gather_evidence, "OBJECT_CONSTRUCT('case_id', :case_id)", "SUCCESS",
+                 "'NONE_DETERMINISTIC'", "'n/a'",
+                 evidence="(SELECT ARRAY_AGG(evidence_id) WITHIN GROUP (ORDER BY evidence_id) FROM " ~ fq.evidence ~ ".EVIDENCE WHERE case_id = :case_id)") }};
+    END IF;
     COMMIT;
     RETURN OBJECT_CONSTRUCT(
         'case_id', case_id,

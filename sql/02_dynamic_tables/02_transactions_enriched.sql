@@ -48,7 +48,9 @@ SELECT
     p.branch_code,
     p.party_type,
     ra.account_type,
-    t.ingested_at
+    -- Arrival as the app shows it: the simulator's release time if the leg was
+    -- held back, otherwise when it was loaded.
+    COALESCE(t.released_at, t.ingested_at)      AS ingested_at
 FROM {{ fq.raw }}.RAW_TRANSACTIONS t
 JOIN {{ fq.raw }}.ID_MAP_ACCOUNT a
   ON a.account_id = t.account_id
@@ -59,4 +61,7 @@ LEFT JOIN {{ fq.curated }}.{{ dt.dim_party.name }} p
 LEFT JOIN {{ fq.raw }}.RAW_ACCOUNTS ra
        ON ra.account_id = t.account_id
 LEFT JOIN {{ fq.governance }}.REF_CHANNEL ch
-       ON ch.channel_code = t.channel;
+       ON ch.channel_code = t.channel
+-- The live simulator: a held-back leg has not arrived, so nothing downstream --
+-- signals, cases, the semantic view, the app -- can see it yet.
+WHERE NOT t.held_back;

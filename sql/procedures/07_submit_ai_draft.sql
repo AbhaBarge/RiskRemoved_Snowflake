@@ -17,6 +17,11 @@
 -- the base becomes SUPERSEDED, and author_model names the drafting model.
 -- agent_review keeps the agent account's own verdict (cross-family LLM review
 -- and figure trace) inside the hashed artifact content.
+--
+-- agent_review.decision = 'APPROVE' is only a gate on writing, never on filing:
+-- the caller supplies it, so it proves nothing. The new version is a DRAFT, and
+-- only REVIEW_STR -- whose narrative_trace check holds every amount, date and
+-- count in the prose to a re-proven logged figure -- can make it attestable.
 -- ===========================================================================
 {% from "procedures/_macros.sql" import audit with context %}
 {% set T = tool %}
@@ -29,6 +34,7 @@ CREATE OR REPLACE PROCEDURE {{ EV }}.{{ T.submit_ai_draft }}(
     AGENT_REVIEW VARIANT,
     PROMPT_VERSION VARCHAR
 )
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Write-back: an agent-drafted STR narrative becomes FINDING n+1 + a DRAFT ARTIFACT, figures unchanged.'

@@ -352,6 +352,17 @@ def reset_preview() -> dict[str, Any]:
     return variant(df.iloc[0, 0])
 
 
+def sim_status() -> dict[str, Any] | None:
+    """The live simulator's state: held / arrived legs, next booking, task. Writes nothing.
+
+    None where the simulator is not deployed (an older config without sim_control).
+    """
+    if "sim_control" not in PROC:
+        return None
+    df = cached(f"CALL {PROC['sim_control']}(?, ?, ?)", ("STATUS", None, "APP"))
+    return variant(df.iloc[0, 0])
+
+
 # ---- liquidity ------------------------------------------------------------- #
 
 

@@ -223,8 +223,8 @@ class Sim:
     def _answer(self, sql: str, params: list[Any]) -> list[Any]:
         head = " ".join(sql.split())
         if "INFORMATION_SCHEMA.COLUMNS" in head:
-            if "column_name <> ?" in head:  # raw_fingerprint
-                return [(c[1],) for c in COLUMNS["RAW"] if c[1] != params[2]]
+            if "column_name NOT IN (?, ?, ?)" in head:  # raw_fingerprint
+                return [(c[1],) for c in COLUMNS["RAW"] if c[1] not in params[2:]]
             return COLUMNS[params[0]]
         if head == "BEGIN":
             self.saved = copy.deepcopy((self.raw, self.pending))
@@ -742,11 +742,13 @@ def test_an_unknown_inject_name_is_refused(settings: Any, bundle_dir: Path) -> N
 # --------------------------------------------------------------------------- #
 
 
-def test_the_fingerprint_leaves_out_ingested_at(settings: Any, bundle_dir: Path) -> None:
+def test_the_fingerprint_leaves_out_the_arrival_columns(settings: Any, bundle_dir: Path) -> None:
+    """ingested_at, held_back and released_at say when a leg arrived, not what it is."""
     sim = Sim(bundle_dir)
     raw_fingerprint(sim, settings.sql_context()["fq"]["raw"])
     (cols_sql, params), (hash_sql, _) = sim.statements
-    assert params is not None and params[1:] == ["RAW_TRANSACTIONS", "INGESTED_AT"]
+    assert params is not None
+    assert params[1:] == ["RAW_TRANSACTIONS", "INGESTED_AT", "HELD_BACK", "RELEASED_AT"]
     assert "ORDER BY ordinal_position" in cols_sql
     assert "HASH_AGG(TXN_ID, TXN_PAIR_ID, ACCOUNT_ID, TXN_TIMESTAMP)" in hash_sql
 

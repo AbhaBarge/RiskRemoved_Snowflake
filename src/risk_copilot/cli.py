@@ -804,12 +804,21 @@ def app_public_access(
     rotate: Annotated[
         bool, typer.Option("--rotate", help="Replace the key pair (the old key stops working).")
     ] = False,
+    officer: Annotated[
+        bool,
+        typer.Option(
+            "--officer",
+            help="The Principal Officer's service user instead (its own key and secrets file).",
+        ),
+    ] = False,
 ) -> None:
     """Create the hosted app's service user and write its Streamlit secrets file.
 
     Run `deploy --stage app_access` first (the role and its grants). The key pair
     and the secrets file are written under ~/.snowflake/keys, never the repo.
     Then it signs in as that user and checks what the hosted app will do.
+    With --officer, the same for the user the app signs STRs as; paste both
+    files into the app's Secrets.
     """
     from risk_copilot.pipeline.app import (
         AppError,
@@ -822,8 +831,12 @@ def app_public_access(
     try:
         account = str(build_connect_params(settings)["account"])
         with open_session(settings, unattended=True) as session:
-            result = provision_public_access(settings, session, account=account, rotate=rotate)
-        checks = check_public_access(settings, result.secrets_file)
+            result = provision_public_access(
+                settings, session, account=account, rotate=rotate, officer=officer
+            )
+        checks = check_public_access(
+            settings, result.secrets_file, "snowflake_officer" if officer else "snowflake"
+        )
     except (AppError, SessionError, KeyError) as exc:
         console.print(f"[red]Public access failed[/red]\n{exc}")
         raise typer.Exit(code=1) from exc

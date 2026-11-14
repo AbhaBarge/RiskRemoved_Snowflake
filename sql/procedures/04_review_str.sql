@@ -15,6 +15,13 @@
 --   schema              the template's required fields are present, no
 --                       {placeholder} is left unfilled, and the content still
 --                       matches its content_hash
+--   narrative_trace     every rupee amount, date and count written in the
+--                       grounds of suspicion is the display string of a
+--                       computed value -- which numeric_recompute has just
+--                       re-proven -- and nothing is rounded to lakh / crore.
+--                       This is what holds an AI-written narrative
+--                       (SUBMIT_AI_DRAFT) to the same evidence as a template one:
+--                       the agent's own approval is never taken on trust here.
 --
 -- REVIEW records each check, the decision, and a defect list a person can
 -- read. APPROVE makes the artifact REVIEWED (attestable); REJECT makes it
@@ -25,6 +32,7 @@
 {% set EV = fq.evidence %}
 
 CREATE OR REPLACE PROCEDURE {{ EV }}.{{ T.review_str }}(ARTIFACT_ID VARCHAR)
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Reviewer: deterministic recompute, citation, clause-in-force and schema checks on one STR. No model.'
@@ -59,6 +67,8 @@ DECLARE
     ql_ms INTEGER;
     d0 DATE;
     d1 DATE;
+    narr VARCHAR;
+    allowed ARRAY;
     defects ARRAY;
     decision VARCHAR;
     rid VARCHAR;
@@ -118,6 +128,19 @@ BEGIN
     );
 
     -- 2. Every defect, one row each: (check, message).
+    narr := GET(:content, 'grounds_of_suspicion')::VARCHAR;
+    -- What the prose may state: each computed value's display, plus the dates in
+    -- the subject record (KYC, from the logged party query) as the template writes
+    -- them -- "customer since 31 Jul 2010" is evidence, not invention.
+    allowed := (
+        SELECT COALESCE(ARRAY_AGG(DISTINCT x), ARRAY_CONSTRUCT()) FROM (
+            SELECT cv.value:display::VARCHAR AS x FROM TABLE(FLATTEN(input => :vals)) cv
+            UNION ALL
+            SELECT TO_CHAR(TRY_TO_DATE(sv.value::VARCHAR), 'DD Mon YYYY')
+            FROM TABLE(FLATTEN(input => GET(:content, 'subject'))) sv
+            WHERE TRY_TO_DATE(sv.value::VARCHAR) IS NOT NULL
+        )
+    );
     defects := (
         SELECT COALESCE(ARRAY_AGG(OBJECT_CONSTRUCT('check', chk, 'message', msg)) WITHIN GROUP (ORDER BY chk, msg), ARRAY_CONSTRUCT())
         FROM (
@@ -179,6 +202,22 @@ BEGIN
             -- schema: integrity of the stored artifact
             SELECT 'schema', 'The artifact content no longer matches its content_hash'
             WHERE SHA2(TO_JSON(:content), 256) <> :stored_hash
+            UNION ALL
+            -- narrative_trace: every rupee amount and date written in the prose is
+            -- the display of a computed value, i.e. of a re-proven query result.
+            SELECT 'narrative_trace', 'The grounds of suspicion state ' || t.value::VARCHAR || ', which no logged figure displays'
+            -- A comma counts only with digits after it, so "₹9,67,299, just" is ₹9,67,299.
+            FROM TABLE(FLATTEN(input => REGEXP_SUBSTR_ALL(:narr, '₹[0-9]+(,[0-9]+)*([.][0-9]+)?|[0-9]{2} [A-Z][a-z]{2} [0-9]{4}'))) t
+            WHERE NOT ARRAY_CONTAINS(t.value, :allowed)
+            UNION ALL
+            -- narrative_trace: a count ("10 cash deposits", "2 different accounts")
+            SELECT 'narrative_trace', 'The grounds of suspicion state "' || t.value::VARCHAR || '", a count no logged figure displays'
+            FROM TABLE(FLATTEN(input => REGEXP_SUBSTR_ALL(:narr, '[0-9]+ ([a-z]+ )?(deposits?|accounts?|transactions?|signals?)'))) t
+            WHERE NOT ARRAY_CONTAINS(REGEXP_SUBSTR(t.value::VARCHAR, '^[0-9]+')::VARIANT, :allowed)
+            UNION ALL
+            -- narrative_trace: rounding is a restatement, not a figure
+            SELECT 'narrative_trace', 'The grounds of suspicion round a figure ("' || t.value::VARCHAR || '"); quote the logged figure verbatim'
+            FROM TABLE(FLATTEN(input => REGEXP_SUBSTR_ALL(:narr, '[0-9][0-9.,]* ?(lakh|crore|lac)', 1, 1, 'i'))) t
         )
     );
     decision := IFF(ARRAY_SIZE(defects) = 0, 'APPROVE', 'REJECT');
@@ -189,6 +228,7 @@ BEGIN
             'figures_checked', ARRAY_SIZE(OBJECT_KEYS(:vals)),
             'clauses_checked', ARRAY_SIZE(:cited),
             'evidence_checked', ARRAY_SIZE(:cited_ev),
+            'narrative_figures_allowed', ARRAY_SIZE(:allowed),
             'deposit_span', ARRAY_CONSTRUCT(:d0, :d1),
             'defects_by_check', (
                 SELECT OBJECT_AGG(chk, n::VARIANT) FROM (

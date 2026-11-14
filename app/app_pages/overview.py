@@ -8,11 +8,13 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from lib import data, filters, insights, ui
-from lib.db import CFG, HERO, inr, lakh
+from lib.db import CFG, HERO, PROC, call, inr, lakh, reason
 
 SCOPE = filters.SCOPES["overview"]
 F = filters.current()
 
+if st.session_state.pop("ov_live_next", False):
+    st.session_state["ov_live"] = True
 live_on = bool(st.session_state.get("ov_live"))
 tele = insights.telemetry()
 through = pd.to_datetime(tele.get("data_through"))
@@ -38,8 +40,85 @@ bar.markdown(" ".join(F.pills(SCOPE)), unsafe_allow_html=True)
 live = toggle.toggle(
     "Live mode",
     key="ov_live",
-    help="Re-read every 5 seconds -- use while `riskcopilot replay` streams data.",
+    help="Re-read every 5 seconds -- use while the simulator below streams legs in.",
 )
+
+
+def _simulator() -> None:
+    """Live simulator: SIM_CONTROL releases held-back legs inside Snowflake.
+
+    Every leg is already loaded; a leg booked after the cut is held back until a
+    tick releases it, and each call refreshes detection and routes new cases. The
+    controls here and the one-a-minute task call the same procedure.
+    """
+    status = data.sim_status()
+    if status is None:
+        return
+    done = st.session_state.pop("sim_done", None)
+    held, arrived = int(status.get("held_back") or 0), int(status.get("arrived") or 0)
+    running = status.get("task") == "started"
+    with st.expander(
+        "Live simulator: stream the ledger in" + (" -- running" if running else ""),
+        expanded=bool(done) or running,
+        icon=":material/play_circle:",
+    ):
+        st.caption(
+            "Every transaction is already in Snowflake. Arm holds back the legs booked after "
+            "the cut and clears the cases; each tick then releases the next six hours of "
+            "bookings, refreshes detection and routes new cases, all inside Snowflake. Turn on "
+            "Live mode to watch the tiles move. Inject releases the demo customer's deposits "
+            "at once. A demo control: it clears and rebuilds the case queue."
+        )
+        if done:
+            routed = done.get("routed") or {}
+            st.success(
+                f"{done['action'].replace('_', ' ').title()}: {int(done.get('released') or 0):,} "
+                f"legs released, {int(routed.get('cases_opened') or 0)} new "
+                f"case{'' if routed.get('cases_opened') == 1 else 's'}."
+            )
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Arrived", f"{arrived:,} legs")
+        m2.metric("Held back", f"{held:,} legs")
+        nxt = pd.to_datetime(status.get("next_booking"))
+        m3.metric("Next booking", f"{nxt:%d %b %H:%M}" if pd.notna(nxt) else "all arrived")
+        hero_party = HERO["party_id"] if HERO else None
+        actions = [
+            ("ARM", "Arm", ":material/restart_alt:", False),
+            ("TICK", "Tick", ":material/skip_next:", held == 0),
+            (
+                "STOP" if running else "START",
+                "Stop" if running else "Auto: 1 tick/min",
+                ":material/pause:" if running else ":material/play_arrow:",
+                held == 0 and not running,
+            ),
+            ("INJECT", "Inject demo deposits", ":material/bolt:", held == 0 or not hero_party),
+            ("RELEASE_ALL", "Release all", ":material/fast_forward:", held == 0),
+        ]
+        cols = st.columns(len(actions))
+        for col, (action, label, icon, disabled) in zip(cols, actions, strict=True):
+            if col.button(
+                label, icon=icon, disabled=disabled, width="stretch", key=f"sim_{action}"
+            ):
+                try:
+                    with st.spinner(f"{label}: releasing, refreshing detection, routing..."):
+                        result = call(
+                            PROC["sim_control"],
+                            action,
+                            hero_party if action == "INJECT" else None,
+                            "APP",
+                        )
+                    st.session_state["sim_done"] = result
+                    if action in ("ARM", "START", "TICK", "INJECT"):
+                        # Applied before the toggle exists on the next run: Streamlit
+                        # refuses a widget's key once the widget is drawn.
+                        st.session_state["ov_live_next"] = True
+                    st.session_state.pop("case_id", None)
+                    st.rerun()
+                except Exception as exc:  # the procedure's own message, verbatim
+                    st.error(f"{label} refused: {reason(exc)}")
+
+
+_simulator()
 
 
 # --------------------------------------------------------------------------- #
@@ -303,8 +382,12 @@ def _console(live_mode: bool) -> None:
             "hash-bound attestations",
         )
     )
-    if ctl and ctl.get("controls"):
-        fired, controls = int(ctl["controls_fired"] or 0), int(ctl["controls"])
+    # NaN, not 0, when no rule has a near-miss control defined: then there is no
+    # false-positive figure to show, rather than a misleading 100%.
+    controls = pd.to_numeric(ctl.get("controls"), errors="coerce") if ctl else float("nan")
+    if pd.notna(controls) and controls > 0:
+        fired_raw = pd.to_numeric(ctl.get("controls_fired"), errors="coerce")
+        fired, controls = (int(fired_raw) if pd.notna(fired_raw) else 0), int(controls)
         gauges.append(
             (
                 "False positives",

@@ -114,6 +114,7 @@ ignore = [
 "app/lib/analyst.py" = ["S608"]
 "app/lib/triage.py" = ["S608"]
 "app/lib/insights.py" = ["S608"]
+"app/lib/chat.py" = ["S608"]
 # Replay reuses the loader's builders under the same rule: configured and live,
 # validated identifiers only; every timestamp, party id and cohort is bound.
 "src/risk_copilot/pipeline/replay.py" = ["S608"]
@@ -121,6 +122,10 @@ ignore = [
 # by config.validate_identifier) and module-constant table names; the reset's
 # audit values are bound.
 "src/risk_copilot/pipeline/app.py" = ["S608"]
+# The agent bridge interpolates only object names from agentic.connections, each
+# validated by config.validate_identifier; every case id, artifact id and draft
+# id is a %s bind parameter.
+"src/risk_copilot/agentic/str_pipeline.py" = ["S608"]
 
 [tool.ruff.format]
 quote-style = "double"

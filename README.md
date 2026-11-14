@@ -25,30 +25,37 @@ SIGNAL  ->  EVIDENCE  ->  FINDING  ->  ARTIFACT  ->  ATTESTATION
 | 3 | Load, dynamic tables, idempotent streams/tasks, replay harness | **Done** on dev |
 | 4 | Streamlit-in-Snowflake demo app, case-tool procedures, Reviewer, human gate, semantic view + Analyst | **Done** on dev ([demo runbook](#demo-runbook)) |
 | 5 | ML, evaluation suites, governance, agent object, `AI_COMPLETE` narrative | **Done** |
+| 6 | New account (Nov 2026): data + STR agent in one account, retail-scaled data, in-Snowflake live simulator, narrative trace in the Reviewer, shared Ask/Slack conversation | **Done** on dev |
 
-593 unit tests pass (3 skip without capability evidence for the configured
+647 unit tests pass (3 skip without capability evidence for the configured
 connection); all SQL templates render for both profiles; key-pair auth works
-unattended. Build history and measurements: [`docs/build-log.md`](docs/build-log.md).
+unattended. Build history and measurements: [`docs/build-log.md`](docs/build-log.md);
+the why/what/how of every architectural choice:
+[`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md).
 
-**Account capability is measured, not assumed.** A 98-probe sweep against the
-build account (Standard edition, trial, `AWS_AP_SOUTHEAST_7`) produced
-`conf/generated/capabilities.ASHWINRAVI004.yml`, which `riskcopilot doctor` reads
-to auto-disable unavailable features. That file overrides any prose claim in this
-repository.
+**Account capability is measured, not assumed.** A 98-probe sweep against each
+build account writes `conf/generated/capabilities.<connection>.yml`, which
+`riskcopilot doctor` reads to auto-disable unavailable features. That file
+overrides any prose claim in this repository.
 
-The entire pipeline critical path works — dynamic tables, `STREAM ON DYNAMIC
-TABLE`, tasks, `MERGE`, recursive CTEs, Python stored procedures. So does
-**Cortex Analyst** (NL→SQL over semantic views), `AI_AGG`, and all of
-`SNOWFLAKE.ML` that this region serves. Blocked: per-row Cortex inference
-(`AI_COMPLETE`, 399258), agent *invocation* (399504, though the object deploys),
-Cortex Search, External Access Integration, and the Enterprise governance
-features (row access policies, masking, DMFs, Time Travel beyond 1 day).
+The current account (`capabilities.4ASHWINRAVI0045.yml`, Standard edition,
+`AWS_AP_NORTHEAST_1`) serves what the first trial blocked: `AI_COMPLETE` on 20
+models (Claude, GPT-5, Llama, Mistral), Cortex Agent invocation, Cortex Search,
+masking / row-access / projection policies, DMFs and 14-day Time Travel. Still
+blocked: External Access Integration, tag-based masking, `TOP_INSIGHTS`. The
+earlier account's evidence (`capabilities.ASHWINRAVI004.yml`) is kept for the
+record.
 
-Net effect: **narrative generation is the only genuinely blocked piece of the
-copilot.** See
-[`docs/enhanced-architecture-diagrams.md` §S2–S3](docs/enhanced-architecture-diagrams.md)
-for the capability map, the revised tiering, and why three earlier assumptions
-about this account were wrong.
+So the STR narrative can be written by a model -- and **no figure in it is
+trusted because a model wrote it**: `REVIEW_STR`'s `narrative_trace` check
+rejects any amount, date or count in the prose that is not the display of a
+re-proven logged figure, whatever the agent's own reviewer said.
+
+**Detection scope, stated plainly.** One rule is implemented and evaluated end
+to end: `STRUCTURING_CROSS_ACCOUNT` (recall and precision 10/10 on dev). The
+other typologies in `conf/detection.yml` are registered, with generation support
+(shared devices, under-declared income, OpenSanctions lists), but have no
+detection SQL yet.
 
 ## Quick start
 
@@ -130,7 +137,9 @@ across AMLworld's full population, silently merging distinct parties.
 
 ## Snowflake-native ML
 
-**Tier 1** — both are built-in SQL; no `snowflake-ml-python`, no compute pool:
+**Tier 1** -- designed as built-in SQL; no `snowflake-ml-python`, no compute pool.
+**Neither is built yet** (no detection SQL calls them); `doctor` confirms both
+functions are available on the current account:
 
 - **`JAROWINKLER_SIMILARITY` fuzzy sanctions screening.** The design *cut* fuzzy
   matching as too complex; it is one scalar function. Exact match raises a
@@ -198,11 +207,11 @@ been exercised from inside Streamlit in Snowflake; Ask has, and works there.
 | # | Page | Action | Shows | Time |
 |---|---|---|---|---|
 | 1 | Overview | -- | 5,032 transactions, 10 signals, 10 open cases, 0 STRs filed, recall / precision 10/10 | -- |
-| 2 | Overview | **Investigate** (the hero is preselected) | Kamya Dhar, `CASE-4399c4c86db5c6ea`: 10 cash deposits, ₹94.03 lakh, 2 accounts, all under the ₹10 lakh line | -- |
+| 2 | Overview | **Investigate** (the hero is preselected) | Kamya Dhar, `CASE-4399c4c86db5c6ea`: 10 cash deposits, ₹94.03 lakh, 2 accounts, all under the ₹10 lakh line, against a declared income of ₹38.5 lakh | -- |
 | 3 | Case | **1 · Gather evidence** | Status INVESTIGATING; 18 evidence pointers, 4 logged queries with hashes | ~4 s |
 | 4 | Case | Turn on **Plant a defect**, then **2 · Draft STR** | Draft v1 claims ₹1,03,42,961 and cites `CTR_CASH_THRESHOLD_2026` | ~5 s |
 | 5 | Case | **3 · Run Reviewer** | **REJECT**, with 2 defects: the stated total vs the ₹94,02,691 its query returns, and a clause that does not exist. 4 queries re-run, no model | ~4 s |
-| 6 | Case | Turn the defect off, then **2 · Draft STR**, then **3 · Run Reviewer** | v2 states ₹94,02,691 and gets **APPROVE**: all 4 checks pass; v1 stays in the version history | ~9 s |
+| 6 | Case | Turn the defect off, then **2 · Draft STR**, then **3 · Run Reviewer** | v2 states ₹94,02,691 and gets **APPROVE**: all 5 checks pass, including the narrative trace; v1 stays in the version history | ~9 s |
 | 7 | Case | **Go to sign-off**, then **Switch to the Principal Officer** and sign in | The approved STR, its hash, the Reviewer's checklist; the analyst is told only the officer can sign | -- |
 | 8 | Sign-off | Name, Attest, **Sign** without ticking the box | Refused: "Tick the confirmation to sign." | -- |
 | 9 | Sign-off | Tick, **Sign** | ATTESTED: the STR is FILED, the attestation records its hash; "filed without attestation" stays 0 | ~2 s |
@@ -211,20 +220,35 @@ been exercised from inside Streamlit in Snowflake; Ask has, and works there.
 
 After step 9 the hero's buttons are disabled: a filed case cannot be redrafted.
 
-**Live streaming (optional, needs the routing task)**
+**Live streaming, from the dashboard (no laptop, no CLI)**
 
-This shows the hero's deposits arriving and the case appearing on Overview with
-**Live mode** on. Running it reloads RAW and resumes the routing task, so it
-costs credits.
+Every transaction is already loaded; `RAW_TRANSACTIONS.held_back` decides which
+ones have "arrived". Overview > **Live simulator** drives one procedure,
+`EVIDENCE_CHAIN.SIM_CONTROL_DEV`, and every click refreshes detection and routes
+new cases inside Snowflake:
 
-```bash
-riskcopilot -p dev load --replace          # hold back from replay.hold_back_from
-# refresh the dynamic tables, then route once (docs/build-log.md, Phase 3 step 8)
-riskcopilot -p dev replay --inject structuring_burst
-```
+| Button | What it does (measured on dev) |
+|---|---|
+| **Arm** | Clears the case queue, holds back everything booked from 03 Sep 2022: 3,764 legs visible, 6,300 held, 2 baseline cases |
+| **Tick** | Releases the next 6 h of bookings (110, then 66 legs) |
+| **Auto: 1 tick/min** | Resumes `SIM_TICK_TASK_DEV`; it stops itself when nothing is held |
+| **Inject demo deposits** | Releases the hero's held legs at once: `CASE-4399c4c86db5c6ea` opens in the same call |
+| **Release all** | Everything arrives: 10,064 legs, 10 cases, `verify` passes |
 
-Suspend the task afterwards. This path was last rehearsed in Phase 3, step 8,
-and not since the app was added.
+Live mode switches on by itself after Arm, Tick, Auto or Inject. Release only
+flips the arrival columns, which the equivalence fingerprint leaves out, so the
+data is identical to a full load. End a demo with **Release all**, then reset
+the cases.
+
+The older CLI path (`riskcopilot load --replace` + `replay`) still works.
+
+**The AI-drafted STR** (same account, `RISK_COPILOT_AGENT.STR.RC_STR_AGENT`):
+`python -m risk_copilot.agentic.str_pipeline CASE-4399c4c86db5c6ea --out str.pdf`
+drafts with claude-sonnet-4-6, cross-reviews with openai-gpt-5.1 / llama3.3-70b,
+writes back as FINDING v2, and runs the data account's own `REVIEW_STR` on it.
+On dev it ends `READY_FOR_ATTESTATION` and renders a 4-page FIU-IND PDF. The
+Slack bot runs the same pipeline (`str CASE-...`); it needs the Slack tokens in
+`bridge/.env`.
 
 ## Development
 
