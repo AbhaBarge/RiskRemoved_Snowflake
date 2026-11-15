@@ -36,10 +36,10 @@ PROC: dict[str, str] = CFG["procedure"]
 HERO: dict[str, Any] | None = CFG.get("hero")
 
 
-def _secrets() -> dict[str, Any] | None:
-    """The hosted app's [snowflake] secrets, or None (no secrets file is normal)."""
+def _secrets(section: str = "snowflake") -> dict[str, Any] | None:
+    """One of the hosted app's secrets sections, or None (no secrets file is normal)."""
     try:
-        return dict(st.secrets["snowflake"]) if "snowflake" in st.secrets else None
+        return dict(st.secrets[section]) if section in st.secrets else None
     except Exception:  # no secrets.toml at all: local or Streamlit in Snowflake
         return None
 
@@ -60,8 +60,8 @@ def _secrets_session(cfg: dict[str, Any]) -> Any:
 
 
 @st.cache_resource(show_spinner=False)
-def session() -> Any:
-    if (cfg := _secrets()) is not None:  # Streamlit Community Cloud
+def _session(section: str) -> Any:
+    if (cfg := _secrets(section)) is not None:  # Streamlit Community Cloud
         return _secrets_session(cfg)
     try:
         from risk_copilot.config import load_settings
@@ -69,6 +69,31 @@ def session() -> Any:
     except ImportError:  # Streamlit in Snowflake
         return st.connection("snowflake").session()
     return create_session(load_settings(), unattended=True)
+
+
+def _section() -> str:
+    """Which secrets section this visitor's queries run under.
+
+    The hosted app has two service users: [snowflake] for everyone, and
+    [snowflake_officer] (the compliance role, so ATTEST_STR accepts it) only
+    while the Principal Officer persona is signed in. Without that section, the
+    officer runs as everyone else and the database refuses to sign.
+    """
+    officer = st.session_state.get("auth_user") == "officer"
+    return "snowflake_officer" if officer and _secrets("snowflake_officer") else "snowflake"
+
+
+class _Current:
+    """``session()`` is this visitor's session; ``session.clear()`` drops every cached one."""
+
+    def __call__(self) -> Any:
+        return _session(_section())
+
+    def clear(self) -> None:
+        _session.clear()
+
+
+session = _Current()
 
 
 # 390114 token expired, 390112 session gone, 390111 session expired; Snowpark's own

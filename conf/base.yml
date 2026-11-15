@@ -52,6 +52,7 @@ roles:
   service: RC_SERVICE_ROLE              # agents + automations
   compliance_officer: COMPLIANCE_OFFICER # sees all data, may attest artifacts
   public_app: RC_PUBLIC_APP             # the hosted app: reads the demo, runs the case tools
+  public_officer: RC_PUBLIC_OFFICER     # the hosted app's officer sign-in: public_app + compliance_officer
   # Branch analysts drive the row-access-policy demo: same question, two roles,
   # two answers. Keys must match branch_region values in conf/generation.yml.
   branch_analysts:
@@ -149,6 +150,11 @@ case_tools:
   attest_str: ATTEST_STR                 # artifact -> ATTESTATION (the human gate)
   reset_cases: RESET_CASES               # demo reset: workflow rows deleted, cases reopened
   submit_ai_draft: SUBMIT_AI_DRAFT       # write-back: agent-account narrative -> FINDING n+1 + ARTIFACT
+  # Live simulator (sql/procedures/08_simulator.sql): every leg is loaded, and a
+  # held_back flag decides what detection can see. SIM_CONTROL arms, ticks,
+  # injects and releases; the task runs one tick a minute while started.
+  sim_control: SIM_CONTROL
+  sim_task: SIM_TICK_TASK
   render_template: RENDER_TEMPLATE       # JS UDF: {placeholder} -> display value
   format_inr: FORMAT_INR                 # JS UDF: Indian digit grouping
   # Data, not objects: the REF_FILING_TEMPLATES row DRAFT_STR fills, and the
@@ -182,6 +188,10 @@ app:
   # The service user Streamlit Community Cloud connects as (key pair only, no
   # password). `riskcopilot app public-access` creates it and writes the secrets.
   public_user: RC_PUBLIC_APP_USER
+  # A second service user, holding roles.public_officer, that the hosted app
+  # switches to only while the Principal Officer is signed in, so the database
+  # (not the sign-in page) stops anyone else signing an STR.
+  public_officer_user: RC_PUBLIC_OFFICER_USER
 
 cortex:
   search_service: REGULATORY_SEARCH_SVC

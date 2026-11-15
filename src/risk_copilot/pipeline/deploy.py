@@ -66,7 +66,7 @@ INCLUDED_DIRS = ("rules", f"{VERIFY_DIR}/controls")
 #: regression where someone pastes working ad-hoc SQL into a file and the
 #: profile suffix stops being applied.
 _FORBIDDEN_LITERALS = re.compile(
-    r"\b(RISK_COPILOT|RC_DEV_WH|RC_PIPELINE_WH|RC_DEMO_WH|RC_ADMIN|RC_SERVICE_ROLE|RC_PUBLIC_APP\w*"
+    r"\b(RISK_COPILOT|RC_DEV_WH|RC_PIPELINE_WH|RC_DEMO_WH|RC_ADMIN|RC_SERVICE_ROLE|RC_PUBLIC_APP\w*|RC_PUBLIC_OFFICER\w*"
     r"|COMPLIANCE_OFFICER|BRANCH_ANALYST_\w+)\b"
 )
 

@@ -18,6 +18,8 @@ from pathlib import Path
 import snowflake.connector
 from cryptography.hazmat.primitives import serialization
 
+from risk_copilot.config import validate_identifier
+
 _REPO = Path(__file__).resolve().parents[3]
 _ENV_FILE = Path(os.getenv("RC_BRIDGE_ENV", _REPO / "bridge" / ".env"))
 _BASE = _ENV_FILE.parent
@@ -61,18 +63,31 @@ class AgentTarget:
         return f"{self.schema_fq}.{self.agent}"
 
 
+def _ident(var: str, default: str) -> str:
+    """An object name from the environment, validated: these are interpolated into SQL."""
+    return validate_identifier(os.getenv(var, default), what=var)
+
+
+def _fqn(var: str, default: str) -> str:
+    """A dotted name from the environment, each part validated."""
+    raw = os.getenv(var, default)
+    return ".".join(validate_identifier(part, what=var) for part in raw.split("."))
+
+
 def data_target() -> DataTarget:
-    db = os.getenv("DATA_DATABASE", "RISK_COPILOT_DEV")
+    db = _ident("DATA_DATABASE", "RISK_COPILOT_DEV")
     suffix = os.getenv("DATA_OBJECT_SUFFIX", "_DEV" if db.endswith("_DEV") else "")
-    sv = os.getenv("SNOWFLAKE_SEMANTIC_VIEW", f"{db}.CURATED.SV_RISK_COPILOT{suffix}")
+    if suffix:
+        suffix = "_" + validate_identifier(suffix.lstrip("_"), what="DATA_OBJECT_SUFFIX")
+    sv = _fqn("SNOWFLAKE_SEMANTIC_VIEW", f"{db}.CURATED.SV_RISK_COPILOT{suffix}")
     return DataTarget(database=db, suffix=suffix, semantic_view=sv)
 
 
 def agent_target() -> AgentTarget:
     return AgentTarget(
-        database=os.getenv("AGENT_DATABASE", "RISK_COPILOT_AGENT"),
-        schema=os.getenv("AGENT_SCHEMA", "STR"),
-        agent=os.getenv("AGENT_NAME", "RC_STR_AGENT"),
+        database=_ident("AGENT_DATABASE", "RISK_COPILOT_AGENT"),
+        schema=_ident("AGENT_SCHEMA", "STR"),
+        agent=_ident("AGENT_NAME", "RC_STR_AGENT"),
     )
 
 
@@ -116,7 +131,7 @@ def agent_conn() -> snowflake.connector.SnowflakeConnection:
     """The account that hosts the STR agent and its tools."""
     t = agent_target()
     return snowflake.connector.connect(
-        account=os.getenv("AGENT_SNOWFLAKE_ACCOUNT", "HQRWRXK-UZ26728"),
+        account=os.environ["AGENT_SNOWFLAKE_ACCOUNT"],
         user=os.getenv("AGENT_SNOWFLAKE_USER", "RC_AGENT_SVC"),
         role=os.getenv("AGENT_SNOWFLAKE_ROLE", "RC_AGENT_ROLE"),
         warehouse=os.getenv("AGENT_SNOWFLAKE_WAREHOUSE", "RC_AGENT_WH"),

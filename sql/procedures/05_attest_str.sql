@@ -25,6 +25,7 @@
 CREATE OR REPLACE PROCEDURE {{ EV }}.{{ T.attest_str }}(
     ARTIFACT_ID VARCHAR, DECISION VARCHAR, ATTESTOR VARCHAR, ATTEST_COMMENT VARCHAR DEFAULT NULL
 )
+    COPY GRANTS
     RETURNS VARIANT
     LANGUAGE SQL
     COMMENT = 'Human gate: Principal Officer attests or returns one REVIEWED STR. Caller rights; compliance role required.'

@@ -115,11 +115,17 @@ CREATE TABLE IF NOT EXISTS RAW_TRANSACTIONS (
     source_ref              VARCHAR         COMMENT 'Opaque UTR-like transfer reference, shared by both legs. Deliberately carries no provenance: a source/injected prefix or a source row number would be a label. Provenance is in GROUND_TRUTH.TXN_LABELS.',
     ingested_at             TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP() NOT NULL
                                             COMMENT 'Arrival time. Differs from txn_timestamp under replay.',
+    held_back               BOOLEAN         DEFAULT FALSE NOT NULL
+                                            COMMENT 'Live simulator: TRUE = loaded but not yet arrived. Detection (DT_TRANSACTIONS_ENRICHED) reads only FALSE rows. Not a label: it is set by booking time alone.',
+    released_at             TIMESTAMP_NTZ   COMMENT 'When SIM_CONTROL released a held-back leg; NULL for a leg that was never held. The app shows COALESCE(released_at, ingested_at) as arrival.',
     CONSTRAINT pk_raw_transactions PRIMARY KEY (txn_id),
     CONSTRAINT fk_raw_txn_account FOREIGN KEY (account_id) REFERENCES ID_MAP_ACCOUNT (account_id)
 )
 CLUSTER BY (TO_DATE(txn_timestamp), account_id)
 COMMENT = 'Leg-level transaction ledger, INR-normalised. Append-only. Contains NO label column: it feeds the dynamic tables that feed the semantic view.';
+-- held_back / released_at arrive with CREATE. No ADD COLUMN IF NOT EXISTS for a
+-- ledger created earlier: with a DEFAULT, Snowflake rejects it once the column
+-- exists ("ambiguous column name"), so it would break every re-deploy.
 
 -- --------------------------------------------------------------------------
 -- Party attributes, split across two sources so the agent has to reconcile them.

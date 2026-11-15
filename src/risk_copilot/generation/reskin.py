@@ -99,6 +99,9 @@ class ReskinConfig:
     credit_sign: int
     source_ref_prefix: str
     source_ref_hex_digits: int
+    #: Retail scale (see :meth:`retail`): None leaves converted amounts untouched.
+    scale_pivot: Decimal | None = None
+    scale_exponent: Decimal = Decimal(1)
 
     @classmethod
     def from_config(cls, generation: Mapping[str, Any]) -> ReskinConfig:
@@ -113,6 +116,15 @@ class ReskinConfig:
                 raise ReskinError(f"fx.rounding_mode {rounding!r} is not a decimal rounding mode")
             if int(legs["debit_sign"]) >= 0 or int(legs["credit_sign"]) <= 0:
                 raise ReskinError("legs: debit_sign must be negative and credit_sign positive")
+            scale = fx.get("retail_scale") or {}
+            pivot = exponent = None
+            if scale.get("enabled"):
+                pivot = Decimal(str(scale["pivot_inr"]))
+                exponent = Decimal(str(scale["exponent"]))
+                if pivot <= 0 or not Decimal(0) < exponent <= Decimal(1):
+                    raise ReskinError(
+                        "fx.retail_scale: pivot_inr must be > 0 and 0 < exponent <= 1"
+                    )
             return cls(
                 seed=int(generation["seed"]),
                 base_currency=str(fx["base_currency"]),
@@ -130,6 +142,8 @@ class ReskinConfig:
                 credit_sign=int(legs["credit_sign"]),
                 source_ref_prefix=str(legs["source_ref_prefix"]),
                 source_ref_hex_digits=int(legs["source_ref_hex_digits"]),
+                scale_pivot=pivot,
+                scale_exponent=exponent if exponent is not None else Decimal(1),
             )
         except KeyError as exc:
             raise ReskinError(f"conf/generation.yml: missing reskin setting {exc}") from exc
@@ -154,6 +168,20 @@ class ReskinConfig:
     def txn_type(self, payment_format: str, side: str) -> str:
         spec = self.txn_type_by_format.get(payment_format, self.txn_type_default)
         return str(spec[side])
+
+    def retail(self, inr: Decimal) -> Decimal:
+        """The factor that brings a converted amount onto a retail book.
+
+        AMLworld is corporate-scale: at the period FX rate its median leg is under a
+        lakh but its tail reaches thousands of crore, and declared income, derived
+        from inflow, inherits that tail. At or below ``pivot_inr`` the factor is 1;
+        above it, ``pivot * (inr / pivot) ** exponent`` -- strictly increasing, so
+        the order of amounts, and with it every pattern's shape, is unchanged.
+        """
+        if self.scale_pivot is None or inr <= self.scale_pivot:
+            return Decimal(1)
+        scaled = self.scale_pivot * (inr / self.scale_pivot) ** self.scale_exponent
+        return scaled / inr
 
     def money(self, value: Decimal) -> Decimal:
         return value.quantize(self.quantum, rounding=self.rounding)
@@ -206,10 +234,18 @@ def reskin_pairs(subgraph: Subgraph, generation: Mapping[str, Any]) -> pa.Table:
             ("C", payee, payer, received, cfg.credit_sign, "credit", credit_type),
         )
         for side, account, counterparty, (amount, currency), sign, role, txn_type in sides:
-            inr = cfg.money(amount * cfg.rate(currency))
+            raw_inr = amount * cfg.rate(currency)
+            factor = cfg.retail(raw_inr)
+            inr = cfg.money(raw_inr * factor)
             if foreign:
                 leg_currency = cfg.iso(currency)
-                leg_amount = cfg.exact_money(amount, f"{ref} {role} amount")
+                # A scaled foreign amount is rounded like any conversion; unscaled,
+                # it must already be exact (M14).
+                leg_amount = (
+                    cfg.exact_money(amount, f"{ref} {role} amount")
+                    if factor == 1
+                    else cfg.money(amount * factor)
+                )
             else:
                 leg_currency, leg_amount = cfg.base_currency, inr
             records.append(

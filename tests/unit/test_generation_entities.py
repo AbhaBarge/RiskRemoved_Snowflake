@@ -14,6 +14,7 @@ import pytest
 from risk_copilot.config import deep_merge, load_settings
 from risk_copilot.generation.entities import (
     EntityError,
+    _compress,
     build_entities,
     observed_window,
 )
@@ -242,6 +243,29 @@ def test_income_is_floored_and_rounded(
         value = row["declared_annual_income"]
         assert value >= income["floor_inr"]
         assert value % income["round_to_inr"] == 0
+
+
+def test_income_compression_is_identity_below_and_monotone_above_the_pivot() -> None:
+    pivot, exponent = Decimal(1000000), Decimal("0.35")
+    assert _compress(Decimal(500000), pivot, exponent) == Decimal(500000)
+    assert _compress(pivot, pivot, exponent) == pivot
+    assert _compress(Decimal(5), None, exponent) == Decimal(5)
+    values = [Decimal(v) for v in ("1000001", "1e7", "1e9", "2e11")]
+    out = [_compress(v, pivot, exponent) for v in values]
+    assert out == sorted(out) and len(set(out)) == len(out)
+    # Rs 1,000 crore of annualised turnover is a Rs 25.1 lakh declared income.
+    assert round(_compress(Decimal("1e10"), pivot, exponent)) == 25118864
+
+
+@pytest.mark.parametrize("bad", [{"pivot_inr": 0}, {"pivot_inr": 1, "exponent": 2}])
+def test_invalid_income_compression_fails(
+    pipeline: dict[str, Any], generation: dict[str, Any], bad: dict[str, Any]
+) -> None:
+    config = deep_merge(
+        generation, {"entities": {"income": {"compress": {"enabled": True, **bad}}}}
+    )
+    with pytest.raises(EntityError, match="compress"):
+        build_entities(pipeline["subgraph"], pipeline["legs"], pipeline["labels"], config)
 
 
 def test_income_tracks_legitimate_inflow(

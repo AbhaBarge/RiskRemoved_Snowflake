@@ -280,13 +280,16 @@ class Roles(_Frozen):
     branch_analysts: dict[str, str]
     #: The hosted (Streamlit Community Cloud) app's role: read the demo, run the case tools.
     public_app: str = ""
+    #: The hosted app's Principal Officer: the public role plus the compliance
+    #: role, used only while the officer persona is signed in. Empty for none.
+    public_officer: str = ""
 
     @field_validator("admin", "service", "compliance_officer")
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="Role name")
 
-    @field_validator("public_app")
+    @field_validator("public_app", "public_officer")
     @classmethod
     def _optional_identifier(cls, v: str) -> str:
         return validate_identifier(v, what="Role name") if v else ""
@@ -628,13 +631,15 @@ class AppSpec(_Frozen):
     artifact_repository: str = ""
     #: Service user the hosted app connects as (key pair only); empty for none.
     public_user: str = ""
+    #: Service user the hosted app signs STRs as (roles.public_officer); empty for none.
+    public_officer_user: str = ""
 
     @field_validator("name", "stage")
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="App object name")
 
-    @field_validator("public_user")
+    @field_validator("public_user", "public_officer_user")
     @classmethod
     def _user(cls, v: str) -> str:
         return validate_identifier(v, what="App public user") if v else ""
@@ -1031,9 +1036,15 @@ class Settings(BaseModel):
                     region: self.obj(role) for region, role in self.roles.branch_analysts.items()
                 },
                 "public_app": self.obj(self.roles.public_app) if self.roles.public_app else "",
+                "public_officer": (
+                    self.obj(self.roles.public_officer) if self.roles.public_officer else ""
+                ),
             },
             "app": {
                 "public_user": self.obj(self.app.public_user) if self.app.public_user else "",
+                "public_officer_user": (
+                    self.obj(self.app.public_officer_user) if self.app.public_officer_user else ""
+                ),
                 "warehouse": self.obj(self.warehouse(self.app.warehouse).name),
             },
             "stage": {key: self.obj(getattr(self.stages, key)) for key in Stages.model_fields},
@@ -1106,6 +1117,26 @@ class Settings(BaseModel):
             # The case-event alert (sql/10_automations). The recipient comes from the
             # environment, never from a committed file; empty means skip the stage.
             "case_alert": self._case_alert_context(),
+            # The live simulator (sql/procedures/08_simulator.sql), from the same
+            # `replay` block the CLI replay uses: one tick releases sim_step of
+            # booking time, cut early at batch_legs.
+            "sim": self._sim_context(),
+        }
+
+    def _sim_context(self) -> dict[str, Any]:
+        if "replay" not in self.generation:
+            return {"step_seconds": 0, "batch_legs": 0, "hold_back_from": "NULL"}
+        spec = _replay_spec(self.generation)
+        cut = spec.hold_back_from
+        return {
+            "step_seconds": spec.sim_step_seconds,
+            "batch_legs": spec.batch_legs,
+            "hold_back_from": (
+                "NULL"
+                if cut is None
+                # A fixed-format timestamp, so no quote can occur in it.
+                else f"'{cut.strftime('%Y-%m-%d %H:%M:%S')}'::TIMESTAMP_NTZ"
+            ),
         }
 
     def _case_alert_context(self) -> dict[str, Any]:

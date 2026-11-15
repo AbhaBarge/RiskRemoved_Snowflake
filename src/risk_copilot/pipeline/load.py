@@ -77,6 +77,10 @@ TXN_TIMESTAMP = "txn_timestamp"
 #: RAW_TRANSACTIONS' arrival time: its default, so it differs under replay and is
 #: left out of the equivalence fingerprint.
 INGESTED_AT = "INGESTED_AT"
+#: The live simulator's arrival state (sql/procedures/08_simulator.sql). Like
+#: INGESTED_AT it says when a leg arrived, not what it is, so it is left out of
+#: the equivalence fingerprint too.
+ARRIVAL_COLUMNS = (INGESTED_AT, "HELD_BACK", "RELEASED_AT")
 
 #: Stage-path segment for the AMLworld source files.
 SOURCE_PREFIX = "amlworld"
@@ -785,11 +789,12 @@ class Loader:
 
 
 def raw_fingerprint(session: Any, fq_raw: str) -> tuple[int, int]:
-    """(rows, HASH_AGG) of RAW_TRANSACTIONS over every column but ``ingested_at``.
+    """(rows, HASH_AGG) of RAW_TRANSACTIONS over every column but the arrival ones.
 
     The equivalence check: a full load and a hold-back load plus replay must give
     the same pair. Columns come from INFORMATION_SCHEMA in ordinal order, so a
-    new column joins the fingerprint instead of being silently left out.
+    new column joins the fingerprint instead of being silently left out; only
+    :data:`ARRIVAL_COLUMNS` are excluded.
     """
     db, schema = fq_raw.split(".")
     columns = [
@@ -797,9 +802,9 @@ def raw_fingerprint(session: Any, fq_raw: str) -> tuple[int, int]:
         for r in execute(
             session,
             f"SELECT column_name FROM {db}.INFORMATION_SCHEMA.COLUMNS "
-            "WHERE table_schema = ? AND table_name = ? AND column_name <> ? "
+            "WHERE table_schema = ? AND table_name = ? AND column_name NOT IN (?, ?, ?) "
             "ORDER BY ordinal_position",
-            [schema, TRANSACTIONS, INGESTED_AT],
+            [schema, TRANSACTIONS, *ARRIVAL_COLUMNS],
         )
     ]
     if not columns:

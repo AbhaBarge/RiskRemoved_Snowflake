@@ -65,7 +65,9 @@ def _signatures(sql: str) -> dict[str, tuple[str, ...]]:
     """Procedure name -> argument types, from CREATE PROCEDURE statements."""
     out: dict[str, tuple[str, ...]] = {}
     for m in re.finditer(
-        r"CREATE OR REPLACE PROCEDURE\s+([\w.]+)\s*\((.*?)\)\s*RETURNS", sql, re.S
+        r"CREATE OR REPLACE PROCEDURE\s+([\w.]+)\s*\((.*?)\)\s*(?:COPY GRANTS\s+)?RETURNS",
+        sql,
+        re.S,
     ):
         args = [a.split()[1].upper() for a in m.group(2).split(",") if a.strip()]
         out[m.group(1).upper()] = tuple(args)
@@ -89,7 +91,9 @@ def test_the_public_role_can_run_every_case_tool(repo_root: Path) -> None:
         assert procs.get(name) == types, f"{name}{types} does not match {procs.get(name)}"
     # SUBMIT_AI_DRAFT is called by the agent bridge (src/risk_copilot/agentic), never by
     # the public app: the public role must not be able to write a narrative.
-    bridge_only = {deployer.settings.fq("evidence", deployer.settings.case_tools["submit_ai_draft"]).upper()}
+    bridge_only = {
+        deployer.settings.fq("evidence", deployer.settings.case_tools["submit_ai_draft"]).upper()
+    }
     tools = {
         deployer.settings.fq("evidence", t).upper() for t in deployer.settings.case_tools.values()
     } - bridge_only
@@ -106,6 +110,26 @@ def test_the_public_role_gets_nothing_on_ground_truth(repo_root: Path) -> None:
                 assert gt not in statement.upper(), statement
 
 
+def test_redeploying_a_procedure_keeps_the_public_grants(repo_root: Path) -> None:
+    # CREATE OR REPLACE without COPY GRANTS drops USAGE, so the next `procedures`
+    # deploy silently broke the hosted app ("Unknown user-defined function").
+    deployer = Deployer(load_settings(repo_root=repo_root, profile="dev"))
+    for path in deployer.stage_files("procedures"):
+        for statement in split_statements(deployer.render(path)):
+            if re.match(r"\s*CREATE OR REPLACE PROCEDURE", statement, re.I):
+                assert re.search(r"\)\s*COPY GRANTS\s+RETURNS", statement), path.name
+
+
+def test_only_the_officer_role_can_sign_on_the_hosted_app(repo_root: Path) -> None:
+    deployer = Deployer(load_settings(repo_root=repo_root, profile="dev"))
+    roles = deployer.settings.sql_context()["role"]
+    pub, off, co = roles["public_app"], roles["public_officer"], roles["compliance_officer"]
+    sql = "\n".join(deployer.render(p) for p in deployer.stage_files("app_access")).upper()
+    assert f"GRANT ROLE {co} TO ROLE {pub};" not in sql
+    assert f"REVOKE ROLE {co} FROM ROLE {pub};" in sql
+    assert f"GRANT ROLE {co} TO ROLE {off};" in sql and f"GRANT ROLE {pub} TO ROLE {off};" in sql
+
+
 def test_secrets_refuse_values_that_would_break_the_file() -> None:
     good = {"account": "A", "user": "U", "role": "R", "warehouse": "W", "database": "D"}
     text = secrets_toml(**good, pem=b"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
@@ -113,6 +137,18 @@ def test_secrets_refuse_values_that_would_break_the_file() -> None:
     assert parsed["user"] == "U" and parsed["private_key_pem"].strip().startswith("-----BEGIN")
     with pytest.raises(AppError, match="bad role"):
         secrets_toml(**{**good, "role": 'R"\nx = "y'}, pem=b"k")
+
+
+def test_the_officer_secrets_are_a_separate_section() -> None:
+    good = {"account": "A", "user": "U", "role": "R", "warehouse": "W", "database": "D"}
+    text = secrets_toml(
+        **good,
+        pem=b"k",
+        section="snowflake_officer",
+        extra='\n[demo_auth]\nofficer_password = "p"\n',
+    )
+    parsed = tomllib.loads(text)
+    assert set(parsed) == {"snowflake_officer", "demo_auth"}  # pasted beside [snowflake]
 
 
 # --------------------------------------------------------------------------- #
@@ -145,6 +181,16 @@ def test_sign_in_checks_the_password(auth) -> None:  # type: ignore[no-untyped-d
     assert auth.st.session_state["login_user"] == "officer"
     assert auth.sign_in("officer", auth.st.session_state["login_password"])
     assert auth.can("can_attest")
+
+
+def test_a_password_in_secrets_replaces_the_shown_one(auth) -> None:  # type: ignore[no-untyped-def]
+    auth.st.secrets = {"demo_auth": {"officer_password": "kept-secret"}}
+    assert auth.hidden("officer") and not auth.hidden("analyst")
+    assert not auth.sign_in("officer", auth.DEMO_PASSWORDS["officer"])
+    auth.fill("officer")
+    assert auth.st.session_state["login_password"] == ""  # not filled in for anyone
+    assert auth.sign_in("officer", "kept-secret")
+    assert auth.sign_in("analyst", auth.DEMO_PASSWORDS["analyst"])
 
 
 # --------------------------------------------------------------------------- #

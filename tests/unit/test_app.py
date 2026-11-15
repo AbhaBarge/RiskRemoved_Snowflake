@@ -69,6 +69,7 @@ def test_dev_names_carry_the_suffix_and_tables_are_qualified_by_schema(
         "review_str",
         "attest_str",
         "reset_cases",
+        "sim_control",
     }
     assert cfg["role"]["compliance_officer"] == "COMPLIANCE_OFFICER_DEV"
     assert cfg["semantic_view"] == "RISK_COPILOT_DEV.CURATED.SV_RISK_COPILOT_DEV"
@@ -135,6 +136,7 @@ def test_app_files_selects_sources_and_skips_caches(tmp_path: Path) -> None:
         MAIN_FILE,
         "lib/db.py",
         ".streamlit/config.toml",
+        ".streamlit/secrets.toml",  # private keys: never on the app stage
         CONFIG_FILE,
         "lib/__pycache__/db.cpython-312.pyc",
         "notes.txt",

@@ -124,7 +124,9 @@ def test_legs_reference_the_sampled_accounts(
 def test_conversion_is_exact_and_per_currency(
     built: dict[str, Any], generation: dict[str, Any]
 ) -> None:
-    legs = legs_by_row(reskin(built, generation, retain_foreign_pct=0))
+    legs = legs_by_row(
+        reskin(built, generation, retain_foreign_pct=0, retail_scale={"enabled": False})
+    )
     # 2848.96 USD x 82.50 = 235,039.20 exactly -- no float noise.
     assert legs[(1, "D")]["amount_inr"] == Decimal("-235039.20")
     assert legs[(1, "D")]["currency"] == "INR"
@@ -134,12 +136,60 @@ def test_conversion_is_exact_and_per_currency(
 def test_cross_currency_pair_keeps_each_sides_amount(
     built: dict[str, Any], generation: dict[str, Any]
 ) -> None:
-    legs = legs_by_row(reskin(built, generation, retain_foreign_pct=100))
+    legs = legs_by_row(
+        reskin(built, generation, retain_foreign_pct=100, retail_scale={"enabled": False})
+    )
     debit, credit = legs[(9, "D")], legs[(9, "C")]
     assert (debit["amount"], debit["currency"]) == (Decimal("-1000.00"), "USD")
     assert debit["amount_inr"] == Decimal("-82500.00")
     assert (credit["amount"], credit["currency"]) == (Decimal("82500.00"), "INR")
     assert credit["amount_inr"] == Decimal("82500.00")
+
+
+SCALE = {"enabled": True, "pivot_inr": 100000, "exponent": 0.5}
+
+
+def test_retail_scale_leaves_amounts_at_or_below_the_pivot(generation: dict[str, Any]) -> None:
+    cfg = ReskinConfig.from_config(deep_merge(generation, {"fx": {"retail_scale": SCALE}}))
+    for inr in ("1.00", "82500.00", "100000.00"):
+        assert cfg.retail(Decimal(inr)) == 1
+
+
+def test_retail_scale_compresses_the_tail_exactly(generation: dict[str, Any]) -> None:
+    cfg = ReskinConfig.from_config(deep_merge(generation, {"fx": {"retail_scale": SCALE}}))
+    # pivot * (x / pivot) ** 0.5: Rs 4 lakh -> Rs 2 lakh, Rs 1 crore -> Rs 10 lakh.
+    assert cfg.money(Decimal("400000") * cfg.retail(Decimal("400000"))) == Decimal("200000.00")
+    assert cfg.money(Decimal("10000000") * cfg.retail(Decimal("10000000"))) == Decimal("1000000.00")
+
+
+def test_retail_scale_preserves_order(generation: dict[str, Any]) -> None:
+    cfg = ReskinConfig.from_config(deep_merge(generation, {"fx": {"retail_scale": SCALE}}))
+    raw = [Decimal(v) for v in ("50000", "100000", "100001", "9400000", "310000000", "2.4e10")]
+    scaled = [cfg.money(x * cfg.retail(x)) for x in raw]
+    assert scaled == sorted(scaled) and len(set(scaled)) == len(scaled)
+
+
+def test_retail_scale_applies_the_same_factor_to_a_retained_foreign_leg(
+    built: dict[str, Any], generation: dict[str, Any]
+) -> None:
+    scaled = legs_by_row(reskin(built, generation, retain_foreign_pct=100, retail_scale=SCALE))
+    plain = legs_by_row(
+        reskin(built, generation, retain_foreign_pct=100, retail_scale={"enabled": False})
+    )
+    for key, leg in scaled.items():
+        if leg["currency"] == "INR":
+            continue
+        ratio = leg["amount_inr"] / plain[key]["amount_inr"]
+        assert abs(leg["amount"] - plain[key]["amount"] * ratio) <= Decimal("0.01")
+
+
+@pytest.mark.parametrize(
+    "bad", [{"pivot_inr": 0, "exponent": 0.5}, {"pivot_inr": 1, "exponent": 1.5}]
+)
+def test_invalid_retail_scale_fails(generation: dict[str, Any], bad: dict[str, Any]) -> None:
+    config = deep_merge(generation, {"fx": {"retail_scale": {"enabled": True, **bad}}})
+    with pytest.raises(ReskinError, match="retail_scale"):
+        ReskinConfig.from_config(config)
 
 
 def test_channels_and_cash_txn_types(built: dict[str, Any], generation: dict[str, Any]) -> None:
@@ -182,7 +232,7 @@ def test_desk_deposits_are_always_in_rupees(
     even when every other pair keeps its foreign currency."""
     config = deep_merge(
         generation,
-        {"fx": {"retain_foreign_pct": 100}},
+        {"fx": {"retain_foreign_pct": 100, "retail_scale": {"enabled": False}}},
     )
     fmt = next(
         r["payment_format"] for r in built["subgraph"].pairs.to_pylist() if r[SRC_ROW_NUMBER] == 1

@@ -165,6 +165,18 @@ fx:
   # A decimal-module rounding constant. Conversion is Decimal throughout: a
   # binary float would put sub-paise noise on the amounts the CTR rule compares.
   rounding_mode: ROUND_HALF_UP
+  # Retail scale. AMLworld is a corporate ledger: converted at the rates above,
+  # its median leg is under Rs 1 lakh but the tail reaches Rs 2,422 crore, and
+  # declared income, derived from inflow, followed it (median Rs 7.7 crore; the
+  # demo hero, a salaried scientist, Rs 1,960 crore). Above pivot_inr an amount
+  # becomes pivot * (amount / pivot) ** exponent: strictly increasing, so the
+  # ordering of amounts and every pattern's shape survive, while the tail lands
+  # in a retail / SME book (Rs 31 crore -> Rs 56 lakh). Injected structuring is
+  # unaffected: its amounts are CTR fractions resolved at load (D2).
+  retail_scale:
+    enabled: true
+    pivot_inr: 100000
+    exponent: 0.5
 
 # ---------------------------------------------------------------------------
 # Channel remapping: AMLworld payment formats -> Indian rails.
@@ -365,6 +377,15 @@ entities:
     # it is not a thin-slice rule. Applied to every party holding an illicit
     # leg (AMLworld-labelled or an injection host).
     illicit_cohort_under_declare_factor: 0.35
+    # Annualised ten-day turnover is not income: after fx.retail_scale the median
+    # still came out at Rs 2.8 crore a year (323 of 500 parties above Rs 1 crore).
+    # Above pivot_inr the derived figure is compressed, rank-preserving, before the
+    # illicit cohort's under-declaration, so the GAP-04 correlation with inflow and
+    # the planted mismatch both survive.
+    compress:
+      enabled: true
+      pivot_inr: 1000000
+      exponent: 0.35
 
   # -------------------------------------------------------------------------
   # GAP-05 -- shared device fingerprints must be co-located with existing fund
