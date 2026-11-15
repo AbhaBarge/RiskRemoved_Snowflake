@@ -115,6 +115,17 @@ def test_stages_are_declared_in_dependency_order() -> None:
     assert keys.index("bootstrap") < keys.index("ddl") < keys.index("dynamic_tables")
     assert keys.index("dynamic_tables") < keys.index("streams_tasks")
     assert keys.index("ddl") < keys.index("governance")
+    # Regression: the agent once deployed before the procedures it calls.
+    assert keys.index("procedures") < keys.index("agent")
+    assert keys.index("semantic") < keys.index("agent")
+
+
+def test_agent_has_no_attestation_tool(deployer: Deployer) -> None:
+    """Sign-off is a privilege of the officer role, never an agent tool."""
+    rendered = "\n".join(deployer.render(p) for p in deployer.stage_files("agent"))
+    ctx = deployer.settings.sql_context()
+    assert ctx["tool"]["attest_str"] not in rendered
+    assert ctx["tool"]["gather_evidence"] in rendered
 
 
 def test_unknown_stage_is_rejected(deployer: Deployer) -> None:

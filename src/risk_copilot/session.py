@@ -75,7 +75,9 @@ def _load_private_key(settings: Settings) -> bytes | None:
     try:
         private_key = serialization.load_pem_private_key(
             key_path.read_bytes(),
-            password=passphrase.encode() if passphrase else None,
+            # An empty value (a blank line in .env) means "unencrypted key":
+            # cryptography rejects any password, even b"", for such a key.
+            password=passphrase.encode("utf-8") if passphrase else None,
         )
     except (ValueError, TypeError) as exc:
         hint = (

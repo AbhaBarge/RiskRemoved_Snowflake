@@ -44,10 +44,12 @@ STAGE_ORDER: tuple[tuple[str, str], ...] = (
     ("policy", "05_policy"),
     ("search", "06_search"),
     ("semantic", "07_semantic"),
-    ("agent", "08_agent"),
     ("ml", "09_ml"),
     ("automations", "10_automations"),
     ("procedures", "procedures"),
+    # The agent's tool resources are the procedures and the semantic view, so
+    # it is created after both; the directory keeps its historical number.
+    ("agent", "08_agent"),
     # Grants on procedures and the semantic view, so after both.
     ("app_access", "11_app_access"),
 )
