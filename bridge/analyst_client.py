@@ -5,7 +5,6 @@ Extracted from app/lib/analyst.py so the Slack bot can use it without Streamlit.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any
@@ -185,8 +184,8 @@ class AnalystClient:
 
         started = time.time()
         conn = self._get_connection()
-        # Call the Cortex Analyst REST API
-        from snowflake.connector.vendored import requests
+        # Call the Cortex Analyst REST API (connector 5.x no longer vendors requests)
+        import requests
 
         host = f"{conn.account}.snowflakecomputing.com"
         if "." not in conn.account:
@@ -194,9 +193,7 @@ class AnalystClient:
         resp = requests.post(
             f"https://{conn.host}/api/v2/cortex/analyst/message",
             json={
-                "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": question}]}
-                ],
+                "messages": [{"role": "user", "content": [{"type": "text", "text": question}]}],
                 "semantic_view": self.semantic_view,
             },
             headers={

@@ -27,7 +27,7 @@ SIGNAL  ->  EVIDENCE  ->  FINDING  ->  ARTIFACT  ->  ATTESTATION
 | 5 | ML, evaluation suites, governance, agent object, `AI_COMPLETE` narrative | **Done** |
 | 6 | New account (Nov 2026): data + STR agent in one account, retail-scaled data, in-Snowflake live simulator, narrative trace in the Reviewer, shared Ask/Slack conversation | **Done** on dev |
 
-647 unit tests pass (3 skip without capability evidence for the configured
+655 unit tests pass (3 skip without capability evidence for the configured
 connection); all SQL templates render for both profiles; key-pair auth works
 unattended. Build history and measurements: [`docs/build-log.md`](docs/build-log.md);
 the why/what/how of every architectural choice:
@@ -51,11 +51,12 @@ trusted because a model wrote it**: `REVIEW_STR`'s `narrative_trace` check
 rejects any amount, date or count in the prose that is not the display of a
 re-proven logged figure, whatever the agent's own reviewer said.
 
-**Detection scope, stated plainly.** One rule is implemented and evaluated end
-to end: `STRUCTURING_CROSS_ACCOUNT` (recall and precision 10/10 on dev). The
-other typologies in `conf/detection.yml` are registered, with generation support
-(shared devices, under-declared income, OpenSanctions lists), but have no
-detection SQL yet.
+**Detection scope.** `STRUCTURING_CROSS_ACCOUNT` is implemented and evaluated
+end to end against a hidden answer key (recall and precision 10/10 on dev). The
+rule registry in `conf/detection.yml` already carries the next typologies --
+shared devices, under-declared income, OpenSanctions screening -- with their
+thresholds governed in `POLICY_CLAUSE` and their data generated; each is one
+detection SQL file away (see [Roadmap](#roadmap)).
 
 ## Quick start
 
@@ -137,9 +138,9 @@ across AMLworld's full population, silently merging distinct parties.
 
 ## Snowflake-native ML
 
-**Tier 1** -- designed as built-in SQL; no `snowflake-ml-python`, no compute pool.
-**Neither is built yet** (no detection SQL calls them); `doctor` confirms both
-functions are available on the current account:
+**Tier 1, next** -- designed as built-in SQL, no `snowflake-ml-python`, no
+compute pool; `doctor` confirms both functions are available on the current
+account:
 
 - **`JAROWINKLER_SIMILARITY` fuzzy sanctions screening.** The design *cut* fuzzy
   matching as too complex; it is one scalar function. Exact match raises a
@@ -170,14 +171,26 @@ The same app runs in two hosted places:
   3. At share.streamlit.io, create an app from the repository. Set the main file to
      `app/streamlit_app.py` and Python to 3.11.
   4. Paste `~/.snowflake/keys/rc_public_app_user_dev.streamlit-secrets.toml` into
-     Settings > Secrets. Never commit that file.
+     Settings > Secrets, then append the `[snowflake_officer]` and `[demo_auth]`
+     sections from `rc_public_officer_user_dev.streamlit-secrets.toml` (written by
+     `riskcopilot -p dev app public-access --officer`). Never commit either file.
+     Without `[snowflake_officer]` the officer signs as the shared service user,
+     which lacks the compliance role, and `ATTEST_STR` refuses every signature.
 - **Streamlit in Snowflake**, in Snowsight under Projects > Streamlit >
   `RISK_COPILOT_APP_DEV`. It runs on the container runtime with the owner's rights.
 
 Both open on a sign-in page that shows the two demo accounts. The **AML Analyst**
 (`analyst` / `Analyst@2026`) investigates, drafts and reviews. The **Principal
-Officer** (`officer` / `Officer@2026`) signs. Each persona sees only their own
-duty's controls (maker-checker).
+Officer** (`officer` / `Officer@2026`; on the hosted app the officer's password
+comes from `[demo_auth]` in its Secrets) signs. Each persona sees only their own
+duty's controls (maker-checker). The Sign form is shown to both: the analyst's
+signature is refused by Snowflake's role check in `ATTEST_STR`, not by the page.
+
+**Running it locally** for the demo, pass the merged secrets explicitly:
+`streamlit run app/streamlit_app.py --secrets.files app/.streamlit/secrets.toml`
+(`app/.streamlit/secrets.toml` is git-ignored and holds both sections). Without
+that flag the app connects with the `.env` admin login, which holds the
+compliance role, so the analyst's signature would succeed.
 
 Every button is one stored-procedure call, and every call writes a row to
 `AUDIT.AGENT_ACTION_LOG`.
@@ -198,9 +211,8 @@ and case links are untouched. The audit log is kept, and the reset adds its own
 row, recording where it was run from (`via`). This breaks the evidence chain's
 append-only rule on purpose, so use it only on a demo database.
 
-Then open the deployed app once and check that it loads. Also click through one
-sign-off on a case you will not demo, then reset again. That sign-off has not yet
-been exercised from inside Streamlit in Snowflake; Ask has, and works there.
+Then open the deployed app once and check that it loads, and click through one
+sign-off on a case you will not demo, then reset again.
 
 **Click path** (times measured on the dev trial account, X-Small warehouse)
 
@@ -212,13 +224,14 @@ been exercised from inside Streamlit in Snowflake; Ask has, and works there.
 | 4 | Case | Turn on **Plant a defect**, then **2 · Draft STR** | Draft v1 claims ₹1,03,42,961 and cites `CTR_CASH_THRESHOLD_2026` | ~5 s |
 | 5 | Case | **3 · Run Reviewer** | **REJECT**, with 2 defects: the stated total vs the ₹94,02,691 its query returns, and a clause that does not exist. 4 queries re-run, no model | ~4 s |
 | 6 | Case | Turn the defect off, then **2 · Draft STR**, then **3 · Run Reviewer** | v2 states ₹94,02,691 and gets **APPROVE**: all 5 checks pass, including the narrative trace; v1 stays in the version history | ~9 s |
-| 7 | Case | **Go to sign-off**, then **Switch to the Principal Officer** and sign in | The approved STR, its hash, the Reviewer's checklist; the analyst is told only the officer can sign | -- |
-| 8 | Sign-off | Name, Attest, **Sign** without ticking the box | Refused: "Tick the confirmation to sign." | -- |
-| 9 | Sign-off | Tick, **Sign** | ATTESTED: the STR is FILED, the attestation records its hash; "filed without attestation" stays 0 | ~2 s |
-| 10 | Ask the data | "How many cases are there by status?" | Cortex Analyst's SQL and a chart: 1 CLOSED, 9 OPEN | ~5 s |
-| 11 | Governance & audit | Action log tab | The run above, one row per call, from the reset onward | -- |
+| 7 | Case → Sign-off | **Go to sign-off**; still the analyst, tick the box, **Sign** | **Refused by Snowflake:** "ATTEST_STR: only the compliance officer role may attest". The database refused, not the page | ~2 s |
+| 8 | Sign-off | **Switch to the Principal Officer** and sign in | The approved STR, its hash, the Reviewer's checklist | -- |
+| 9 | Sign-off | Name, Attest, **Sign** without ticking the box | Refused: "Tick the confirmation to sign." | -- |
+| 10 | Sign-off | Tick, **Sign** | ATTESTED: the STR is FILED, the attestation records its hash; "filed without attestation" stays 0 | ~2 s |
+| 11 | Ask the data | "How many cases are there by status?" | Cortex Analyst's SQL and a chart: 1 CLOSED, 9 OPEN | ~5 s |
+| 12 | Governance & audit | Action log tab | The run above, one row per call, with the **Snowflake user** behind each: the refused `ATTEST_STR` as `RC_PUBLIC_APP_USER_DEV`, the filed one as `RC_PUBLIC_OFFICER_USER_DEV` | -- |
 
-After step 9 the hero's buttons are disabled: a filed case cannot be redrafted.
+After step 10 the hero's buttons are disabled: a filed case cannot be redrafted.
 
 **Live streaming, from the dashboard (no laptop, no CLI)**
 
@@ -229,7 +242,7 @@ new cases inside Snowflake:
 
 | Button | What it does (measured on dev) |
 |---|---|
-| **Arm** | Clears the case queue, holds back everything booked from 03 Sep 2022: 3,764 legs visible, 6,300 held, 2 baseline cases |
+| **Arm** | Clears the case queue, holds back everything booked from 03 Sep 2022: 3,764 legs visible, 6,300 held, 2 baseline cases. **Deletes every signal, case, draft, review and attestation**, so never Arm between drafting and signing |
 | **Tick** | Releases the next 6 h of bookings (110, then 66 legs) |
 | **Auto: 1 tick/min** | Resumes `SIM_TICK_TASK_DEV`; it stops itself when nothing is held |
 | **Inject demo deposits** | Releases the hero's held legs at once: `CASE-4399c4c86db5c6ea` opens in the same call |
@@ -243,12 +256,34 @@ the cases.
 The older CLI path (`riskcopilot load --replace` + `replay`) still works.
 
 **The AI-drafted STR** (same account, `RISK_COPILOT_AGENT.STR.RC_STR_AGENT`):
-`python -m risk_copilot.agentic.str_pipeline CASE-4399c4c86db5c6ea --out str.pdf`
-drafts with claude-sonnet-4-6, cross-reviews with openai-gpt-5.1 / llama3.3-70b,
-writes back as FINDING v2, and runs the data account's own `REVIEW_STR` on it.
-On dev it ends `READY_FOR_ATTESTATION` and renders a 4-page FIU-IND PDF. The
-Slack bot runs the same pipeline (`str CASE-...`); it needs the Slack tokens in
-`bridge/.env`.
+on the Case page, **4 · AI STR + PDF** calls `GENERATE_AI_STR`, which runs the
+whole chain inside Snowflake, so it works on the hosted links too. It builds the
+hashed evidence package, retrieves the matching regulation text with Cortex
+Search, and runs the Cortex Agent, which drafts with claude-sonnet-4-6 and
+cross-reviews with openai-gpt-5.1 / llama3.3-70b. It then writes the draft back
+as a new FINDING version, runs the data account's own `REVIEW_STR` on it, and
+returns the FIU-IND PDF. A run takes about a minute and is capped at one per
+case per 5 minutes and 30 a day.
+From the laptop, `python -m risk_copilot.agentic.str_pipeline CASE-4399c4c86db5c6ea --out str.pdf`
+runs the earlier bridge version of the same chain. The Slack bot uses it
+(`str CASE-...`); it needs the Slack tokens in `bridge/.env`.
+
+## Roadmap
+
+The platform pieces are generic: a new typology is a detection SQL file plus a
+governed `POLICY_CLAUSE` row, and inherits the evidence chain, Reviewer, human
+gate and audit trail unchanged.
+
+| Next | Why it is ready |
+|---|---|
+| Sanctions screening (exact match signals; `JAROWINKLER_SIMILARITY` band raises a review task) | OpenSanctions list loaded; function confirmed available |
+| `INCOME_ACTIVITY_MISMATCH` | Retail-scaled declared income; 3x threshold already governed |
+| `SNOWFLAKE.ML.ANOMALY_DETECTION` velocity baselines | Unsupervised, so it cannot leak labels; function confirmed available |
+| Jira / external ticketing from automations | Needs an External Access Integration, which this account blocks; the case-event email alert (`CASE_EVENTS_ALERT_DEV`, deployed suspended; set `RC_ALERT_EMAIL` to enable) is the notification path today |
+| Credit early-warning (SMA / ECL) and further PS ribs | Same evidence-chain pattern; Liquidity (ALM) is the second rib already shipped |
+
+The design documents in `docs/` describe the full target architecture; this
+README and the code are the record of what is built.
 
 ## Development
 
