@@ -326,6 +326,29 @@ def test_routing(routing, kind, str_thread, about_draft, backend, ok, expected) 
     assert got == expected
 
 
+@pytest.mark.parametrize(
+    ("explicit_agent", "has_package", "use_investigator", "expected"),
+    [
+        # "explain CASE-..." for a case with no STR drafted yet: the STR agent has no
+        # package to read, so the investigator (case lookup + Analyst) answers.
+        (False, False, True, "investigator"),
+        # A drafted case keeps main's route: the STR agent reads its package.
+        (False, True, True, "agent"),
+        # "agent ..." is an explicit request for the STR agent.
+        (True, False, True, "agent"),
+        # No investigator (ASK_BACKEND=analyst or not configured): main's route.
+        (False, False, False, "agent"),
+    ],
+)
+def test_case_questions_without_a_package_go_to_the_investigator(  # type: ignore[no-untyped-def]
+    routing, explicit_agent, has_package, use_investigator, expected
+) -> None:
+    got = routing.case_question_target(
+        explicit_agent=explicit_agent, has_package=has_package, use_investigator=use_investigator
+    )
+    assert got == expected
+
+
 def test_markdown_becomes_slack_mrkdwn(routing) -> None:  # type: ignore[no-untyped-def]
     assert routing.to_slack_mrkdwn("**Total:** Rs 5\n## Grounds") == "*Total:* Rs 5\n*Grounds*"
     assert routing.to_slack_mrkdwn("[docs](https://example.com)") == "<https://example.com|docs>"

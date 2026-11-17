@@ -45,6 +45,19 @@ def decide(
     return "analyst"
 
 
+def case_question_target(*, explicit_agent: bool, has_package: bool, use_investigator: bool) -> str:
+    """Who answers a case question that _route sent to the STR agent ("explain CASE-...").
+
+    RC_STR_AGENT reads evidence packages only, and a case has one only once an
+    STR has been drafted for it. Without a package the investigator answers: its
+    case-context tool and Cortex Analyst cover every case. An explicit "agent ..."
+    prefix, an existing package, or no investigator keeps main's STR-agent route.
+    """
+    if explicit_agent or has_package or not use_investigator:
+        return "agent"
+    return "investigator"
+
+
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _HEADING = re.compile(r"^#{1,6}\s*(.+)$", re.M)
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")

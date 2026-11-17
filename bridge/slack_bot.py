@@ -41,7 +41,7 @@ load_dotenv(HERE / ".env")  # reads .env file
 sys.path.insert(0, str(HERE.parent / "src"))  # the shared risk_copilot.agentic package
 
 from analyst_client import AnalystClient  # noqa: E402
-from ask_routing import decide, investigator_blocks  # noqa: E402
+from ask_routing import case_question_target, decide, investigator_blocks  # noqa: E402
 
 from risk_copilot.agentic.agent_client import (  # noqa: E402
     create_investigator_thread,
@@ -56,6 +56,7 @@ from risk_copilot.agentic.connections import (  # noqa: E402
 from risk_copilot.agentic.str_pipeline import (  # noqa: E402
     ask_agent,
     generate_ai_str,
+    latest_package,
     latest_report,
 )
 
@@ -614,6 +615,28 @@ def _run_investigator(
     )
 
 
+def _run_case_question(
+    channel: str, thread_ts: str, question: str, case_id: str, user: str, say_ts: str
+) -> None:
+    """A case question outside an STR thread: the STR agent if the case has an
+    evidence package, else the investigator (see ask_routing.case_question_target)."""
+    try:
+        has_package = latest_package(case_id) is not None
+    except Exception:  # agent account unreachable: the investigator can still answer
+        log.warning("latest_package failed for %s", case_id, exc_info=True)
+        has_package = False
+    target = case_question_target(
+        explicit_agent=False,
+        has_package=has_package,
+        use_investigator=ASK_BACKEND == "agent" and _INVESTIGATOR_OK,
+    )
+    log.info("Case question for %s -> %s (package: %s)", case_id, target, has_package)
+    if target == "agent":
+        _run_agent(channel, thread_ts, question, case_id)
+    else:
+        _run_investigator(channel, thread_ts, question, case_id, say_ts, user)
+
+
 def _dispatch(channel: str, thread_ts: str, question: str, user: str, in_thread: bool, say) -> None:
     kind, case_id = _route(question)
     with _threads_lock:
@@ -634,6 +657,13 @@ def _dispatch(channel: str, thread_ts: str, question: str, user: str, in_thread:
         _workers.submit(_guard, _run_pdf, channel, thread_ts, case_id, user)
     elif target == "str":
         _workers.submit(_guard, _run_str, channel, thread_ts, case_id, user)
+    elif target == "agent" and case_id and not str_ctx and not _AGENT_RE.match(question) and (
+        ASK_BACKEND == "agent" and _INVESTIGATOR_OK
+    ):
+        thinking = say(text=":mag: Looking into it...", thread_ts=thread_ts)
+        _workers.submit(
+            _guard, _run_case_question, channel, thread_ts, question, case_id, user, thinking["ts"]
+        )
     elif target == "agent":
         _workers.submit(
             _guard, _run_agent, channel, thread_ts, _AGENT_RE.sub("", question), case_id
