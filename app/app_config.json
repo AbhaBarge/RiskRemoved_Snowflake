@@ -1,4 +1,8 @@
 {
+  "agent": {
+    "ask_backend": "agent",
+    "investigator": "RISK_COPILOT_DEV.EVIDENCE_CHAIN.RC_INVESTIGATOR_AGENT_DEV"
+  },
   "database": "RISK_COPILOT_DEV",
   "dt": {
     "dim_party": "RISK_COPILOT_DEV.CURATED.DT_DIM_PARTY_DEV",

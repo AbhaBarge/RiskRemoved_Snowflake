@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -161,10 +162,15 @@ class AnalystClient:
             from cryptography.hazmat.primitives import serialization
 
             passphrase = os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
-            with open(key_path, "rb") as f:
+            path = Path(key_path)
+            if not path.exists() and not path.is_absolute():
+                path = Path(__file__).resolve().parent / path  # relative to bridge/, like .env
+            raw = path.read_bytes()
+            try:  # the passphrase is only for an encrypted key; a stale one must not break it
+                key = serialization.load_pem_private_key(raw, password=None)
+            except TypeError:
                 key = serialization.load_pem_private_key(
-                    f.read(),
-                    password=passphrase.encode() if passphrase else None,
+                    raw, password=passphrase.encode() if passphrase else None
                 )
             params["private_key"] = key.private_bytes(
                 serialization.Encoding.DER,
@@ -176,11 +182,15 @@ class AnalystClient:
         self._conn = snowflake.connector.connect(**params)
         return self._conn
 
-    def ask(self, question: str) -> dict[str, Any]:
-        """Ask a question. Returns {text, sql, rows, latency_ms, demo}."""
+    def ask(self, question: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Ask a question. Returns {text, sql, rows, latency_ms, demo, message}.
+
+        `history` is the earlier turns in Analyst's message format (user turns and
+        the analyst messages returned for them), so a follow-up keeps its context.
+        """
         if self.demo_mode:
             resp = _match_demo(question)
-            return {**resp, "latency_ms": 42, "demo": True}
+            return {**resp, "latency_ms": 42, "demo": True, "message": None}
 
         started = time.time()
         conn = self._get_connection()
@@ -193,7 +203,10 @@ class AnalystClient:
         resp = requests.post(
             f"https://{conn.host}/api/v2/cortex/analyst/message",
             json={
-                "messages": [{"role": "user", "content": [{"type": "text", "text": question}]}],
+                "messages": [
+                    *(history or []),
+                    {"role": "user", "content": [{"type": "text", "text": question}]},
+                ],
                 "semantic_view": self.semantic_view,
             },
             headers={
@@ -211,6 +224,7 @@ class AnalystClient:
                 "rows": [],
                 "latency_ms": latency,
                 "demo": False,
+                "message": None,
             }
 
         body = resp.json()
@@ -240,4 +254,5 @@ class AnalystClient:
             "rows": rows,
             "latency_ms": latency,
             "demo": False,
+            "message": body.get("message"),
         }

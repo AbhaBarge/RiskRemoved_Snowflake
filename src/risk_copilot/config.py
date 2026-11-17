@@ -610,8 +610,20 @@ class CortexObjects(_Frozen):
     #: Printed on the STR PDF.
     reporting_bank: str = "Demo Bank Ltd."
     principal_officer: str = "Rajesh Menon"
+    #: The conversational agent over the semantic view (sql/12_investigator) and its
+    #: read-only case-context tool. Suffixed per profile; separate from `agent`, so
+    #: deploying one never replaces the other.
+    investigator_agent: str = "RC_INVESTIGATOR_AGENT"
+    investigator_context_proc: str = "GET_CASE_CONTEXT"
 
-    @field_validator("search_service", "search_source_table", "semantic_view", "agent")
+    @field_validator(
+        "search_service",
+        "search_source_table",
+        "semantic_view",
+        "agent",
+        "investigator_agent",
+        "investigator_context_proc",
+    )
     @classmethod
     def _identifier(cls, v: str) -> str:
         return validate_identifier(v, what="Cortex object name")
@@ -650,6 +662,16 @@ class AppSpec(_Frozen):
     public_user: str = ""
     #: Service user the hosted app signs STRs as (roles.public_officer); empty for none.
     public_officer_user: str = ""
+    #: Who answers the Ask page: "agent" (the investigator agent, with direct
+    #: Cortex Analyst as fallback) or "analyst" (direct Cortex Analyst only).
+    ask_backend: str = "agent"
+
+    @field_validator("ask_backend")
+    @classmethod
+    def _ask_backend(cls, v: str) -> str:
+        if v not in ("agent", "analyst"):
+            raise ConfigError(f"app.ask_backend must be 'agent' or 'analyst', got {v!r}")
+        return v
 
     @field_validator("name", "stage")
     @classmethod
@@ -1105,6 +1127,8 @@ class Settings(BaseModel):
                 "search_target_lag": self.cortex.search_target_lag,
                 "semantic_view": self.obj(self.cortex.semantic_view),
                 "agent": self.obj(self.cortex.agent),
+                "investigator_agent": self.obj(self.cortex.investigator_agent),
+                "investigator_context_proc": self.obj(self.cortex.investigator_context_proc),
                 "agent_schema_fq": (
                     f"{self.cortex.agent_database}.{self.cortex.agent_schema}"
                     if self.cortex.agent_database and self.cortex.agent_schema

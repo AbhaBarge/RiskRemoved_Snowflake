@@ -7,9 +7,13 @@ Connects to Slack in Socket Mode (no public URL needed).
                                      cross-family review) in the agent account ->
                                      write-back + REVIEW_STR -> PDF in the thread
     @RiskCopilot agent <question>    ask the STR agent directly
-    (reply in an STR thread)         follow-up questions go to the agent, with the
-                                     case's evidence package as context
-    @RiskCopilot <question>          Cortex Analyst over the semantic view (data account)
+    (reply in an STR thread)         questions about the draft (reviewer, defects,
+                                     grounds) go to the STR agent; data questions go
+                                     to the investigator with the thread's case
+    @RiskCopilot <question>          the investigator agent (data account): keeps the
+                                     Slack thread's context, looks cases up and asks
+                                     Cortex Analyst; direct Cortex Analyst is the
+                                     fallback, or the default with ASK_BACKEND=analyst
 
 Usage:
     pip install -r requirements.txt
@@ -37,9 +41,18 @@ load_dotenv(HERE / ".env")  # reads .env file
 sys.path.insert(0, str(HERE.parent / "src"))  # the shared risk_copilot.agentic package
 
 from analyst_client import AnalystClient  # noqa: E402
+from ask_routing import decide, investigator_blocks  # noqa: E402
 
-from risk_copilot.agentic.agent_client import create_thread  # noqa: E402
+from risk_copilot.agentic.agent_client import (  # noqa: E402
+    create_investigator_thread,
+    create_thread,
+    run_investigator,
+)
 from risk_copilot.agentic.chat_log import record_turn  # noqa: E402
+from risk_copilot.agentic.connections import (  # noqa: E402
+    investigator_configured,
+    investigator_target,
+)
 from risk_copilot.agentic.str_pipeline import (  # noqa: E402
     ask_agent,
     generate_ai_str,
@@ -59,12 +72,22 @@ app = App(
 
 analyst = AnalystClient()
 
+# 'agent' (default): data questions go to the investigator agent, with direct
+# Cortex Analyst as the fallback. 'analyst': the direct-Analyst path only.
+ASK_BACKEND = os.getenv("ASK_BACKEND", "agent").strip().lower()
+_INVESTIGATOR_OK = not analyst.demo_mode and investigator_configured()
+
 # STR runs take minutes; Bolt must stay free to ack other events meanwhile.
 _workers = ThreadPoolExecutor(max_workers=int(os.getenv("BOT_WORKERS", "4")))
 
 # Slack thread ts -> STR context, so replies in the thread reach the agent.
 _threads: dict[str, dict] = {}
 _threads_lock = threading.Lock()
+
+# Slack thread ts -> "Ask the data" memory: the investigator's thread in the data
+# account, its last assistant message id, the last case named in the thread, and
+# the direct-Analyst history used by the fallback.
+_ask: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
 # Strip the @mention tag from the message to get the actual question
@@ -478,14 +501,25 @@ def _run_analyst(
     question: str,
     update_ts: str | None = None,
     user: str = "unknown",
+    note: str | None = None,
 ) -> None:
-    result = analyst.ask(question)
+    with _threads_lock:
+        history = list((_ask.get(thread_ts or "") or {}).get("analyst_history") or [])
+    result = analyst.ask(question, history=history)
     log.info(
         "Answer: %s (%dms, demo=%s)",
         result.get("text", "")[:80],
         result.get("latency_ms", 0),
         result.get("demo"),
     )
+    if thread_ts and result.get("message") and not result.get("error"):
+        with _threads_lock:
+            _ask.setdefault(thread_ts, {}).setdefault("analyst_history", []).extend(
+                [
+                    {"role": "user", "content": [{"type": "text", "text": question}]},
+                    result["message"],
+                ]
+            )
     if not result.get("demo"):  # canned demo answers are not part of the shared record
         record_turn(
             question,
@@ -497,6 +531,8 @@ def _run_analyst(
             rows=len(result.get("rows") or []),
             latency_ms=result.get("latency_ms"),
         )
+    if note:
+        result = {**result, "text": f"{note}\n\n{result.get('text', '')}"}
     blocks = _format_blocks(question, result)
     try:
         if update_ts:
@@ -512,17 +548,107 @@ def _run_analyst(
     )
 
 
+def _run_investigator(
+    channel: str,
+    thread_ts: str,
+    question: str,
+    case_id: str | None,
+    update_ts: str | None = None,
+    user: str = "unknown",
+) -> None:
+    """A data question to the investigator, in the Slack thread's agent thread."""
+    with _threads_lock:
+        ctx = _ask.setdefault(thread_ts, {})
+        inv_thread, parent = ctx.get("inv_thread"), ctx.get("inv_parent", 0)
+    if inv_thread is None:
+        inv_thread = create_investigator_thread()
+        with _threads_lock:
+            _ask[thread_ts]["inv_thread"], parent = inv_thread, 0
+    r = run_investigator(
+        question, thread_id=inv_thread, parent_message_id=parent, case_id=case_id
+    )
+    if r.error and not r.text:
+        log.warning("Investigator failed, falling back to direct Analyst: %s", r.error)
+        _run_analyst(
+            channel,
+            thread_ts,
+            question,
+            update_ts,
+            user,
+            note="_The investigator agent is unavailable; answered by Cortex Analyst without "
+            "conversation context._",
+        )
+        return
+    if r.assistant_message_id is not None:
+        with _threads_lock:
+            _ask[thread_ts]["inv_parent"] = r.assistant_message_id
+    log.info(
+        "Investigator: %s (%dms, tools=%s)",
+        r.text[:80],
+        r.latency_ms,
+        [c.get("name") for c in r.tool_calls],
+    )
+    queries = r.analyst_queries
+    record_turn(
+        question,
+        r.text or r.error or "",
+        kind="ERROR" if r.error else "AGENT",
+        author=f"slack:{user}",
+        thread_ref=thread_ts,
+        sql=queries[-1]["sql"] if queries else None,
+        rows=len(queries[-1]["rows"]) if queries else None,
+        case_id=case_id,
+        latency_ms=r.latency_ms,
+    )
+    blocks = investigator_blocks(r, agent_name=investigator_target().agent)
+    if update_ts:
+        try:
+            app.client.chat_update(
+                channel=channel, ts=update_ts, text=r.text[:3000], blocks=blocks
+            )
+            return
+        except Exception:  # e.g. missing chat:write on the edit: post a new message
+            log.warning("chat_update failed; posting the answer instead", exc_info=True)
+    app.client.chat_postMessage(
+        channel=channel, thread_ts=thread_ts, text=r.text[:3000], blocks=blocks
+    )
+
+
 def _dispatch(channel: str, thread_ts: str, question: str, user: str, in_thread: bool, say) -> None:
     kind, case_id = _route(question)
     with _threads_lock:
-        str_thread = in_thread and thread_ts in _threads
-    if kind == "pdf":
+        str_ctx = dict(_threads.get(thread_ts) or {}) if in_thread else {}
+        if case_id:  # the last case named in this Slack thread anchors later follow-ups
+            _ask.setdefault(thread_ts, {})["case_id"] = case_id
+        thread_case = (
+            case_id or str_ctx.get("case_id") or (_ask.get(thread_ts) or {}).get("case_id")
+        )
+    target = decide(
+        kind,
+        str_thread=bool(str_ctx),
+        about_draft=bool(_ASK_RE.search(question)),
+        backend=ASK_BACKEND,
+        investigator_ok=_INVESTIGATOR_OK,
+    )
+    if target == "pdf":
         _workers.submit(_guard, _run_pdf, channel, thread_ts, case_id, user)
-    elif kind == "str":
+    elif target == "str":
         _workers.submit(_guard, _run_str, channel, thread_ts, case_id, user)
-    elif kind == "agent" or str_thread:
+    elif target == "agent":
         _workers.submit(
             _guard, _run_agent, channel, thread_ts, _AGENT_RE.sub("", question), case_id
+        )
+    elif target == "investigator":
+        thinking = say(text=":mag: Looking into it...", thread_ts=thread_ts)
+        _workers.submit(
+            _guard,
+            _run_investigator,
+            channel,
+            thread_ts,
+            question,
+            thread_case,
+            thinking["ts"],
+            user,
         )
     else:
         thinking = say(text=":hourglass_flowing_sand: Querying the data...", thread_ts=thread_ts)
@@ -543,8 +669,10 @@ _HELP = (
     "- `str CASE-ca1079bca1c29184` -- a fresh AI STR draft + PDF (drafted and cross-reviewed by the STR agent)\n"
     "- `why is CASE-63708232dec1c0d6 suspicious?` -- the STR agent explains a case from its evidence\n"
     "- `agent which FIU-IND codes fit structuring?` -- ask the STR agent anything\n"
-    "- `Which branch has the most cash deposits?` -- Cortex Analyst over the data\n"
-    "Reply inside an STR thread to ask the agent about that case."
+    "- `Which branch has the most cash deposits?` -- the investigator agent over the data\n"
+    'Reply in the same thread to follow up ("and how much of that was cash?"): the '
+    "investigator remembers the conversation and the case it is about. Inside an STR "
+    "thread, questions about the draft go to the STR agent."
 )
 
 
@@ -620,6 +748,12 @@ if __name__ == "__main__":
     mode = "DEMO" if analyst.demo_mode else "LIVE"
     log.info("Starting Risk Copilot Slack bot (%s mode)...", mode)
     log.info("Semantic view: %s", analyst.semantic_view)
+    log.info(
+        "Ask backend: %s (investigator %s: %s)",
+        ASK_BACKEND,
+        "ready" if _INVESTIGATOR_OK else "unavailable",
+        investigator_target().agent_fq,
+    )
     log.info(
         "STR agent: %s in %s",
         os.getenv("AGENT_NAME", "RC_STR_AGENT"),
