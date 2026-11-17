@@ -29,7 +29,9 @@ ui.page_header(
     glyph="forum",
     eyebrow="Natural-language analytics",
     meta=[
-        ui.pill("Investigator agent" if AGENT else "Cortex Analyst", "violet", glyph="auto_awesome"),
+        ui.pill(
+            "Investigator agent" if AGENT else "Cortex Analyst", "violet", glyph="auto_awesome"
+        ),
         ui.pill(CFG["semantic_view"].split(".")[-1], "slate", glyph="schema"),
     ],
 )
@@ -139,13 +141,15 @@ if question:
     st.session_state["ask_turns"].append(turn)
     frames = turn.get("frames") or []
     user = auth.current()
+    # The kind rides in the result, not a keyword: a running app may still hold
+    # an older lib.chat in memory after a git pull, and must not raise on it.
+    turn["answer_kind"] = "AGENT" if turn.get("backend") == "agent" else "ANALYST"
     chat.record(
         question,
         turn,
         author=f"app:{user['username']}" if user else "app",
         thread_ref=st.session_state.setdefault("ask_thread", f"APP-{id(st.session_state):x}"),
         rows=len(frames[-1][1]) if frames else None,
-        kind="AGENT" if turn.get("backend") == "agent" else "ANALYST",
     )
 
 if not st.session_state["ask_turns"]:

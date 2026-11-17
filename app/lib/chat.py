@@ -26,12 +26,11 @@ def record(
     author: str,
     thread_ref: str | None,
     rows: int | None = None,
-    kind: str = "ANALYST",
 ) -> None:
     """Append one app turn. Values are bound; nothing the user typed reaches the SQL text.
 
-    `kind` is the answer_kind of a successful turn: ANALYST, or AGENT for the
-    investigator. A turn with an error is recorded as ERROR either way.
+    The answer_kind of a successful turn is result["answer_kind"] (AGENT for the
+    investigator), ANALYST when absent. A turn with an error is recorded as ERROR.
     """
     with contextlib.suppress(Exception):
         run(
@@ -49,7 +48,7 @@ def record(
                     author,
                     question,
                     result.get("error") or result.get("text") or "",
-                    "ERROR" if result.get("error") else kind,
+                    "ERROR" if result.get("error") else result.get("answer_kind") or "ANALYST",
                     result.get("sql"),
                     rows,
                     result.get("latency_ms"),
