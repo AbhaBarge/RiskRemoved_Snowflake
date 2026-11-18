@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import snowflake.connector
 from cryptography.hazmat.primitives import serialization
@@ -63,6 +64,27 @@ class AgentTarget:
         return f"{self.schema_fq}.{self.agent}"
 
 
+@dataclass(frozen=True)
+class AgentEndpoint:
+    """Where an agent:run goes, and the key-pair identity that calls it.
+
+    The investigator lives next to the data, not in the agent account, so a call
+    to it names its endpoint. Calls without one keep the STR agent's defaults.
+    """
+
+    account: str
+    user: str
+    key_var: str
+    passphrase_var: str
+    target: AgentTarget
+    key_default: str | None = None
+    role: str | None = None  # sent as X-Snowflake-Role; None = the user's default role
+
+    @property
+    def cache_key(self) -> str:
+        return f"{self.account.upper()}|{self.user.upper()}"
+
+
 def _ident(var: str, default: str) -> str:
     """An object name from the environment, validated: these are interpolated into SQL."""
     return validate_identifier(os.getenv(var, default), what=var)
@@ -95,10 +117,54 @@ def agent_configured() -> bool:
     return _key_path("AGENT_PRIVATE_KEY_PATH", "keys/rc_agent_svc.p8").exists()
 
 
+def investigator_target() -> AgentTarget:
+    """The investigator agent (sql/12_investigator), next to the data it queries."""
+    t = data_target()
+    return AgentTarget(
+        database=t.database,
+        schema=_ident("INVESTIGATOR_AGENT_SCHEMA", "EVIDENCE_CHAIN"),
+        agent=_ident("INVESTIGATOR_AGENT_NAME", f"RC_INVESTIGATOR_AGENT{t.suffix}"),
+    )
+
+
+def investigator_endpoint() -> AgentEndpoint:
+    """The investigator, called with the data account's key pair and role."""
+    return AgentEndpoint(
+        account=os.environ["SNOWFLAKE_ACCOUNT"],
+        user=os.environ["SNOWFLAKE_USER"],
+        key_var="SNOWFLAKE_PRIVATE_KEY_PATH",
+        passphrase_var="SNOWFLAKE_PRIVATE_KEY_PASSPHRASE",  # noqa: S106 - an env var name
+        target=investigator_target(),
+        role=os.getenv("SNOWFLAKE_ROLE") or None,
+    )
+
+
+def investigator_configured() -> bool:
+    """True when the data account's key pair is available to call the investigator."""
+    if not (os.getenv("SNOWFLAKE_ACCOUNT") and os.getenv("SNOWFLAKE_USER")):
+        return False
+    raw = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+    return bool(raw) and _key_path("SNOWFLAKE_PRIVATE_KEY_PATH").is_file()
+
+
 def _key_path(var: str, default: str | None = None) -> Path:
     raw = os.getenv(var, default or "")
     path = Path(raw)
     return path if path.is_absolute() else _BASE / path
+
+
+def load_private_key(var: str, passphrase_var: str, default: str | None = None) -> Any:
+    """The private key object at the path in `var`, for the investigator's JWT.
+
+    The passphrase is used only if the key is encrypted: a stale passphrase left
+    in .env next to an unencrypted key must not make loading fail.
+    """
+    raw = _key_path(var, default).read_bytes()
+    try:
+        return serialization.load_pem_private_key(raw, password=None)
+    except TypeError:  # encrypted: the passphrase is required
+        passphrase = os.getenv(passphrase_var) or ""
+        return serialization.load_pem_private_key(raw, password=passphrase.encode())
 
 
 def _private_key(var: str, passphrase_var: str, default: str | None = None) -> bytes:

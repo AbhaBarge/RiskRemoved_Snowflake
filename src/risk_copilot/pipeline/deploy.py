@@ -52,6 +52,9 @@ STAGE_ORDER: tuple[tuple[str, str], ...] = (
     ("agent", "08_agent"),
     # Grants on procedures and the semantic view, so after both.
     ("app_access", "11_app_access"),
+    # The conversational agent over the semantic view. A stage of its own, so it
+    # deploys without re-running any other stage's CREATE OR REPLACE.
+    ("investigator", "12_investigator"),
 )
 
 #: Queries run by ``riskcopilot verify``, rendered like stage files but never

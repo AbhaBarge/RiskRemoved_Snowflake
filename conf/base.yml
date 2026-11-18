@@ -193,6 +193,10 @@ app:
   # switches to only while the Principal Officer is signed in, so the database
   # (not the sign-in page) stops anyone else signing an STR.
   public_officer_user: RC_PUBLIC_OFFICER_USER
+  # Who answers the Ask page: `agent` (cortex.investigator_agent, which keeps the
+  # conversation's context; direct Cortex Analyst is its fallback) or `analyst`
+  # (direct Cortex Analyst only -- the rollback switch).
+  ask_backend: agent
 
 cortex:
   search_service: REGULATORY_SEARCH_SVC
@@ -212,3 +216,8 @@ cortex:
   ai_str_daily_runs: 30
   reporting_bank: Demo Bank Ltd.
   principal_officer: Rajesh Menon
+  # Conversational agent for "Ask the data" (Slack + app): keeps thread context,
+  # resolves case references with a read-only tool, and asks Cortex Analyst.
+  # Its own stage (sql/12_investigator), suffixed per profile like the data.
+  investigator_agent: RC_INVESTIGATOR_AGENT
+  investigator_context_proc: GET_CASE_CONTEXT

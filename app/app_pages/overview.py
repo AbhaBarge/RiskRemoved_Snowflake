@@ -211,7 +211,6 @@ def _kpi_row() -> None:
         pending = pending[pending["branch_region"].isin(F.regions)]
     due_s = float(pending["hours_left"].min()) * 3600 if not pending.empty else None
     k = data.kpis()
-    ev = data.latest_detection_eval()
     breaches = data.filing_integrity()
 
     value, unit = ui.rupees(inflows["amount_inr"].sum() if not inflows.empty else 0)
@@ -289,15 +288,6 @@ def _kpi_row() -> None:
                 glyph="task_alt",
                 tone="emerald",
             ),
-            ui.Kpi(
-                "Detection recall",
-                f"{ev['recall']:.0%}" if ev else "-",
-                note=f"precision {ev['precision']:.0%}" if ev else "no verify run yet",
-                delta=f"{ev['tp']}/{ev['expected']} caught" if ev else "",
-                state="good" if ev and ev["tp"] == ev["expected"] else "warn",
-                glyph="radar",
-                tone="cyan",
-            ),
         ]
     )
 
@@ -306,7 +296,6 @@ def _console(live_mode: bool) -> None:
     t = insights.telemetry()
     ing = insights.ingest_series()
     log = insights.audit_all(limit=60)
-    ev = data.latest_detection_eval()
     ctl = insights.eval_latest()
     breaches = data.filing_integrity()
     actions = int(t["actions"] or 0)
@@ -359,21 +348,6 @@ def _console(live_mode: bool) -> None:
         ),
     ]
     gauges = []
-    if ev:
-        gauges += [
-            (
-                "Recall",
-                float(ev["recall"]),
-                f"{ev['recall']:.0%}",
-                f"{ev['tp']}/{ev['expected']} planted",
-            ),
-            (
-                "Precision",
-                float(ev["precision"]),
-                f"{ev['precision']:.0%}",
-                f"{ev['predicted']} raised",
-            ),
-        ]
     gauges.append(
         (
             "Filing integrity",

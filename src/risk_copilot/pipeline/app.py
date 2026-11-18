@@ -111,6 +111,10 @@ def app_config(settings: Settings) -> dict[str, Any]:
         },
         "role": {"compliance_officer": settings.obj(settings.roles.compliance_officer)},
         "semantic_view": settings.fq("curated", settings.cortex.semantic_view),
+        "agent": {
+            "investigator": settings.fq("evidence", settings.cortex.investigator_agent),
+            "ask_backend": settings.app.ask_backend,
+        },
         "hero": _hero(settings),
     }
 

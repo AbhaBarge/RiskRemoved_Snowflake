@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import time
 from typing import Any
 
@@ -67,8 +68,18 @@ def ask(question: str, history: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def log_turn(question: str, result: dict[str, Any]) -> None:
-    """Audit row for one question. Best effort: a logging failure must not hide the answer."""
+def log_turn(
+    question: str,
+    result: dict[str, Any],
+    *,
+    tools: list[str] | None = None,
+    model_version: str = "CORTEX_ANALYST",
+) -> None:
+    """Audit row for one question. Best effort: a logging failure must not hide the answer.
+
+    `tools` and `model_version` default to direct Cortex Analyst; the investigator
+    path passes the tools it called and the agent's model.
+    """
     sql = result.get("sql")
     with contextlib.suppress(Exception):
         run(
@@ -83,12 +94,14 @@ def log_turn(question: str, result: dict[str, Any]) -> None:
                    (SELECT COUNT(*) + 1 FROM {S["audit"]}.AGENT_ACTION_LOG
                      WHERE session_id = CURRENT_SESSION()::VARCHAR),
                    'INVESTIGATOR', 'USER', CURRENT_USER(), CURRENT_ROLE(), ?,
-                   ARRAY_CONSTRUCT('CORTEX_ANALYST'), ?, ?, 'CORTEX_ANALYST', ?, ?, ?, ?
+                   PARSE_JSON(?)::ARRAY, ?, ?, ?, ?, ?, ?, ?
             """,
                 params=[
                     question,
+                    json.dumps(tools or ["CORTEX_ANALYST"]),
                     sql,
                     hashlib.sha256(sql.encode()).hexdigest() if sql else None,
+                    model_version,
                     str(result.get("request_id") or "n/a"),
                     result.get("latency_ms"),
                     "ERROR" if result.get("error") else "SUCCESS",
