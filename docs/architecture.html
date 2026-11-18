@@ -7,11 +7,22 @@
   <title>Risk Copilot — Architecture</title>
   <script type="application/json" id="snowflake-report-metadata">
   {
-    "generated": "2026-09-21",
-    "intent": "Visual architecture reference for Risk & Compliance Copilot — all 18 diagrams + design decisions",
+    "generated": "2026-11-18",
+    "intent": "Architecture reference for Risk & Compliance Copilot: the original 18 design diagrams, each tagged Built / Partial / Future scope and redrawn where the build differs, plus a live snapshot of what is deployed",
+    "dataSources": [
+      { "type": "file", "path": "docs/enhanced-architecture-diagrams.md" },
+      { "type": "file", "path": "docs/ARCHITECTURE_DECISIONS.md" },
+      { "type": "file", "path": "README.md" },
+      { "type": "query", "sql": "SELECT table_schema, table_type, COUNT(*) FROM RISK_COPILOT_DEV.INFORMATION_SCHEMA.TABLES WHERE table_schema <> 'INFORMATION_SCHEMA' GROUP BY 1, 2 ORDER BY 1, 2" },
+      { "type": "query", "sql": "SHOW DYNAMIC TABLES IN DATABASE RISK_COPILOT_DEV" },
+      { "type": "query", "sql": "SELECT agent_mode, outcome, COUNT(*) FROM RISK_COPILOT_DEV.AUDIT.AGENT_ACTION_LOG GROUP BY 1, 2 ORDER BY 1, 2" },
+      { "type": "query", "sql": "SELECT author_model, COUNT(*) FROM RISK_COPILOT_DEV.EVIDENCE_CHAIN.FINDING GROUP BY 1" }
+    ],
     "sections": [
-      { "id": "diagrams", "title": "Architecture Diagrams", "dataSources": [], "producerNotes": "18 Mermaid diagrams from enhanced-architecture-diagrams.md" },
-      { "id": "gaps", "title": "Design Decisions", "dataSources": [], "producerNotes": "Resolved gaps and implementation specs" }
+      { "id": "future", "title": "Future scope", "producerNotes": "Roadmap items and the foundations already in place for each." },
+      { "id": "built", "title": "What is built", "producerNotes": "Live counts taken 2026-11-18 from RISK_COPILOT_DEV (account locator NI08942). Workflow row counts (cases, findings, artifacts) change after a demo reset; re-run the queries in dataSources to refresh." },
+      { "id": "diagrams", "title": "Architecture Diagrams", "producerNotes": "18 Mermaid diagrams. Diagrams 4, 6, 7, 9, 14, 15 and 18 are redrawn to match the build; the rest keep the design shape and carry an as-built note." },
+      { "id": "gaps", "title": "Design Decisions", "producerNotes": "Gaps 1-9 from the design, each with an as-built line." }
     ]
   }
   </script>
@@ -55,14 +66,14 @@
     /* NAV */
     .nav { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; padding: 14px 18px; margin: 16px 0 28px; }
     .nav-title { font-weight: 700; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; color: light-dark(#64748b, #94a3b8); margin-bottom: 8px; }
-    .nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 16px; }
+    .nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 16px; }
     .nav-grid a { display: block; padding: 3px 0; font-size: 0.88em; }
     .nav-grid .num { display: inline-block; width: 22px; text-align: right; margin-right: 6px; color: light-dark(#94a3b8, #64748b); font-weight: 600; }
 
     /* DIAGRAM SECTIONS */
     details { margin: 12px 0; border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 10px; overflow: hidden; }
     details[open] { border-color: light-dark(#bfdbfe, #1e40af); }
-    summary { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    summary { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
       background: light-dark(#f8fafc, #1e293b); user-select: none; list-style: none; }
     summary::-webkit-details-marker { display: none; }
     summary::before { content: '+'; font-weight: 700; font-size: 1.1em; color: light-dark(#2563eb, #60a5fa); width: 18px; text-align: center; flex-shrink: 0; transition: transform 0.15s; }
@@ -76,7 +87,7 @@
     /* TABLES */
     .table-wrap { overflow-x: auto; margin: 12px 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.88em; }
-    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 6px 10px; text-align: left; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 6px 10px; text-align: left; vertical-align: top; }
     th { background: light-dark(#f3f4f6, #1e293b); font-weight: 600; }
 
     /* CALLOUT BOXES */
@@ -84,52 +95,225 @@
     .decision strong { color: light-dark(#166534, #86efac); }
     .future { background: light-dark(#fef3c7, #1a1400); border-left: 4px solid #d97706; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
     .future strong { color: light-dark(#92400e, #fcd34d); }
+    .asbuilt { background: light-dark(#eff6ff, #0b1a33); border-left: 4px solid #2563eb; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .asbuilt strong { color: light-dark(#1e40af, #93c5fd); }
+    .gapnote { background: light-dark(#eef2ff, #14122e); border-left: 4px solid #6366f1; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 10px 0; }
+    .gapnote strong { color: light-dark(#3730a3, #c7d2fe); }
+
+    /* BADGES */
+    .badge { padding: 1px 8px; border-radius: 999px; font-size: 0.72em; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+    .b-built { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); }
+    .b-partial { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); }
+    .b-future { background: light-dark(#e0e7ff, #1e1b4b); color: light-dark(#3730a3, #c7d2fe); }
+    .b-context { background: light-dark(#e2e8f0, #334155); color: light-dark(#334155, #cbd5e1); }
+    .nav-grid .badge { margin-left: 6px; font-size: 0.68em; }
+
+    /* STAT CARDS */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+    .stat { border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 10px 12px; background: light-dark(#f8fafc, #1e293b); }
+    .stat .n { font-size: 1.5em; font-weight: 700; color: light-dark(#1e40af, #93c5fd); line-height: 1.2; }
+    .stat .l { font-size: 0.8em; color: light-dark(#64748b, #94a3b8); }
 
     /* TIER BADGES */
     .t1 { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
     .t2 { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
-    .cut { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
+    .fut { background: light-dark(#e0e7ff, #1e1b4b); color: light-dark(#3730a3, #c7d2fe); padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; }
   </style>
 </head>
 <body>
 
-<h1>Risk & Compliance Copilot</h1>
-<div class="subtitle">Architecture Reference — 18 diagrams, all design decisions. Target architecture, including roadmap components; the README records what is built.</div>
+<h1>Risk &amp; Compliance Copilot</h1>
+<div class="subtitle">Architecture reference, refreshed 2026-11-18 against the deployed dev environment. Each of the 18 design diagrams is tagged <span class="badge b-built">Built</span> <span class="badge b-partial">Partial</span> <span class="badge b-future">Future scope</span> or <span class="badge b-context">Context</span>. Where the build differs, the diagram is redrawn to show what exists.</div>
 
 <!-- NAV -->
 <div class="nav">
-  <div class="nav-title">Diagrams</div>
+  <div class="nav-title">Start here</div>
   <div class="nav-grid">
-    <a href="#d1"><span class="num">1</span> Entity Relationship Model</a>
-    <a href="#d2"><span class="num">2</span> Data Generation — Three Layers</a>
-    <a href="#d3"><span class="num">3</span> Data Ingestion Architecture</a>
-    <a href="#d4"><span class="num">4</span> Transformation Pipeline</a>
-    <a href="#d5"><span class="num">5</span> Cross-Domain Signal Detection</a>
-    <a href="#d6"><span class="num">6</span> Signal-to-Artifact Pipeline</a>
-    <a href="#d7"><span class="num">7</span> Single Agent — Four Modes</a>
-    <a href="#d8"><span class="num">8</span> LLM Boundary</a>
-    <a href="#d9"><span class="num">9</span> Notification &amp; Case Routing</a>
-    <a href="#d10"><span class="num">10</span> Policy Ingestion Pipeline</a>
-    <a href="#d11"><span class="num">11</span> Governance Mechanisms</a>
-    <a href="#d12"><span class="num">12</span> Testing &amp; Validation</a>
-    <a href="#d13"><span class="num">13</span> MCP &amp; External Loop Closing</a>
-    <a href="#d14"><span class="num">14</span> Demo Spine — One Entity</a>
-    <a href="#d15"><span class="num">15</span> Complete Storage Model</a>
-    <a href="#d16"><span class="num">16</span> System Boundary</a>
-    <a href="#d17"><span class="num">17</span> CoCo Lifecycle Evidence Map</a>
-    <a href="#d18"><span class="num">18</span> Replay Harness Architecture</a>
+    <a href="#built">What is built (live snapshot, built-system diagram, corrections)</a>
+    <a href="#future">Future scope (roadmap)</a>
+  </div>
+  <div class="nav-title" style="margin-top:12px">Diagrams</div>
+  <div class="nav-grid">
+    <a href="#d1"><span class="num">1</span> Entity Relationship Model <span class="badge b-partial">Partial</span></a>
+    <a href="#d2"><span class="num">2</span> Data Generation <span class="badge b-partial">Partial</span></a>
+    <a href="#d3"><span class="num">3</span> Data Ingestion <span class="badge b-partial">Partial</span></a>
+    <a href="#d4"><span class="num">4</span> Transformation Pipeline <span class="badge b-built">Built</span></a>
+    <a href="#d5"><span class="num">5</span> Signal Detection <span class="badge b-partial">1 of 6</span></a>
+    <a href="#d6"><span class="num">6</span> Signal-to-Artifact Pipeline <span class="badge b-built">Built</span></a>
+    <a href="#d7"><span class="num">7</span> Agent Architecture <span class="badge b-built">Built</span></a>
+    <a href="#d8"><span class="num">8</span> LLM Boundary <span class="badge b-built">Built</span></a>
+    <a href="#d9"><span class="num">9</span> Notification &amp; Case Routing <span class="badge b-built">Built</span></a>
+    <a href="#d10"><span class="num">10</span> Policy Ingestion <span class="badge b-future">Future scope</span></a>
+    <a href="#d11"><span class="num">11</span> Governance Mechanisms <span class="badge b-partial">Partial</span></a>
+    <a href="#d12"><span class="num">12</span> Testing &amp; Validation <span class="badge b-partial">Partial</span></a>
+    <a href="#d13"><span class="num">13</span> MCP &amp; External Loop <span class="badge b-future">Future scope</span></a>
+    <a href="#d14"><span class="num">14</span> Demo Spine — One Entity <span class="badge b-partial">Partial</span></a>
+    <a href="#d15"><span class="num">15</span> Storage Model <span class="badge b-built">Built</span></a>
+    <a href="#d16"><span class="num">16</span> System Boundary <span class="badge b-context">Context</span></a>
+    <a href="#d17"><span class="num">17</span> CoCo Lifecycle Evidence <span class="badge b-context">Context</span></a>
+    <a href="#d18"><span class="num">18</span> Replay Harness <span class="badge b-built">Built</span></a>
   </div>
   <div class="nav-title" style="margin-top:12px">Sections</div>
   <div class="nav-grid">
-    <a href="#gaps">Design Decisions (Gaps 1-9)</a>
+    <a href="#gaps">Design Decisions (Gaps 1-9), with as-built notes</a>
   </div>
 </div>
 
-<!-- ===== DIAGRAM 1 ===== -->
-<details id="d1" open>
-  <summary><span class="diagram-num">1</span><h2>Entity Relationship Model</h2></summary>
+<!-- ===== WHAT IS BUILT ===== -->
+<details id="built" open>
+  <summary><span class="diagram-num" style="background:light-dark(#16a34a,#14532d);">B</span><h2>What is built</h2></summary>
   <div class="section-body">
-    <p>Physical table is leg-level grain; pair-level exposed as a view. 17 entities across 6 schemas.</p>
+    <p>Taken from the live dev environment on 2026-11-18: database <code>RISK_COPILOT_DEV</code> (plus <code>RISK_COPILOT_AGENT</code>) on account <code>IBIEQZU-HF18990</code> (locator <code>NI08942</code>, AWS ap-northeast-1, Standard edition). Synthetic data only. The earlier trial account (<code>ZC14131</code>) that the markdown design notes were written against is no longer the target.</p>
+
+    <div class="stats">
+      <div class="stat"><div class="n">40</div><div class="l">tables across 6 populated schemas</div></div>
+      <div class="stat"><div class="n">5</div><div class="l">dynamic tables, all INCREMENTAL</div></div>
+      <div class="stat"><div class="n">500 / 553</div><div class="l">parties / accounts (10,064 legs)</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">detection rule (10 signals, 10 cases)</div></div>
+      <div class="stat"><div class="n">214</div><div class="l">audit rows, 6 agent modes</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">STR attested and filed (simulated)</div></div>
+    </div>
+
+    <h3>Built system at a glance</h3>
+    <pre class="mermaid">
+flowchart LR
+    subgraph SRC["Sources"]
+        AML["IBM AMLworld HI-Small<br/>5.08M pairs, cut at 2022-09-10"]
+        GEN["Python generator<br/>Faker en_IN, seed 20260922"]
+    end
+    subgraph LOAD["riskcopilot CLI"]
+        LD["load: PUT + COPY INTO<br/>one transaction"]
+        RP["replay / SIM_CONTROL<br/>hold-back release"]
+    end
+    subgraph CUR["RISK_COPILOT_DEV"]
+        RAW["RAW<br/>13 tables"]
+        DT["CURATED<br/>5 dynamic tables"]
+        SIG["DT_SIGNALS_FAST<br/>1 rule"]
+        STR1["SIGNALS_STREAM"]
+        TSK["ROUTE_SIGNALS task"]
+        EC["EVIDENCE_CHAIN<br/>SIGNAL to ATTESTATION"]
+        SV["Semantic view<br/>+ Cortex Search"]
+        AUD["AUDIT<br/>AGENT_ACTION_LOG"]
+    end
+    subgraph AG["RISK_COPILOT_AGENT"]
+        AGT["RC_STR_AGENT<br/>draft, review, PDF"]
+    end
+    subgraph UI["Surfaces"]
+        APP["Streamlit app<br/>6 pages, analyst + officer"]
+        SLK["Slack bot<br/>bridge/, Socket Mode"]
+        EML["Case-event email alert<br/>defined, ready to enable"]
+    end
+    AML --> GEN --> LD --> RAW
+    RP --> RAW
+    RAW --> DT --> SIG --> STR1 --> TSK --> EC
+    EC --> APP
+    SV --> APP
+    EC -->|"GENERATE_AI_STR"| AGT
+    AGT -->|"SUBMIT_AI_DRAFT"| EC
+    EC --> AUD
+    APP --> AUD
+    SLK --> AGT
+    EC -.-> EML
+    style CUR fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+    style AG fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style UI fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    style EML fill:#fef3c7,stroke:#d97706,stroke-dasharray: 5 5
+    style SIG fill:#2563eb,color:#fff
+    </pre>
+
+    <h3>Live object inventory</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Schema</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>RAW</code></td><td>13 tables: <code>RAW_AMLWORLD_TRANS/_ACCOUNTS</code>, ID maps, leg-level <code>RAW_TRANSACTIONS</code> (no label; <code>held_back</code> flag), party/account/KYC landing, sanctions landing (ready for the sanctions rule), policy-clause landing</td></tr>
+          <tr><td><code>CURATED</code></td><td>5 dynamic tables (<code>DT_DIM_PARTY</code>, <code>DT_TRANSACTIONS_ENRICHED</code>, <code>DT_TXN_DAILY_AGG</code>, <code>DT_PARTY_RELATIONSHIP</code>, <code>DT_SIGNALS_FAST</code>), <code>ALM_CASHFLOW</code>, views <code>V_TRANSACTION_PAIRS</code> / <code>V_STRUCTURAL_LIQUIDITY</code> / <code>V_EVAL_SCORES</code> (secure), <code>SIGNALS_STREAM</code>, semantic view <code>SV_RISK_COPILOT</code></td></tr>
+          <tr><td><code>GOVERNANCE</code></td><td>8 tables (<code>POLICY_CLAUSE</code> 18 rows, <code>TYPOLOGY</code>, <code>RULE_DEFINITION</code> 1 rule, chunks, proposals, <code>REF_*</code>), view <code>V_POLICY_CLAUSE_CURRENT</code>, Cortex Search <code>REGULATORY_SEARCH_SVC</code></td></tr>
+          <tr><td><code>EVIDENCE_CHAIN</code></td><td>9 tables (<code>SIGNAL</code>, <code>CASE_RECORD</code>, <code>CASE_SIGNAL</code>, <code>EVIDENCE</code>, <code>EVIDENCE_QUERY_LOG</code>, <code>FINDING</code>, <code>REVIEW</code>, <code>ARTIFACT</code>, <code>ATTESTATION</code>); procedures <code>ROUTE_SIGNALS</code>, <code>GATHER_EVIDENCE</code>, <code>DRAFT_STR</code>, <code>REVIEW_STR</code>, <code>ATTEST_STR</code>, <code>GENERATE_AI_STR</code>, <code>SUBMIT_AI_DRAFT</code>, <code>SIM_CONTROL</code>, <code>RESET_CASES</code>, <code>GET_CASE_CONTEXT</code>; 2 tasks (both suspended in dev)</td></tr>
+          <tr><td><code>AUDIT</code></td><td>3 tables: <code>AGENT_ACTION_LOG</code> (214 rows), <code>CHAT_MESSAGE</code>, <code>DATA_QUALITY_LOG</code> (reserved for DMF results)</td></tr>
+          <tr><td><code>GROUND_TRUTH</code></td><td>6 tables: labels, party-month eval grain, pending injections, Patterns file, <code>GOLDEN_QUESTIONS</code> (reserved for the golden-question suite), <code>EVAL_RUN</code> (6 runs). Granted to no consumer role.</td></tr>
+          <tr><td><code>ML</code>, <code>SLACK_BOT</code></td><td><code>ML</code> is reserved for future scoring models. <code>SLACK_BOT</code> is the container-hosting repo for the Slack bot.</td></tr>
+          <tr><td><code>RISK_COPILOT_AGENT.STR</code></td><td>Agent <code>RC_STR_AGENT</code> with four tool procedures; evidence package, AI draft, AI review, STR report and run-log tables (from <code>agent_account/sql</code>, not counted live)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Evidence-chain state (snapshot)</h3>
+    <p>10 cases (4 OPEN, 5 REVIEWED, 1 CLOSED), 107 evidence rows, 24 logged queries, 11 findings (<strong>8 <code>TEMPLATE_V1</code>, 3 <code>claude-sonnet-4-6</code></strong>), 11 artifacts (1 FILED, 5 REVIEWED, 5 SUPERSEDED), 7 reviews, 1 attestation. The audit log holds 214 rows across <code>OPERATOR</code>, <code>INVESTIGATOR</code>, <code>DRAFTER</code>, <code>REVIEWER</code>, <code>SENTINEL</code> and <code>AGENTIC</code> modes, including 15 <code>REFUSED</code> outcomes. These counts move whenever the demo is reset (<code>riskcopilot app reset-cases</code>).</p>
+
+    <h3>Components added beyond the original design</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Component</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td>Streamlit app (<code>app/</code>)</td><td>Six pages: Overview (KPIs and live simulator), Case investigation (1 Gather, 2 Draft, 3 Review, 4 AI STR + PDF, <code>AI_AGG</code> triage), Officer sign-off, Ask the data (Cortex Analyst), Liquidity (ALM), Governance &amp; audit. Two logins: analyst (Priya Nair, maker) and officer (Rajesh Menon, checker). Runs locally, in Streamlit-in-Snowflake, or on Streamlit Community Cloud via key-pair service users.</td></tr>
+          <tr><td><code>riskcopilot</code> CLI</td><td><code>doctor</code>, <code>config</code>, <code>deploy</code>, <code>generate</code>, <code>load</code>, <code>verify</code>, <code>replay</code>, <code>refresh</code>, <code>app render|run|deploy|reset-cases|public-access</code>. <code>eval</code> is reserved for the golden-question suite (future scope).</td></tr>
+          <tr><td>AI STR path</td><td><code>GENERATE_AI_STR</code> (Python procedure, spend-capped: 1 run per case per 5 min, 30 per day) builds a hashed evidence package, calls <code>RC_STR_AGENT</code> in the agent database, writes the draft back as FINDING n+1 through <code>SUBMIT_AI_DRAFT</code>, then <code>REVIEW_STR</code> re-proves every figure. The model writes prose only.</td></tr>
+          <tr><td><code>AI_AGG</code> triage</td><td>One call over the transactions a case cites; returns a pattern description beside the evidence. Cached 1 hour, never written into a finding or STR.</td></tr>
+          <tr><td>Liquidity slice</td><td><code>ALM_CASHFLOW</code> (illustrative NBFC book, 10 maturity buckets) and <code>V_STRUCTURAL_LIQUIDITY</code> against governed RBI tolerance clauses <code>LIQ_MISMATCH_1_7D</code> / <code>8_14D</code> / <code>15_30D</code>. Not wired into signals or cases.</td></tr>
+          <tr><td>Slack bot (<code>bridge/</code>)</td><td>Socket Mode bot: <code>str CASE-…</code>, <code>pdf CASE-…</code>, <code>agent &lt;question&gt;</code>, plain questions to Cortex Analyst. Still uses the laptop pipeline rather than <code>GENERATE_AI_STR</code>. Railway Dockerfile included.</td></tr>
+          <tr><td>Case-event email alert</td><td><code>NOTIFY_CASE_EVENTS</code> and serverless <code>CASE_EVENTS_ALERT</code> (ids only, no customer data) are defined in <code>sql/10_automations</code>. They deploy when <code>RC_ALERT_EMAIL</code> is set (then created suspended, ready to resume); enabling them is a configuration step.</td></tr>
+          <tr><td>Live simulator</td><td><code>SIM_CONTROL</code> (<code>ARM</code>, <code>TICK</code>, <code>INJECT</code>, <code>RELEASE_ALL</code>, <code>START</code>, <code>STOP</code>) over <code>RAW_TRANSACTIONS.held_back</code>, driven from the Overview page and a one-minute <code>SIM_TICK_TASK</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Design versus build: how the design evolved</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Diagram</th><th>Design said</th><th>As built</th></tr></thead>
+        <tbody>
+          <tr><td>2</td><td>Faker <code>hi_IN</code>; ~5K parties / ~10K accounts; L3 narratives via <code>AI_COMPLETE</code></td><td><code>en_IN</code> (<code>hi_IN</code> writes Devanagari, which breaks fuzzy name matching). Dev: 500 parties / 553 accounts; demo profile: 5,000 / 8,857. L3 narratives are future scope (<code>kyc_note</code> is reserved); the finding narrative is templated by design.</td></tr>
+          <tr><td>4</td><td><code>DT_VELOCITY</code>, <code>DT_SANCTIONS</code>, <code>DT_EXPOSURES_STAGED</code>, 5 rules, 1-day lags upstream of 1-minute tables</td><td>Five different dynamic tables; velocity base is <code>DT_TXN_DAILY_AGG</code>; one rule; the drawn lags were invalid (a table cannot be fresher than its upstream).</td></tr>
+          <tr><td>5, 8</td><td>Sanctions screening by exact join</td><td>Design changed to <code>JAROWINKLER_SIMILARITY</code> (exact match raises a signal, fuzzy match a review task). Sanctions screening is future scope; the landing table <code>RAW_SANCTIONS_OPENSANCTIONS</code> and the matching thresholds are already in place.</td></tr>
+          <tr><td>6, 11</td><td>Re-verification via Time Travel <code>AT(TIMESTAMP =&gt; …)</code></td><td><code>EVIDENCE_QUERY_LOG.result_snapshot</code> plus canonical hash <code>SQL-1</code>, recomputed by <code>REVIEW_STR</code>. Time Travel is not part of correctness.</td></tr>
+          <tr><td>6</td><td>"LLM narrative"; STR XML</td><td><code>TEMPLATE_V1</code> by default; optional <code>claude-sonnet-4-6</code> draft. The artifact is <strong>JSON</strong> with a SHA-256 hash; an XML rendering is future scope. The only other output is a PDF rendered in the agent database.</td></tr>
+          <tr><td>7</td><td>One agent, four modes, eight tools including <code>generate_str_xml</code></td><td>Reviewer is the deterministic <code>REVIEW_STR</code> procedure (no model). Sentinel is SQL plus <code>AI_AGG</code>. The Cortex agent <code>RC_STR_AGENT</code> only drafts, cross-reviews and renders a PDF.</td></tr>
+          <tr><td>9</td><td>Slack / CRO dashboard notifications; dedup by party and open status</td><td>Dedup by <code>signal_business_key</code> + <code>MERGE</code>; a party with an open case gets new signals attached (per the router SQL, which is designed for multi-rule cases as more rules arrive). Notification is the email alert (ready to enable) and the Slack bot (separate path).</td></tr>
+          <tr><td>11</td><td>Row access, masking, DMFs</td><td>Future scope: row access policies, masking policies and DMFs. The branch analyst roles are in place to attach them to; today the app's region filter is a UI filter.</td></tr>
+          <tr><td>13</td><td>Jira / Drive via MCP; three scheduled automations incl. monthly CTR</td><td>Future scope. External Access Integration was gated on the trial and is recorded as still blocked; <code>mcp.jira</code> / <code>mcp.slack</code> are disabled in config. CTR pre-assembly is on the roadmap.</td></tr>
+          <tr><td>14</td><td>Hero "Rajesh Kumar P-10042", Rs 47L in 3 days, SMA-1 credit lens</td><td>Hero is Kamya Dhar <code>P-754971478708</code> (Mumbai): 10 cash deposits totalling ₹94.03 lakh into 2 accounts, all below the ₹10 lakh line. "Rajesh Menon" is the Principal Officer persona. The credit lens is future scope.</td></tr>
+          <tr><td>15</td><td>17 entities across 6 schemas; "38 tables" in earlier notes</td><td>40 tables, 5 dynamic tables, 4 views across 7 schemas (6 populated, plus <code>ML</code> reserved for scoring), plus the agent database and a <code>SLACK_BOT</code> hosting schema.</td></tr>
+          <tr><td>18</td><td><code>--inject</code> "15 deposits of 9.5L"; case "~6 min from inject"</td><td><code>--inject</code> releases one host's already-generated, already-labelled burst; nothing is invented. Replay advances a 6-hour sim step every 5 s. End-to-end latency follows the dynamic-table lag (60 min in dev); a timed run is a roadmap item.</td></tr>
+          <tr><td>Gap 6</td><td><code>generate_str_xml</code> assembles XML</td><td>JSON artifact validated against an internal JSON-Schema transcription of the FIU-IND form; XML rendering is future scope.</td></tr>
+          <tr><td>Gap 8</td><td>Roles <code>BRANCH_ANALYST_MUMBAI</code>, <code>COMPLIANCE_OFFICER</code></td><td>Roles exist with <code>_DEV</code> suffix (Mumbai, Delhi, compliance officer, plus hosted-app roles), but no policy enforces the branch scope.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</details>
+
+<details id="future">
+  <summary><span class="diagram-num" style="background:light-dark(#4f46e5,#3730a3);">F</span><h2>Future scope</h2></summary>
+  <div class="section-body">
+    <p>The platform is built so each of these slots in without rework: the clauses, config, tables or roles they need are already in place.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Next increment</th><th>Foundation already in place</th></tr></thead>
+        <tbody>
+          <tr><td>Remaining detection rules: income-activity mismatch, rapid credit velocity, shared device cluster, mule ring</td><td>Policy clauses and severities are seeded; <code>DT_TXN_DAILY_AGG</code> and <code>DT_PARTY_RELATIONSHIP</code> are live and waiting for rules; the router already re-types multi-rule cases to <code>CROSS_DOMAIN</code></td></tr>
+          <tr><td>Fuzzy sanctions screening (<code>JAROWINKLER_SIMILARITY</code>)</td><td>Landing table <code>RAW_SANCTIONS_OPENSANCTIONS</code>, matching thresholds in config, and the signal-to-case path it will feed</td></tr>
+          <tr><td>Policy ingestion from regulatory PDFs (<code>AI_PARSE_DOCUMENT</code> / <code>AI_EXTRACT</code>)</td><td><code>POLICY_DOCS</code> stage, <code>POLICY_CHANGE_PROPOSALS</code> review queue, versioned <code>POLICY_CLAUSE</code>, and Cortex Search over the governed clauses</td></tr>
+          <tr><td>L3 narratives and KYC contradictions</td><td>Generator output reserves <code>kyc_note</code>; narrative settings are in <code>conf/generation.yml</code></td></tr>
+          <tr><td>Row access and masking policies; data metric functions</td><td>Branch analyst and compliance roles, <code>branch_region</code> denormalised on cases for policy filtering, <code>AUDIT.DATA_QUALITY_LOG</code> for results; the semantic view already excludes sensitive columns</td></tr>
+          <tr><td>Golden-question, adversarial and pipeline-health suites</td><td><code>GOLDEN_QUESTIONS</code>, <code>EVAL_RUN</code> and the <code>riskcopilot eval</code> command; Cortex Analyst wired to the semantic view; the detection suite (Suite 1) already scores every run</td></tr>
+          <tr><td>Tier 2 credit lens and ML scoring</td><td><code>ML</code> schema and <code>conf/ml.yml</code></td></tr>
+          <tr><td>Outbound integrations and scheduled automations: Jira, Drive, MCP, overnight triage, monthly CTR, weekly regulatory check</td><td>Standalone Slack bot, written email alert and tasks; External Access Integration to be enabled on the account</td></tr>
+          <tr><td>STR XML rendering and live FIU-IND filing</td><td>Hashed JSON artifact, internal JSON-Schema transcription of the form, PDF rendering; <code>FILED</code> is simulated today</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Calibration note: the Benford leading-digit check on synthetic amounts is report-only (chi-square 202.9 in dev against a limit of 60); tuning amounts to Benford is a calibration item.</p>
+  </div>
+</details>
+
+<h2 id="diagrams" style="margin: 28px 0 8px;">Architecture diagrams</h2>
+
+<!-- ===== DIAGRAM 1 ===== -->
+<details id="d1">
+  <summary><span class="diagram-num">1</span><h2>Entity Relationship Model</h2><span class="badge b-partial">Partial</span></summary>
+  <div class="section-body">
+    <p>Physical transaction table is leg-level; the pair-level view is <code>V_TRANSACTION_PAIRS</code>. Table names below match the build (the case table is <code>CASE_RECORD</code>); column lists are the design's, simplified.</p>
     <pre class="mermaid">
 erDiagram
     PARTY {
@@ -138,448 +322,505 @@ erDiagram
         string risk_rating
         boolean pep_flag
         decimal declared_annual_income
-        decimal match_confidence
+        string branch_region
     }
     ACCOUNT {
         string account_id PK
         string party_id FK
         string account_type
         string status
-        decimal current_balance
-        string device_fingerprint
     }
     TRANSACTION {
         string txn_id PK
         string account_id FK
-        decimal amount
-        string currency
+        decimal amount_inr
         string channel
         timestamp txn_timestamp
+        boolean held_back
     }
     PARTY_RELATIONSHIP {
         string relationship_id PK
         string party_a_id FK
         string party_b_id FK
         string relationship_type
-        decimal total_flow_amount
     }
     TYPOLOGY {
         string typology_id PK
         string name
         string fatf_reference
-        string detection_approach
     }
     RULE_DEFINITION {
         string rule_id PK
         string typology_id FK
-        string clause_id FK
         string rule_sql_hash
-        boolean is_active
+        int rule_version
+    }
+    POLICY_CLAUSE {
+        string clause_id PK
+        int clause_version
+        string metric
+        decimal threshold_lower
+        date effective_from
     }
     SIGNAL {
         string signal_id PK
+        string signal_business_key
         string party_id FK
         string rule_id FK
         string severity
-        timestamp fired_at
     }
-    CASE {
+    CASE_RECORD {
         string case_id PK
         string party_id FK
         string case_type
         string status
-        timestamp sla_deadline
+        string branch_region
+    }
+    CASE_SIGNAL {
+        string case_id FK
+        string signal_id FK
     }
     EVIDENCE {
         string evidence_id PK
         string case_id FK
         string ref_type
         string ref_id
-        timestamp as_of_ts
     }
     EVIDENCE_QUERY_LOG {
         string query_log_id PK
-        string evidence_id FK
         string sql_text
+        variant result_snapshot
         string result_hash
-        string query_id
+        string canonical_form_version
     }
     FINDING {
         string finding_id PK
         string case_id FK
-        string narrative
-        string conclusion
-        variant cited_evidence_ids
-    }
-    POLICY_CLAUSE {
-        string clause_id PK
-        string clause_text
-        string metric
-        string operator
-        decimal threshold_lower
-        date effective_from
+        int version
+        string author_model
+        variant computed_values
     }
     ARTIFACT {
         string artifact_id PK
         string finding_id FK
-        string artifact_type
-        string status
+        variant content
         string content_hash
-    }
-    ATTESTATION {
-        string attestation_id PK
-        string artifact_id FK
-        string attestor
-        timestamp attested_at
+        string status
     }
     REVIEW {
         string review_id PK
         string finding_id FK
         string decision
-        variant defects_found
+        string reviewer_type
+    }
+    ATTESTATION {
+        string attestation_id PK
+        string artifact_id FK
+        string attestor_role
+        string attested_content_hash
     }
     AGENT_ACTION_LOG {
         string log_id PK
-        string sql_text
-        string sql_hash
-        string model_version
-        int tokens_used
-    }
-    SANCTIONS_ENTRY {
-        string entry_id PK
-        string entity_name
-        variant aliases
-        string list_source
+        string agent_mode
+        string outcome
+        string snowflake_user
     }
     PARTY ||--o{ ACCOUNT : "owns"
     PARTY ||--o{ PARTY_RELATIONSHIP : "connected-to"
     ACCOUNT ||--o{ TRANSACTION : "debits-credits"
     PARTY ||--o{ SIGNAL : "flagged-by"
-    PARTY ||--o{ CASE : "investigated-in"
-    CASE ||--o{ EVIDENCE : "supported-by"
+    SIGNAL ||--o{ CASE_SIGNAL : "grouped-in"
+    CASE_RECORD ||--o{ CASE_SIGNAL : "groups"
+    CASE_RECORD ||--o{ EVIDENCE : "supported-by"
     EVIDENCE ||--o{ EVIDENCE_QUERY_LOG : "verified-by"
-    CASE ||--o{ FINDING : "concludes-with"
+    CASE_RECORD ||--o{ FINDING : "concludes-with"
     FINDING ||--o{ ARTIFACT : "produces"
     FINDING ||--o{ REVIEW : "validated-by"
     ARTIFACT ||--o{ ATTESTATION : "signed-off-by"
-    POLICY_CLAUSE ||--o{ RULE_DEFINITION : "implements"
+    POLICY_CLAUSE ||--o{ RULE_DEFINITION : "parameterises"
     TYPOLOGY ||--o{ RULE_DEFINITION : "detects"
     RULE_DEFINITION ||--o{ SIGNAL : "fires-as"
-    SANCTIONS_ENTRY ||--o{ SIGNAL : "match-triggers"
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> 40 tables across 6 populated schemas. Differences from the design: <code>CASE</code> is <code>CASE_RECORD</code> with a <code>CASE_SIGNAL</code> link table; the design's <code>SANCTIONS_ENTRY</code> maps to <code>RAW_SANCTIONS_OPENSANCTIONS</code>, which is reserved for the sanctions rule; SCD2 columns on <code>PARTY</code> were removed.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 2 ===== -->
 <details id="d2">
-  <summary><span class="diagram-num">2</span><h2>Data Generation — Three-Layer Model</h2></summary>
+  <summary><span class="diagram-num">2</span><h2>Data Generation — Three-Layer Model</h2><span class="badge b-partial">Partial</span></summary>
   <div class="section-body">
-    <p>Three layers, three technologies. L1 = deterministic Python (entities). L2 = IBM AMLworld reskinned (transactions). L3 = AI_COMPLETE (narratives).</p>
+    <p>L1 and L2 are built and deterministic (same seed, byte-identical output). L3 is future scope.</p>
     <pre class="mermaid">
 flowchart TB
-    subgraph L1["L1 — Entity Skeleton"]
-        FAKER["Faker hi_IN + Graph Builder"] --> OUT1["~5K Parties"] & OUT2["~10K Accounts\n+device_fingerprint"] & OUT3["UBO Graph"]
+    subgraph L1["L1 — Entity skeleton (built)"]
+        FAKER["Faker en_IN dresses<br/>AMLworld-keyed parties"] --> OUT1["Dev: 500 parties, 553 accounts<br/>Demo: 5,000 parties, 8,857 accounts"]
+        FAKER --> OUT3["Shared phone / device /<br/>beneficial-owner edges"]
     end
-    subgraph L2["L2 — Behavioural Ledger"]
-        SEED["IBM AMLworld HI-Small\n5M txns, 5.1K laundering"] --> RESKIN["Re-skin to INR\nUPI/NEFT/RTGS/CASH"] --> INJECT["Typology Injection\nLabels are deterministic"] --> LEDGER["Transaction Ledger"]
+    subgraph L2["L2 — Behavioural ledger (built)"]
+        SEED["IBM AMLworld HI-Small<br/>5,078,345 pairs, 5,177 illicit"] --> SUB["Subgraph sampling<br/>2-hop BFS from seeds"] --> RESKIN["Re-skin: two signed INR legs<br/>NEFT / RTGS / UPI / CASH"] --> INJECT["Structuring injection only<br/>labels kept in GROUND_TRUTH"] --> LEDGER["Dev: 10,064 legs<br/>Demo: 163,994 legs"]
     end
-    subgraph L3["L3 — Narratives"]
-        BULK["Bulk: 10K KYC notes\nSmall model"] & GOLDEN["Golden: AML policy\nFrontier model"] & NOISE["Noise: Typos,\ncontradictions"] --> CORPUS["Unstructured Corpus"]
+    subgraph L3["L3 — Narratives (future scope)"]
+        BULK["KYC notes, noise,<br/>contradictions"]
     end
-    subgraph V["Realism Checks"]
-        V1["Benford's Law"] & V2["Degree Dist."] & V3["Seasonality"] & V4["0.1-1% illicit"] & V5["Money Conservation"] & V6["No Label Leakage"]
+    subgraph V["Realism gates"]
+        V1["Illicit-rate band 0.10-2.50%"] & V2["Money conservation<br/>Referential integrity"] & V3["No label leakage"] & V4["Benford: reported<br/>for calibration"]
     end
     L1 --> L2 --> V
-    L1 --> L3
     style L1 fill:#dbeafe,stroke:#2563eb,stroke-width:2px
     style L2 fill:#fef3c7,stroke:#d97706,stroke-width:2px
-    style L3 fill:#fce7f3,stroke:#db2777,stroke-width:2px
+    style L3 fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5
     style V fill:#f0fdf4,stroke:#059669,stroke-width:2px
     style INJECT fill:#dc2626,color:#fff
-    style V6 fill:#dc2626,color:#fff
+    style V3 fill:#dc2626,color:#fff
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> L2 is deterministic sampling and re-skinning of the real AMLworld file, not a simulation. The ledger is cut at 2022-09-10 because later days are 59% laundering (a temporal label proxy). Only the structuring typology is injected (10 host parties in dev, 40 in the demo profile); deposits are stored as a ratio of the CTR threshold and resolved to rupees at load time from <code>POLICY_CLAUSE</code>. The branch cash desk started as a perfect label proxy (only planted deposits touched it); every genuine cash deposit now posts through it too, and a gate scans raw values for leakage.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 3 ===== -->
 <details id="d3">
-  <summary><span class="diagram-num">3</span><h2>Data Ingestion Architecture</h2></summary>
+  <summary><span class="diagram-num">3</span><h2>Data Ingestion Architecture</h2><span class="badge b-partial">Partial</span></summary>
   <div class="section-body">
     <pre class="mermaid">
 flowchart TB
-    subgraph SYNTH["Synthetic Sources"]
-        REPLAY["Replay Harness\nINSERT loop + chaos inject"]
-        ENTITY["Entity Generator\nL1 output"]
-        NARR["Narrative Generator\nL3 output"]
+    subgraph SYN["Synthetic sources (built)"]
+        PQ["Generator Parquet<br/>build/generated/profile"]
+        CSV["AMLworld CSV"]
+        HB["Hold-back legs<br/>replay / SIM_CONTROL"]
     end
-    subgraph EXT["External Reference"]
-        OSANC["OpenSanctions"] & OFAC["OFAC SDN"] & RBI["RBI Circulars\nPDF"]
+    subgraph ING["Ingestion (built)"]
+        PUT["PUT to content-addressed<br/>stage paths"] --> COPY["COPY INTO, positional<br/>one transaction, rollback on failed check"]
     end
-    subgraph ING["Ingestion"]
-        BATCH["Batch COPY INTO"]
+    subgraph LAND["Landing tables (RAW)"]
+        RT["RAW_TRANSACTIONS<br/>no label column"]
+        RP["RAW_PARTY_*, RAW_ACCOUNTS,<br/>ID maps"]
+        RA["RAW_AMLWORLD_*"]
+    end
+    subgraph SEED["Policy path (hand-seeded)"]
+        CONF["conf/detection.yml"] --> PC["POLICY_CLAUSE<br/>insert-only seed"] --> CH["POLICY_CLAUSE_CHUNKS"] --> CS["REGULATORY_SEARCH_SVC<br/>Cortex Search"]
+    end
+    subgraph NOT["Future scope"]
+        OS["OpenSanctions file<br/>(loader is future scope)"]
+        RBI["RBI PDFs<br/>AI_PARSE_DOCUMENT / AI_EXTRACT"]
         HTTP["HTTP GET via EAI"]
-        DOCAI["AI_PARSE_DOCUMENT\n+ AI_EXTRACT"]
     end
-    subgraph LAND["Landing Tables"]
-        RT["RAW_TRANSACTIONS"] & RP["RAW_PARTY_*"] & RS["RAW_SANCTIONS_*"] & RPO["RAW_POLICY_CLAUSES"]
-    end
-    CS["Cortex Search Service\nHybrid keyword + semantic"]
-    REPLAY --> RT
-    ENTITY --> BATCH --> RP
-    NARR --> BATCH
-    OSANC & OFAC --> HTTP --> RS
-    RBI --> DOCAI --> RPO --> CS
-    style REPLAY fill:#d97706,color:#fff
-    style DOCAI fill:#dc2626,color:#fff
+    PQ & CSV --> PUT
+    COPY --> RT & RP & RA
+    HB --> RT
+    style HB fill:#d97706,color:#fff
     style CS fill:#7c3aed,color:#fff
+    style NOT fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> bulk load is <code>PUT</code> plus <code>COPY INTO</code> from the laptop (<code>riskcopilot load</code>), not Snowpipe or HTTP. The regulatory corpus is the 18 clause rows indexed one chunk per clause, with PDF parsing as future scope. Sanctions data is a local OpenSanctions file; its loader is future scope.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 4 ===== -->
 <details id="d4">
-  <summary><span class="diagram-num">4</span><h2>Transformation Pipeline — Two-Speed</h2></summary>
+  <summary><span class="diagram-num">4</span><h2>Transformation Pipeline</h2><span class="badge b-built">Built</span></summary>
   <div class="section-body">
-    <p>Fast lane: seconds-to-minutes (fraud/AML). Slow lane: daily batch (credit risk, Tier 2).</p>
+    <p>Redrawn from the deployed dynamic tables. All five are <code>REFRESH_MODE = INCREMENTAL</code> and active. Dev lags are relaxed; the demo profile uses the tighter lags in brackets.</p>
     <pre class="mermaid">
 flowchart TB
-    subgraph FAST["FAST LANE — Tier 1"]
-        RT["RAW_TRANSACTIONS"] --> ENR["DT_ENRICHED\n1 min"] --> VEL["DT_VELOCITY\nDOWNSTREAM"] --> SIG["DT_SIGNALS_FAST\n5 min\n5 rules"]
+    subgraph RAWL["RAW"]
+        RT["RAW_TRANSACTIONS<br/>held_back = false only"]
+        PC["RAW_PARTY_CBS + RAW_PARTY_KYC"]
+        RAC["RAW_ACCOUNTS + ID_MAP_ACCOUNT"]
+        ATTR["RAW_PARTY_RELATIONSHIP_ATTR"]
     end
-    subgraph SLOW["SLOW LANE — Tier 2"]
-        RE["RAW_EXPOSURES"] --> STG["DT_EXPOSURES_STAGED\n1 day"]
+    subgraph CURA["CURATED dynamic tables"]
+        DIM["DT_DIM_PARTY<br/>DOWNSTREAM<br/>current state, no label"]
+        ENR["DT_TRANSACTIONS_ENRICHED<br/>60 min (demo 1 min)<br/>10,064 rows"]
+        AGG["DT_TXN_DAILY_AGG<br/>60 min (demo 5 min)<br/>account x day buckets"]
+        REL["DT_PARTY_RELATIONSHIP<br/>60 min<br/>OWNS / FUND_FLOW / attribute edges"]
+        SIG["DT_SIGNALS_FAST<br/>60 min (demo 5 min)<br/>1 rule branch, 10 rows"]
     end
-    subgraph DIM["Shared Dimensions"]
-        PARTY["DT_DIM_PARTY\n1 day, current-state"]
-        REL["DT_PARTY_RELATIONSHIP\n1 day"]
-        SANC["DT_SANCTIONS\nDOWNSTREAM"]
-        POL["POLICY_CLAUSE"]
-    end
-    PARTY --> ENR & STG
-    REL & SANC & POL --> SIG
-    POL --> STG
-    style FAST fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-    style SLOW fill:#fef2f2,stroke:#dc2626,stroke-width:2px,stroke-dasharray: 5 5
-    style DIM fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    POL["V_POLICY_CLAUSE_CURRENT<br/>thresholds read here"]
+    STR["SIGNALS_STREAM<br/>stream on dynamic table"]
+    PC --> DIM --> ENR
+    RT --> ENR
+    RAC --> ENR
+    ENR --> AGG
+    ENR --> REL
+    RAC --> REL
+    ATTR --> REL
+    ENR --> SIG
+    POL --> SIG
+    SIG --> STR
+    style CURA fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+    style RAWL fill:#faf5ff,stroke:#7c3aed
     style SIG fill:#2563eb,color:#fff
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> a single fast lane. The slow Tier 2 lane (<code>DT_EXPOSURES_STAGED</code>) and <code>DT_SANCTIONS</code> are future scope. Rolling-window velocity is not a dynamic table (it is not incrementally refreshable); the daily bucket table is its base, and it is ready for the velocity rules. <code>DT_PARTY_RELATIONSHIP</code> is built and ready for graph rules. Every rule threshold is read from <code>V_POLICY_CLAUSE_CURRENT</code>, never hard-coded; editing a rule file changes its hash and fails the policy stage until the version is bumped.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 5 ===== -->
 <details id="d5">
-  <summary><span class="diagram-num">5</span><h2>Cross-Domain Signal Detection</h2></summary>
+  <summary><span class="diagram-num">5</span><h2>Cross-Domain Signal Detection</h2><span class="badge b-partial">1 of 6 live</span></summary>
   <div class="section-body">
-    <p>5 signals in DT_SIGNALS_FAST. MULE_RING_CANDIDATE is a Tier 1 on-demand agent tool (recursive CTE). FRAUD_BORROWER_OVERLAP is Tier 2.</p>
+    <p>Solid green is built and verified (recall and precision 10/10 at party-month grain, false-positive control clean). Dashed boxes are future scope; their clauses and config are already in place.</p>
     <pre class="mermaid">
 flowchart TB
-    subgraph DATA["Input Data"]
-        VEL["Velocity Features"] & KYC["KYC Profile"] & GRAPH["Relationship Graph"] & PEP["Sanctions Lists"] & DEV["Device Fingerprints"]
+    subgraph T1["Tier 1 — DT_SIGNALS_FAST"]
+        S1["STRUCTURING_CROSS_ACCOUNT<br/>built<br/>cash credits at 90-99.9% of the CTR line<br/>2+ accounts, 30-day window"]
+        S2["INCOME_ACTIVITY_MISMATCH<br/>future scope"]
+        S3["SANCTIONS_MATCH_NEW<br/>future scope"]
+        S4["RAPID_CREDIT_VELOCITY<br/>future scope"]
+        S5["SHARED_DEVICE_CLUSTER<br/>future scope"]
     end
-    subgraph T1["TIER 1 — 5 in DT_SIGNALS_FAST"]
-        S1["STRUCTURING_CROSS_ACCOUNT\nSub-threshold splits vs 10L CTR"]
-        S2["INCOME_ACTIVITY_MISMATCH\n30d inflows vs declared income"]
-        S3["SANCTIONS_MATCH_NEW\nExact join on DT_SANCTIONS"]
-        S4["RAPID_CREDIT_VELOCITY\nN+ credits, M+ remitters, D days"]
-        S5["SHARED_DEVICE_CLUSTER\n3+ accounts, same fingerprint"]
+    subgraph T1T["Tier 1 — on-demand tool"]
+        S6["MULE_RING_CANDIDATE<br/>future scope"]
     end
-    subgraph T1T["TIER 1 — Agent Tool"]
-        S6["MULE_RING_CANDIDATE\nRecursive CTE, depth-3 cycle\nNot a DT"]
+    subgraph T2["Tier 2"]
+        S7["FRAUD_BORROWER_OVERLAP<br/>future scope"]
     end
-    subgraph T2["TIER 2"]
-        S7["FRAUD_BORROWER_OVERLAP"]
+    subgraph LIQ["Liquidity check (view, not a signal)"]
+        L1["V_STRUCTURAL_LIQUIDITY<br/>cumulative mismatch vs RBI limits"]
     end
-    VEL --> S1 & S2 & S4
-    KYC --> S1 & S2
-    PEP --> S3
-    DEV & GRAPH --> S5
-    GRAPH --> S6
-    style T1 fill:#dcfce7,stroke:#16a34a,stroke-width:3px
-    style T1T fill:#dbeafe,stroke:#2563eb,stroke-width:3px
-    style T2 fill:#fef3c7,stroke:#d97706,stroke-width:2px,stroke-dasharray: 5 5
-    style S6 fill:#2563eb,color:#fff
+    style S1 fill:#16a34a,color:#fff
+    style S2 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style S3 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style S4 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style S5 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style S6 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style S7 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style L1 fill:#dbeafe,stroke:#2563eb
+    style T1 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style LIQ fill:#eff6ff,stroke:#2563eb
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> <code>RULE_DEFINITION</code> holds one rule (v1, party-window grain, severity HIGH). The structuring rule fires when a party has cash credits inside the sub-threshold band across at least two accounts in one tumbling 30-day window; the signal key is <code>rule|PARTY|window_start</code>. The liquidity check compares cumulative maturity mismatch with governed tolerance clauses (the 8-14 day bucket is built to breach); it is a view the app reads, not a signal.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 6 ===== -->
 <details id="d6">
-  <summary><span class="diagram-num">6</span><h2>Signal-to-Artifact Pipeline</h2></summary>
+  <summary><span class="diagram-num">6</span><h2>Signal-to-Artifact Pipeline</h2><span class="badge b-built">Built</span></summary>
   <div class="section-body">
-    <p>The evidence chain: 7 stages from detection through human attestation.</p>
+    <p>Each stage is a stored procedure; the model is optional and confined to the draft step.</p>
     <pre class="mermaid">
 flowchart LR
-    S["1. SIGNAL\nRule fires"] --> C["2. CASE\nGroup signals\nSLA clock"] --> E["3. EVIDENCE\nPointers + query log\nTime Travel"] --> F["4. FINDING\nLLM narrative\n+ citations"] --> A["5. ARTIFACT\nSTR XML\nSHA-256 hash"] --> R["6. REVIEW\nAdversarial check\nAPPROVE/REJECT"]
-    R -->|"REJECT"| A
-    R -->|"APPROVE"| AT["7. ATTEST\nHuman sign-off\nPrincipal Officer"]
+    S["1. SIGNAL<br/>ROUTE_SIGNALS<br/>MERGE on business key"] --> C["2. CASE<br/>CASE_RECORD + CASE_SIGNAL<br/>deterministic case id"] --> E["3. EVIDENCE<br/>GATHER_EVIDENCE<br/>4 logged queries<br/>result snapshot + SQL-1 hash"] --> F["4. FINDING<br/>DRAFT_STR<br/>TEMPLATE_V1, 13 computed figures<br/>optional AI draft v n+1"] --> A["5. ARTIFACT<br/>JSON content<br/>SHA-256 content hash"] --> R["6. REVIEW<br/>REVIEW_STR<br/>deterministic, no model<br/>5 checks"]
+    R -->|"REJECT: redraft"| F
+    R -->|"APPROVE"| AT["7. ATTEST<br/>ATTEST_STR<br/>officer role in DB<br/>FILED simulated"]
     style S fill:#dbeafe,stroke:#2563eb
     style E fill:#d1fae5,stroke:#059669
     style A fill:#fce7f3,stroke:#db2777
     style R fill:#fee2e2,stroke:#dc2626
     style AT fill:#f0fdf4,stroke:#16a34a
     </pre>
+    <div class="asbuilt"><strong>As built:</strong>
+      <ul>
+        <li><strong>Re-verification</strong> reruns each logged query from its stored text and bind, canonicalises the result (<code>OBJECT_CONSTRUCT_KEEP_NULL</code> rows sorted by their own JSON, SHA-256 of the JSON) and compares with the hash taken at gather time. Row and column order cannot change the hash. Time Travel is not used.</li>
+        <li><strong>Reviewer checks</strong> (<code>REVIEW_STR</code>): numeric recompute (logged hash versus fresh hash, and every figure versus its source row); citation resolution; clause in effect for every deposit date; schema and unfilled placeholders; narrative trace (every rupee amount, date and count in the prose must equal a computed figure, and lakh/crore rounding is rejected).</li>
+        <li><strong>Maker-checker:</strong> <code>ATTEST_STR</code> runs with caller's rights, requires the compliance role in session, requires the latest review to be APPROVE, and requires stored, recomputed and reviewed hashes to match. A refused attempt is logged <code>REFUSED</code>.</li>
+        <li><strong>Hero demo:</strong> draft v1 carries a deliberately planted defect and is rejected with 2 defects; v2 passes all 5 checks. An AI narrative that self-approved but stated an unsupported total was rejected by the same reviewer.</li>
+        <li><strong>Format:</strong> the artifact is JSON; an XML rendering of the STR is future scope.</li>
+      </ul>
+    </div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 7 ===== -->
 <details id="d7">
-  <summary><span class="diagram-num">7</span><h2>Single Agent Architecture — Four Modes</h2></summary>
+  <summary><span class="diagram-num">7</span><h2>Agent Architecture — Procedures plus One Cortex Agent</h2><span class="badge b-built">Built (redrawn)</span></summary>
   <div class="section-body">
-    <p>One Cortex Agent, four operational modes via system prompt. No multi-agent orchestration.</p>
+    <p>The design's single four-mode agent became deterministic procedures for every fixed step, with one Cortex agent used only where drafting prose benefits from planning. The six <code>agent_mode</code> values in the audit log map as shown.</p>
     <pre class="mermaid">
 flowchart TB
     subgraph TRIG["Triggers"]
-        STREAM["SIGNALS_STREAM\n+ ROUTE_SIGNALS"] & SCHED["Scheduled\nAutomations"] & USER["User Query"]
+        STREAM["SIGNALS_STREAM<br/>+ ROUTE_SIGNALS task"]
+        USER["Streamlit buttons /<br/>Slack bot"]
+        SIMC["SIM_CONTROL<br/>reset, simulator"]
     end
-    subgraph AGENT["Single Cortex Agent"]
-        SE["SENTINEL\nTriage + prioritize"]
-        IN["INVESTIGATOR\nGather evidence"]
-        DR["DRAFTER\nCompose finding + STR"]
-        RE["REVIEWER\nAdversarial validation"]
+    subgraph PROC["Deterministic procedures (RISK_COPILOT_DEV)"]
+        INV["GATHER_EVIDENCE<br/>mode INVESTIGATOR"]
+        DRA["DRAFT_STR<br/>mode DRAFTER<br/>TEMPLATE_V1"]
+        REV["REVIEW_STR<br/>mode REVIEWER<br/>no model"]
+        ATT["ATTEST_STR<br/>mode REVIEWER<br/>human gate"]
+        SEN["AI_AGG triage<br/>mode SENTINEL"]
+        OPE["SIM_CONTROL, RESET_CASES<br/>mode OPERATOR"]
     end
-    subgraph TOOLS["8 Stored Procedures"]
-        T1["open_case"] & T2["gather_evidence_bundle"] & T3["screen_sanctions_batch"] & T4["traverse_counterparty_graph"] & T5["traverse_mule_ring"] & T6["generate_str_xml"] & T7["validate_filing_schema"] & T8["escalate_to_principal_officer"]
+    subgraph AGENTIC["Optional AI STR path (mode AGENTIC)"]
+        GEN["GENERATE_AI_STR<br/>spend cap, evidence package,<br/>PAN masked"]
+        subgraph AGDB["RISK_COPILOT_AGENT.STR"]
+            AGT["RC_STR_AGENT<br/>cannot read data DB,<br/>cannot attest or file"]
+            T1["get_evidence_package"]
+            T2["draft_str_narrative<br/>claude-sonnet-4-6"]
+            T3["review_str_draft<br/>openai-gpt-5.1, fail closed"]
+            T4["render_str_pdf"]
+        end
+        SUB["SUBMIT_AI_DRAFT<br/>FINDING n+1"]
     end
-    STREAM --> SE
-    SCHED --> SE
-    USER --> IN
-    SE --> IN --> DR --> RE
-    RE -->|"REJECT"| DR
-    RE -->|"APPROVE"| OUT["CASE + FINDING\n+ ARTIFACT + REVIEW\n+ AGENT_ACTION_LOG"]
-    AGENT --> TOOLS
-    style AGENT fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-    style TOOLS fill:#f0fdf4,stroke:#059669,stroke-width:2px
-    style RE fill:#dc2626,color:#fff
-    style SE fill:#2563eb,color:#fff
+    ANA["Cortex Analyst over<br/>SV_RISK_COPILOT<br/>mode INVESTIGATOR"]
+    STREAM --> INV
+    USER --> INV --> DRA --> REV
+    REV -->|"APPROVE"| ATT
+    REV -->|"REJECT"| DRA
+    USER --> GEN --> AGT
+    AGT --> T1 & T2 & T3 & T4
+    AGT --> SUB --> REV
+    USER --> ANA
+    USER --> SEN
+    SIMC --> OPE
+    style AGDB fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style PROC fill:#f0fdf4,stroke:#059669,stroke-width:2px
+    style REV fill:#dc2626,color:#fff
+    style ATT fill:#16a34a,color:#fff
     </pre>
+    <div class="asbuilt"><strong>As built:</strong>
+      <ul>
+        <li>The agent's own APPROVE is only a write gate. The figures, cited clauses and evidence ids are copied unchanged from the base finding, and <code>REVIEW_STR</code> then re-proves them; its narrative trace is what holds the AI prose to the numbers.</li>
+        <li>The drafter and the cross-reviewer come from different model families by design; the reviewer falls back to <code>llama3.3-70b</code> and never to an Anthropic model.</li>
+        <li>If the agent stops short, <code>GENERATE_AI_STR</code> runs the same tools in a fixed order (draft, review, one redraft on REJECT).</li>
+        <li>The data account and the agent database now live in the same Snowflake account. The agent runs as a service user with a role that has no grant on the data database; the original two-account bridge is retired for the Streamlit path, though the Slack bot still uses the laptop pipeline.</li>
+        <li>The design's <code>open_case</code>, <code>generate_str_xml</code>, <code>validate_filing_schema</code> and <code>escalate_to_principal_officer</code> tools are covered by the procedures above; XML generation and validation are future scope.</li>
+      </ul>
+    </div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 8 ===== -->
 <details id="d8">
-  <summary><span class="diagram-num">8</span><h2>LLM Boundary</h2></summary>
+  <summary><span class="diagram-num">8</span><h2>LLM Boundary</h2><span class="badge b-built">Built (updated)</span></summary>
   <div class="section-body">
     <pre class="mermaid">
 flowchart LR
     subgraph DET["DETERMINISTIC — SQL / Python"]
         D1["Amounts, counts, ratios"]
-        D2["Threshold comparisons"]
-        D3["Sanctions exact join"]
-        D4["XML schema validation"]
-        D5["Velocity features"]
-        D6["Rule firing decisions"]
+        D2["Threshold comparisons<br/>from POLICY_CLAUSE"]
+        D3["Rule firing decisions"]
+        D4["SQL-1 canonical result hashing"]
+        D5["Reviewer: recompute,<br/>citations, narrative trace"]
+        D6["Maker-checker role gate"]
         D7["Content hashing SHA-256"]
     end
-    subgraph LLM["LLM — Cortex Agent"]
-        L1["Question understanding"]
-        L2["Evidence materiality selection"]
-        L3["Narrative composition"]
-        L4["Explaining rules in plain language"]
-        L5["Suggesting next steps"]
-        L6["Reconciling conflicting evidence"]
+    subgraph LLM["LLM — Cortex"]
+        L1["STR narrative prose<br/>claude-sonnet-4-6, optional"]
+        L2["Cross-family review gate<br/>before write-back"]
+        L3["AI_AGG pattern summary<br/>beside the evidence"]
+        L4["Analyst: question to SQL"]
     end
     subgraph RULE["THE RULE"]
-        R["No number in a filing\nis ever produced by\na language model."]
+        R["No number in a filing<br/>is ever produced by<br/>a language model."]
     end
     style DET fill:#dcfce7,stroke:#16a34a,stroke-width:2px
     style LLM fill:#dbeafe,stroke:#2563eb,stroke-width:2px
     style RULE fill:#fef2f2,stroke:#dc2626,stroke-width:3px
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> the rule is enforced rather than stated. Computed figures are written by SQL into <code>FINDING.computed_values</code>; model output is prose, and the deterministic <code>narrative_trace</code> check rejects any amount, date or count that is not one of those figures. Future scope: sanctions name matching (planned as <code>JAROWINKLER_SIMILARITY</code>; exact match signals, fuzzy match only queues review) and XML schema validation.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 9 ===== -->
 <details id="d9">
-  <summary><span class="diagram-num">9</span><h2>Notification &amp; Case Routing</h2></summary>
+  <summary><span class="diagram-num">9</span><h2>Notification &amp; Case Routing</h2><span class="badge b-built">Built (redrawn)</span></summary>
   <div class="section-body">
     <pre class="mermaid">
 flowchart TB
-    DT["DT_SIGNALS_FAST"] --> STR["SIGNALS_STREAM"] --> TASK["ROUTE_SIGNALS Task"]
-    TASK --> CHK{"Existing case\nfor party?"}
-    CHK -->|"Yes"| ATT["Attach to case"]
-    CHK -->|"No + high severity"| CRE["Create new case"]
-    CHK -->|"No + low"| LOG["Log only"]
-    ATT & CRE --> N["Notification Routing"]
-    subgraph N["Notifications"]
-        N1["Slack #fraud-ops"] & N2["Compliance Queue"] & N3["CRO Dashboard"] & N4["Immediate: Sanctions"]
-    end
+    DT["DT_SIGNALS_FAST"] --> STR["SIGNALS_STREAM"] --> TASK["ROUTE_SIGNALS task<br/>triggered by SYSTEM$STREAM_HAS_DATA<br/>suspended in dev, resumed in demo"]
+    TASK --> R["ROUTE_SIGNALS<br/>one transaction, rollback on error"]
+    R --> M["1. MERGE into SIGNAL<br/>on signal_business_key"]
+    M --> O{"2. Party has an open case?<br/>OPEN / INVESTIGATING / DRAFTED"}
+    O -->|"No, severity at least MEDIUM"| NEW["Open new case<br/>deterministic case id"]
+    O -->|"Yes"| ATT["Attach owed signals to<br/>earliest open case"]
+    NEW --> ATT
+    ATT --> RET["3. Re-type to CROSS_DOMAIN<br/>if 2+ distinct rules"]
+    RET --> EVT["Case events"]
+    EVT -.-> EML["CASE_EVENTS_ALERT email<br/>ids only, defined, ready to enable"]
+    EVT -.-> SLK["Slack bot<br/>separate path, on request"]
     style DT fill:#2563eb,color:#fff
     style STR fill:#7c3aed,color:#fff
     style TASK fill:#059669,color:#fff
-    style N4 fill:#dc2626,color:#fff
+    style EML fill:#fef3c7,stroke:#d97706,stroke-dasharray: 5 5
+    style SLK fill:#fef3c7,stroke:#d97706,stroke-dasharray: 5 5
     </pre>
-    <div class="decision"><strong>Case dedup:</strong> "Existing" = CASE with status IN (OPEN, INVESTIGATING, DRAFTED) for same party_id. Different signal types merge into one case with case_type = CROSS_DOMAIN.</div>
+    <div class="decision"><strong>Dedup:</strong> keyed on <code>signal_business_key = rule|party|window_start</code>, so a dynamic table that recomputes its full result set every refresh cannot create duplicate signals or cases. A re-fire updates the signal only if its evidence or severity changed. Verified live: 10 signals map to 10 distinct keys and 10 cases.</div>
+    <div class="asbuilt"><strong>As built:</strong> the "Log only" branch for low severity is the same code path (signals below <code>min_severity_for_case</code> are merged but never attached). After a case reaches REVIEWED or CLOSED, a new signal for that party opens a fresh case. A stream on a dynamic table cannot use initial rows, so <code>ROUTE_SIGNALS(TRUE)</code> reads the full table for baselines. Attaching a second, different rule to an existing case is implemented in the router SQL and comes into play as more rules arrive. The Cases and Officer pages of the app serve as the compliance queue; a CRO dashboard is future scope.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 10 ===== -->
 <details id="d10">
-  <summary><span class="diagram-num">10</span><h2>Policy Ingestion Pipeline</h2></summary>
+  <summary><span class="diagram-num">10</span><h2>Policy Ingestion Pipeline</h2><span class="badge b-future">Future scope</span></summary>
   <div class="section-body">
-    <p>8 real regulatory PDFs + 4 synthesized internal docs. Two-layer output: Cortex Search (retrieval) + POLICY_CLAUSE table (execution).</p>
+    <p>PDF-based ingestion is future scope and is shown below as the target design. The as-built path (governed, hand-seeded clauses) is described underneath.</p>
     <pre class="mermaid">
 flowchart TB
-    PDF["PDFs on @POLICY_DOCS stage"] --> PARSE["AI_PARSE_DOCUMENT\nLAYOUT mode"] --> EXTRACT["AI_EXTRACT\nclause_text, metric,\nthreshold, effective_date"] --> STAGE["RAW_POLICY_CLAUSES"]
+    PDF["PDFs on @POLICY_DOCS stage"] --> PARSE["AI_PARSE_DOCUMENT<br/>LAYOUT mode"] --> EXTRACT["AI_EXTRACT<br/>clause_text, metric,<br/>threshold, effective_date"] --> STAGE["RAW_POLICY_CLAUSES"]
     STAGE --> DIFF["DIFF_AND_PROPOSE"] --> QUEUE["Review Queue"] --> HUMAN["Human Review"]
-    HUMAN -->|"Approved"| PC["POLICY_CLAUSE Table\nExecution Layer"]
+    HUMAN -->|"Approved"| PC["POLICY_CLAUSE Table<br/>Execution Layer"]
     HUMAN -->|"Rejected"| DISC["Discarded"]
-    STAGE --> CS["Cortex Search Service\nRetrieval Layer\nHybrid keyword + semantic"]
-    style PARSE fill:#dc2626,color:#fff
-    style EXTRACT fill:#dc2626,color:#fff
-    style HUMAN fill:#f59e0b,color:#fff
-    style CS fill:#7c3aed,color:#fff
+    STAGE --> CS["Cortex Search Service<br/>Retrieval Layer"]
+    style PARSE fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style EXTRACT fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style STAGE fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style DIFF fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style QUEUE fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style HUMAN fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     style PC fill:#059669,color:#fff
+    style CS fill:#7c3aed,color:#fff
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> <code>conf/detection.yml</code> (every clause with provenance) seeds <code>POLICY_CLAUSE</code> through an insert-only stage that fails on drift. <code>V_POLICY_CLAUSE_CURRENT</code> exposes the latest version of each clause; detection SQL and the reviewer read only that view. <code>POLICY_CLAUSE_CHUNKS</code> is rebuilt on each deploy, one chunk per clause, and <code>REGULATORY_SEARCH_SVC</code> indexes it for the AI STR path. <code>POLICY_CHANGE_PROPOSALS</code> is in place for the human-review step that PDF ingestion will feed.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 11 ===== -->
 <details id="d11">
-  <summary><span class="diagram-num">11</span><h2>Governance Mechanisms</h2></summary>
+  <summary><span class="diagram-num">11</span><h2>Governance Mechanisms</h2><span class="badge b-partial">Partial</span></summary>
   <div class="section-body">
     <pre class="mermaid">
 flowchart TB
-    subgraph G1["1. RLS + Masking"]
-        A["Branch-level row access\nSame question, two roles,\ndifferent answers"]
+    subgraph G1["1. RLS + masking — future scope"]
+        A["Roles exist: branch analysts,<br/>compliance officer<br/>Policies to be attached<br/>Semantic view excludes sensitive columns"]
     end
-    subgraph G2["2. Audit Trail"]
-        B["AGENT_ACTION_LOG\nEvery tool call, SQL hash,\nmodel version — append-only"]
+    subgraph G2["2. Audit trail — built"]
+        B["AGENT_ACTION_LOG<br/>tool, args, user, role, model,<br/>outcome, refusal reason<br/>214 rows"]
     end
-    subgraph G3["3. Reproducibility"]
-        C["EVIDENCE_QUERY_LOG\nRe-run SQL via Time Travel\nCompare result hashes"]
+    subgraph G3["3. Reproducibility — built"]
+        C["EVIDENCE_QUERY_LOG<br/>result snapshot + SQL-1 hash<br/>recomputed by REVIEW_STR"]
     end
-    subgraph G4["4. Refusal"]
-        D["No data in scope\nAmbiguous entity\nOut-of-scope question\nStale data"]
+    subgraph G4["4. Refusal — core gates live"]
+        D["ATTEST_STR role gate<br/>AI spend cap<br/>Agent cannot write or attest<br/>No out-of-scope question suite"]
     end
-    subgraph G5["5. Maker-Checker"]
-        E["DRAFT - REVIEWED -\nAPPROVED - FILED\nPrincipal Officer signs"]
+    subgraph G5["5. Maker-checker — built"]
+        E["Analyst drafts, officer attests<br/>enforced in the database<br/>by IS_ROLE_IN_SESSION"]
     end
-    subgraph G6["6. Data Quality"]
-        F["DMFs on every DT\nNull rates, freshness,\nreferential integrity"]
+    subgraph G6["6. Data quality — future scope"]
+        F["DMFs to be attached<br/>DATA_QUALITY_LOG ready for results"]
     end
-    style G1 fill:#dbeafe,stroke:#2563eb
+    style G1 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     style G2 fill:#fef3c7,stroke:#d97706
     style G3 fill:#d1fae5,stroke:#059669
     style G4 fill:#fee2e2,stroke:#dc2626
     style G5 fill:#fce7f3,stroke:#db2777
-    style G6 fill:#f3e8ff,stroke:#7c3aed
+    style G6 fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     </pre>
+    <div class="asbuilt"><strong>As built:</strong>
+      <ul>
+        <li><strong>Maker-checker</strong> has two layers. On the hosted app, the signed-in officer's session switches to an officer service user, so <code>ATTEST_STR</code> enforces the role in the database; the analyst's attempt is refused and logged. Inside Streamlit-in-Snowflake the app runs with owner's rights, so there the sign-in page does the separating.</li>
+        <li><strong>Ground truth</strong> is granted to no consumer role. The app reads detection scores through the secure view <code>V_EVAL_SCORES</code>, and the semantic view excludes labels, PAN, Aadhaar, phone and free text.</li>
+        <li><strong>Next step:</strong> attach row access and masking policies to the branch roles already in place. Today the app's region filter is a UI sidebar filter.</li>
+        <li>The append-only audit log is deliberately broken only by <code>RESET_CASES</code> and the simulator <code>ARM</code>, which log themselves as <code>OPERATOR</code> rows.</li>
+      </ul>
+    </div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 12 ===== -->
 <details id="d12">
-  <summary><span class="diagram-num">12</span><h2>Testing &amp; Validation Framework</h2></summary>
+  <summary><span class="diagram-num">12</span><h2>Testing &amp; Validation Framework</h2><span class="badge b-partial">Partial</span></summary>
   <div class="section-body">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Suite</th><th>What</th><th>Metric</th><th>Target</th><th>Tier</th></tr></thead>
+        <thead><tr><th>Suite</th><th>Design</th><th>Target</th><th>State</th></tr></thead>
         <tbody>
-          <tr><td>1. Detection Quality</td><td>Per-typology against ground truth</td><td>Precision, Recall, F1</td><td>F1 > 0.7</td><td><span class="t1">BUILD</span></td></tr>
-          <tr><td>2. Text-to-SQL</td><td>15-20 golden questions</td><td>Result match (not SQL match)</td><td>> 85%</td><td><span class="t1">BUILD</span></td></tr>
-          <tr><td>3. Groundedness</td><td>Citation resolves to EVIDENCE row</td><td>LLM-as-Judge + deterministic</td><td>100%</td><td><span class="cut">FUTURE</span></td></tr>
-          <tr><td>4. Adversarial</td><td>Prompt injection, near-threshold, refusal</td><td>Correct behavior count</td><td>6/6</td><td><span class="cut">FUTURE</span></td></tr>
-          <tr><td>5. Pipeline Health</td><td>DMFs on every DT</td><td>Null rates, freshness, RI</td><td>7/7 healthy</td><td><span class="cut">FUTURE</span></td></tr>
+          <tr><td>1. Detection quality</td><td>Per-typology precision / recall against ground truth</td><td>F1 &gt; 0.7</td><td><span class="t1">BUILT</span> <code>riskcopilot verify</code> scores at party-month grain; recall and precision 10/10 for the one rule; 6 runs in <code>EVAL_RUN</code></td></tr>
+          <tr><td>2. Text-to-SQL</td><td>15-20 golden questions, result match</td><td>&gt; 85%</td><td><span class="fut">FUTURE SCOPE</span> <code>GOLDEN_QUESTIONS</code> and the <code>eval</code> command are in place for it</td></tr>
+          <tr><td>3. Groundedness</td><td>Citation resolves to an evidence row</td><td>100%</td><td><span class="t2">PARTIAL</span> done deterministically inside <code>REVIEW_STR</code> (citation resolution, narrative trace) on every STR, but not as a separate scored suite</td></tr>
+          <tr><td>4. Adversarial</td><td>Prompt injection, near-threshold, refusal</td><td>6/6</td><td><span class="fut">FUTURE SCOPE</span> one live adversarial-style check exists: the planted-defect draft must be rejected</td></tr>
+          <tr><td>5. Pipeline health</td><td>DMFs on every dynamic table</td><td>7/7 healthy</td><td><span class="fut">FUTURE SCOPE</span> DMF attachment is the next increment</td></tr>
+          <tr><td>Build-time</td><td>(not in design)</td><td>—</td><td><span class="t1">BUILT</span> offline unit tests (28 files) and 15 data-generation gates (illicit-rate band, money conservation, referential integrity, label leakage, budget, and others); <code>riskcopilot doctor</code> preflight with capability gating</td></tr>
         </tbody>
       </table>
     </div>
@@ -588,95 +829,128 @@ flowchart TB
 
 <!-- ===== DIAGRAM 13 ===== -->
 <details id="d13">
-  <summary><span class="diagram-num">13</span><h2>MCP &amp; External Loop Closing</h2></summary>
+  <summary><span class="diagram-num">13</span><h2>MCP &amp; External Loop Closing</h2><span class="badge b-future">Future scope</span></summary>
   <div class="section-body">
+    <p>Roadmap diagram. None of the Jira, Drive or scheduled-automation paths below exist.</p>
     <pre class="mermaid">
 flowchart TB
-    AGENT["Cortex Agent"] --> JIRA["Jira\nCase to ticket"] & SLACK["Slack\nMaker-checker approval"] & GDRIVE["Google Drive\nFiling storage"]
-    subgraph AUTO["3 Scheduled Automations"]
-        A1["Overnight Triage\n02:00 daily"] --> JIRA
-        A2["Monthly CTR\n1st of month"] --> SLACK
-        A3["Weekly Reg-Check\nSun 22:00"] --> JIRA
+    AGENT["Cortex Agent"] --> JIRA["Jira<br/>Case to ticket"] & SLACK["Slack<br/>Maker-checker approval"] & GDRIVE["Google Drive<br/>Filing storage"]
+    subgraph AUTO["3 Scheduled Automations (future scope)"]
+        A1["Overnight Triage<br/>02:00 daily"] --> JIRA
+        A2["Monthly CTR<br/>1st of month"] --> SLACK
+        A3["Weekly Reg-Check<br/>Sun 22:00"] --> JIRA
     end
     style AGENT fill:#2563eb,color:#fff
-    style AUTO fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style AUTO fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5
+    style JIRA fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style GDRIVE fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> external delivery is the standalone Slack bot (<code>bridge/</code>, Socket Mode, no public URL; it is not an MCP connector) and the case-event email alert, which is defined and ready to enable. External Access Integration was gated on the trial and is recorded as still blocked on the current account; <code>mcp.jira.enabled</code> and <code>mcp.slack.enabled</code> are false in <code>conf/external.yml</code>. CTR pre-assembly and scheduled automations are future scope.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 14 ===== -->
 <details id="d14">
-  <summary><span class="diagram-num">14</span><h2>Demo Spine — One Entity, Four Lenses</h2></summary>
+  <summary><span class="diagram-num">14</span><h2>Demo Spine — One Entity</h2><span class="badge b-partial">Partial (structuring lens)</span></summary>
   <div class="section-body">
-    <p>Party <strong>Rajesh Kumar (P-10042)</strong> traced through fraud, AML, and credit.</p>
+    <p>The hero is chosen by a selection step, then confirmed by detection: <code>CONFIRMED_BY_DETECTION</code> in <code>conf/generated/demo_entity.dev.verified.yml</code>. Party ids are generated, so the design's "P-10042" was fiction.</p>
     <pre class="mermaid">
 flowchart TB
-    E["Rajesh Kumar\nP-10042"]
-    subgraph FRAUD["Lens 1: FRAUD"]
-        F1["RAPID_CREDIT_VELOCITY\n12 credits, 8 remitters, Rs 47L / 3 days"]
-        F2["SHARED_DEVICE_CLUSTER\n3 accounts share fingerprint"]
-        F3["MULE_RING_CANDIDATE\nDepth-3 fund-flow cycle"]
-        F1 --> F2 --> F3
+    E["Kamya Dhar<br/>P-754971478708, Mumbai<br/>declared income Rs 38.5L"]
+    subgraph AML["Lens 1: AML structuring (built)"]
+        A1["10 cash deposits, Rs 94.03 lakh<br/>2 accounts, all below the Rs 10 lakh line<br/>3-8 Sep 2022"] --> A2["Signal STRUCTURING_CROSS_ACCOUNT<br/>key ...|P-754971478708|2022-08-26"] --> A3["CASE-4399c4c86db5c6ea"]
+        A3 --> A4["Gather evidence<br/>4 logged queries, 13 figures"] --> A5["Draft v1 with planted defect<br/>Reviewer: REJECT, 2 defects"] --> A6["Draft v2<br/>Reviewer: APPROVE, 5 of 5 checks"] --> A7["Officer attests<br/>STR FILED, simulated"]
     end
-    subgraph AML["Lens 2: AML"]
-        A1["Case opened"] --> A2["Graph traces ring\n4 accounts, Rs 1.2Cr"] --> A3["STR drafted\nevery number traced"] --> A4["Principal Officer attests"]
+    subgraph AI["Optional: AI STR + PDF (built)"]
+        G1["GENERATE_AI_STR<br/>sonnet draft, cross-family review,<br/>PDF"]
     end
-    subgraph CREDIT["Lens 3: CREDIT (Tier 2)"]
-        C1["Rs 15L loan, 42 DPD = SMA-1"] --> C2["Fraud triggers review\nStage 2"] --> C3["ECL: 12mo to Lifetime"]
+    subgraph FRAUD["Lens 2: Fraud (future scope)"]
+        F1["Rapid credit velocity, shared device,<br/>mule ring"]
     end
-    E --> FRAUD --> AML --> CREDIT
-    E --> CREDIT
+    subgraph CREDIT["Lens 3: Credit (future scope)"]
+        C1["SMA / ECL staging"]
+    end
+    E --> A1
+    A6 -.-> G1
+    E -.-> FRAUD
+    E -.-> CREDIT
     style E fill:#1e293b,color:#fff,stroke-width:3px
-    style FRAUD fill:#fef2f2,stroke:#dc2626,stroke-width:2px
     style AML fill:#fef3c7,stroke:#d97706,stroke-width:2px
-    style CREDIT fill:#eff6ff,stroke:#2563eb,stroke-width:2px,stroke-dasharray: 5 5
+    style AI fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style FRAUD fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
+    style CREDIT fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 5 5
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> only the AML structuring lens runs end to end. The demo profile (5,000 parties) deliberately fails its hero check because it waits on the rapid-credit and device-cluster cohorts (future scope). A separate liquidity page demonstrates a second regulatory-reporting lens (structural liquidity) without a party-level spine. Case ids are deterministic, so the hero case is the same id on every rebuild. The Principal Officer persona is Rajesh Menon, a different person from the hero.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 15 ===== -->
 <details id="d15">
-  <summary><span class="diagram-num">15</span><h2>Complete Storage Model</h2></summary>
+  <summary><span class="diagram-num">15</span><h2>Complete Storage Model</h2><span class="badge b-built">Built (redrawn)</span></summary>
   <div class="section-body">
     <pre class="mermaid">
 flowchart TB
-    subgraph IMM["Immutable Landing"]
-        RT["RAW_TRANSACTIONS"] & RE["RAW_EXPOSURES\nTier 2"] & RS["RAW_SANCTIONS_*"] & RP["RAW_PARTY_*"]
+    subgraph IMM["RAW — immutable landing (13 tables)"]
+        RT["RAW_TRANSACTIONS<br/>leg-level, no label"]
+        RA["RAW_AMLWORLD_TRANS / _ACCOUNTS"]
+        RP["RAW_PARTY_CBS / _KYC, RAW_ACCOUNTS,<br/>ID_MAP_PARTY / _ACCOUNT"]
+        RS["RAW_SANCTIONS_* (reserved)<br/>RAW_POLICY_CLAUSES"]
     end
-    subgraph DT1["Dynamic Tables — Tier 1"]
-        DTE["DT_ENRICHED\n1 min"] & DTV["DT_VELOCITY"] & DTS["DT_SIGNALS_FAST\n5 min"] & DTP["DT_DIM_PARTY\n1 day"] & DTR["DT_RELATIONSHIP\n1 day"] & DTSC["DT_SANCTIONS"]
+    subgraph CUR["CURATED — derived, safe to rebuild"]
+        DTS["5 dynamic tables"]
+        VW["V_TRANSACTION_PAIRS, V_STRUCTURAL_LIQUIDITY,<br/>V_EVAL_SCORES (secure)"]
+        ALM["ALM_CASHFLOW"]
+        SVW["SV_RISK_COPILOT<br/>semantic view"]
     end
-    subgraph GOV["Governed State"]
-        PC["POLICY_CLAUSE"] & TY["TYPOLOGY"] & RD["RULE_DEFINITION"]
+    subgraph GOV["GOVERNANCE — human-gated state (8 tables)"]
+        PC["POLICY_CLAUSE + V_POLICY_CLAUSE_CURRENT"]
+        TY["TYPOLOGY, RULE_DEFINITION"]
+        RS2["POLICY_CLAUSE_CHUNKS<br/>REGULATORY_SEARCH_SVC"]
+        REF["REF_FILING_TEMPLATES, REF_*"]
     end
-    subgraph EVC["Evidence Chain"]
-        SIG["SIGNAL"] --> CAS["CASE"] --> EVI["EVIDENCE"] --> FIN["FINDING"] --> REV["REVIEW"] -->|"approved"| ART["ARTIFACT"] --> ATT["ATTESTATION"]
+    subgraph EVC["EVIDENCE_CHAIN — append-only (9 tables)"]
+        SIG["SIGNAL"] --> CAS["CASE_RECORD + CASE_SIGNAL"] --> EVI["EVIDENCE + EVIDENCE_QUERY_LOG"] --> FIN["FINDING"] --> ART["ARTIFACT"] --> REV["REVIEW"]
+        ART --> ATT["ATTESTATION"]
     end
-    AUD["AGENT_ACTION_LOG"]
-    RT --> DTE --> DTV --> DTS
-    RP --> DTP --> DTE
-    RS --> DTSC --> DTS
-    TY --> RD --> DTS
+    subgraph AUD["AUDIT (3 tables)"]
+        AAL["AGENT_ACTION_LOG"]
+        CM["CHAT_MESSAGE"]
+        DQ["DATA_QUALITY_LOG (reserved)"]
+    end
+    subgraph GT["GROUND_TRUTH (6 tables) — no consumer grants"]
+        LB["TXN_LABELS, EVAL_GRAIN_PARTY_MONTH,<br/>INJECTED_TXN_PENDING, EVAL_RUN, ..."]
+    end
+    subgraph AGD["RISK_COPILOT_AGENT.STR"]
+        EP["EVIDENCE_PACKAGE, AI_DRAFT, AI_REVIEW,<br/>STR_REPORT, AGENT_RUN_LOG"]
+    end
+    RT --> DTS
+    RP --> DTS
     PC --> DTS
     DTS -.-> SIG
+    TY -.-> SIG
+    EVI --> EP
+    EP -.-> FIN
     style IMM fill:#faf5ff,stroke:#7c3aed
-    style DT1 fill:#eff6ff,stroke:#2563eb
+    style CUR fill:#eff6ff,stroke:#2563eb
     style GOV fill:#f0fdf4,stroke:#059669
     style EVC fill:#fef3c7,stroke:#d97706
-    style AUD fill:#dc2626,color:#fff
+    style AUD fill:#fee2e2,stroke:#dc2626
+    style GT fill:#f1f5f9,stroke:#64748b
+    style AGD fill:#f3e8ff,stroke:#7c3aed
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> 40 tables, 5 dynamic tables and 4 views across 7 schemas (<code>ML</code> is the seventh, reserved for scoring models; a <code>SLACK_BOT</code> schema holds the bot's hosting repo). The dev profile suffixes every object <code>_DEV</code>; the demo profile uses canonical names. Evidence returns from the agent database only as a draft that <code>SUBMIT_AI_DRAFT</code> writes as FINDING n+1.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 16 ===== -->
 <details id="d16">
-  <summary><span class="diagram-num">16</span><h2>System Boundary</h2></summary>
+  <summary><span class="diagram-num">16</span><h2>System Boundary</h2><span class="badge b-context">Context</span></summary>
   <div class="section-body">
-    <p><strong>Design principle: complement, do not compete.</strong> The CBS is the system of record. The TMS is the detection engine. The copilot bridges them.</p>
+    <p><strong>Design principle: complement, do not compete.</strong> The CBS is the system of record. The TMS is the detection engine. The copilot bridges them. This framing is unchanged by the build; the left-hand systems are represented only by synthetic data.</p>
     <pre class="mermaid">
 flowchart LR
     subgraph KEPT["Existing Systems"]
-        CBS["Core Banking\nTxns, accounts, GL"] & TMS["Transaction Monitor\nBlock/allow alerts"] & LMS["Loan Mgmt\nExposures, DPD"] & KYC["KYC Platform\nProfiles, PEP flags"]
+        CBS["Core Banking<br/>Txns, accounts, GL"] & TMS["Transaction Monitor<br/>Block/allow alerts"] & LMS["Loan Mgmt<br/>Exposures, DPD"] & KYC["KYC Platform<br/>Profiles, PEP flags"]
     end
     subgraph NEW["Risk Copilot — NEW"]
         B["Cross-Silo Bridge"] & C["Evidence Chain"] & P["Policy-as-Data"] & A["Audit-Ready Outputs"]
@@ -686,27 +960,28 @@ flowchart LR
     style NEW fill:#eff6ff,stroke:#2563eb,stroke-width:3px
     style B fill:#2563eb,color:#fff
     </pre>
-    <p><strong>Does NOT:</strong> process transactions, make block/allow decisions, manage loans, onboard customers, auto-activate regulatory changes, file STRs autonomously, or ingest real customer data.</p>
+    <p><strong>Does NOT:</strong> process transactions, make block/allow decisions, manage loans, onboard customers, auto-activate regulatory changes, file STRs autonomously, or ingest real customer data. In the build, <code>FILED</code> is a simulated status and the Principal Officer's attestation is the only thing that sets it.</p>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 17 ===== -->
 <details id="d17">
-  <summary><span class="diagram-num">17</span><h2>CoCo Lifecycle Evidence Map</h2></summary>
+  <summary><span class="diagram-num">17</span><h2>CoCo Lifecycle Evidence Map</h2><span class="badge b-context">Context</span></summary>
   <div class="section-body">
+    <p>A process map of how the project was built with Cortex Code, not a runtime component. Transcripts are kept in <code>docs/coco-transcripts/</code>.</p>
     <pre class="mermaid">
 flowchart LR
     subgraph P["1. PLANNING"]
-        P1["CoCo transcripts"] & P2["Data exploration"] & P3["Ontology draft"] & P4["This design doc"]
+        P1["CoCo transcripts"] & P2["Capability probe sweep"] & P3["Design docs"]
     end
     subgraph D["2. DEVELOPMENT"]
-        D1["Git history:\nDDL, semantic views,\nagent config, procs"] & D2["Model routing log"]
+        D1["Git history:<br/>DDL, semantic view,<br/>agent config, procedures"] & D2["Build log and<br/>decision records"]
     end
     subgraph E["3. EXECUTION"]
-        E1["3 automations\nwith run history"] & E2["Inspectable\nCortex threads"] & E3["Cross-surface\nCLI + Desktop + CoWork"]
+        E1["Cortex Code CLI<br/>and Desktop sessions"] & E2["Agent run history<br/>AGENT_RUN_LOG, AGENT_ACTION_LOG"]
     end
     subgraph T["4. TESTING"]
-        T1["Eval runs\nin Snowsight"] & T2["Golden-question\nresults"] & T3["Adversarial\npass/fail"]
+        T1["riskcopilot verify<br/>EVAL_RUN"] & T2["Unit tests and<br/>generation gates"] & T3["Reviewer rejections<br/>of planted defects"]
     end
     P --> D --> E --> T
     style P fill:#dbeafe,stroke:#2563eb
@@ -714,33 +989,45 @@ flowchart LR
     style E fill:#fef3c7,stroke:#d97706
     style T fill:#fee2e2,stroke:#dc2626
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> the design's "3 automations with run history" and "golden-question results" are on the roadmap; the evidence above is what exists today.</div>
   </div>
 </details>
 
 <!-- ===== DIAGRAM 18 ===== -->
 <details id="d18">
-  <summary><span class="diagram-num">18</span><h2>Replay Harness Architecture</h2></summary>
+  <summary><span class="diagram-num">18</span><h2>Replay Harness Architecture</h2><span class="badge b-built">Built (redrawn)</span></summary>
   <div class="section-body">
-    <p>Python script: <code>INSERT INTO</code> in batches with <code>time.sleep()</code>. Snowpipe Streaming is future scope.</p>
+    <p>Two ways to stream the same pre-generated ledger into the live pipeline: the original laptop script, and an in-Snowflake simulator driven from the app.</p>
     <pre class="mermaid">
 flowchart LR
-    subgraph PRE["Pre-Generated"]
-        L1["L1: Entities\nCSV/Parquet"] & L2["L2: Txns\nsorted by timestamp"] & L3["L3: Narratives"]
+    subgraph PRE["Pre-generated, labelled offline"]
+        L1["Entities + ledger Parquet"]
+        PEND["INJECTED_TXN_PENDING<br/>structuring bursts, as ratios"]
     end
-    subgraph HARNESS["Replay Harness"]
-        LOOP["INSERT loop\nbatch + sleep"] & CHAOS["--inject\nstructuring_burst\n15 deposits of 9.5L"]
+    subgraph H1["Path A: laptop"]
+        LD["riskcopilot load --hold-back<br/>deletes legs at or after the cut"]
+        RPL["riskcopilot replay<br/>6-hour sim step every 5 s<br/>batches up to 500 legs<br/>restart-safe NOT EXISTS"]
+        INJ["--inject<br/>releases one host's<br/>pending burst, hero by default"]
     end
-    subgraph PIPE["Live Pipeline"]
-        RAW["RAW_TXN"] --> DTE["DT_ENRICHED\n1 min"] --> DTV["DT_VELOCITY"] --> DTS["DT_SIGNALS\n5 min"] --> STR["STREAM"] --> TASK["ROUTE_SIGNALS"] --> CASE["New CASE\n~6 min from inject"]
+    subgraph H2["Path B: in Snowflake"]
+        SIMC["SIM_CONTROL<br/>ARM / TICK / INJECT /<br/>RELEASE_ALL / START / STOP"]
+        TT["SIM_TICK_TASK<br/>1 per minute"]
     end
-    L2 --> LOOP --> RAW
-    CHAOS --> RAW
-    L1 -->|"pre-loaded"| DIM["DIM tables"]
-    L3 -->|"pre-loaded"| CS["Cortex Search"]
-    style HARNESS fill:#fef3c7,stroke:#d97706,stroke-width:2px
-    style CHAOS fill:#dc2626,color:#fff
+    subgraph PIPE["Live pipeline"]
+        RAW["RAW_TRANSACTIONS<br/>held_back flag"] --> DTE["DT_TRANSACTIONS_ENRICHED<br/>filters NOT held_back"] --> DTS["DT_SIGNALS_FAST"] --> STR["SIGNALS_STREAM"] --> TASK["ROUTE_SIGNALS"] --> CASE["New CASE_RECORD"]
+    end
+    L1 --> LD --> RAW
+    RPL --> RAW
+    PEND --> INJ --> RAW
+    SIMC --> RAW
+    TT --> SIMC
+    RFR["riskcopilot refresh<br/>forces dynamic table refresh"] -.-> DTE
+    style H1 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style H2 fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style INJ fill:#dc2626,color:#fff
     style CASE fill:#059669,color:#fff
     </pre>
+    <div class="asbuilt"><strong>As built:</strong> replay never refreshes dynamic tables and never routes; freshness comes from the table lag (60 min in dev, 1 and 5 min in the demo profile) or from <code>riskcopilot refresh</code>, and routing from the triggered task. The injected burst invents nothing, so no rupee amount is hard-coded and evaluation stays exact. A hold-back load plus replay produces the same <code>HASH_AGG</code> over <code>RAW_TRANSACTIONS</code> as a full load, and replay survived an interruption mid-run. In path B, hold-back is decided by booking time, never by a label. A timed inject-to-case run is a roadmap item.</div>
   </div>
 </details>
 
@@ -749,38 +1036,45 @@ flowchart LR
   <summary><span class="diagram-num" style="background:light-dark(#16a34a,#14532d);">D</span><h2>Design Decisions (Gaps 1-9)</h2></summary>
   <div class="section-body">
 
-    <h3>Gap 1: Transaction Grain Conversion</h3>
+    <h3>Gap 1: Transaction Grain Conversion <span class="badge b-built">Built</span></h3>
     <div class="decision"><strong>Decided:</strong> Each AMLworld pair row becomes two leg rows: one debit (negative amount), one credit (positive amount), sharing a <code>txn_pair_id</code>. Pair-level view for graph queries via self-join.</div>
+    <div class="asbuilt"><strong>As built:</strong> <code>RAW_TRANSACTIONS</code> is leg-level with no label column; <code>V_TRANSACTION_PAIRS</code> is the pair-level view; labels live only in <code>GROUND_TRUTH.TXN_LABELS</code>.</div>
 
-    <h3>Gap 2: SCD2 on DIM_PARTY</h3>
-    <div class="future"><strong>Future scope.</strong> DT_DIM_PARTY is current-state only. No effective_from/effective_to. Columns removed from DDL. SCD2 is a "What Production Would Need" slide item.</div>
+    <h3>Gap 2: SCD2 on DIM_PARTY <span class="badge b-future">Future scope</span></h3>
+    <div class="future"><strong>Future scope.</strong> DT_DIM_PARTY is current-state only. No effective_from/effective_to. SCD2 is a "What Production Would Need" slide item.</div>
 
-    <h3>Gap 3: Sanctions Screening</h3>
-    <div class="decision"><strong>Decided: Exact join only.</strong> DT_SIGNALS_FAST does exact/near-exact name join against DT_SANCTIONS_CONSOLIDATED. CORTEX_SEARCH_BATCH fuzzy screening and SCREENING_RESULT table dropped. Fuzzy matching is future scope.</div>
+    <h3>Gap 3: Sanctions Screening <span class="badge b-future">Future scope</span></h3>
+    <div class="decision"><strong>Design:</strong> exact join against a consolidated sanctions table. The later markdown revised this to <code>JAROWINKLER_SIMILARITY</code>: an exact match raises a signal, the fuzzy band raises a review task, and a fuzzy match alone may never justify a filing.</div>
+    <div class="gapnote"><strong>Future scope:</strong> both versions. The matching thresholds are already in config and the landing table is in place; the loader, consolidated table and rule are the next increment.</div>
 
-    <h3>Gap 4: Case Deduplication</h3>
-    <div class="decision"><strong>Decided:</strong> "Existing" = CASE with status IN (OPEN, INVESTIGATING, DRAFTED) for same <code>party_id</code>. Multiple signals in same refresh attach to same case. Different signal types merge into <code>case_type = 'CROSS_DOMAIN'</code>.</div>
+    <h3>Gap 4: Case Deduplication <span class="badge b-built">Built</span></h3>
+    <div class="decision"><strong>Decided:</strong> "Existing" = CASE with status IN (OPEN, INVESTIGATING, DRAFTED) for same <code>party_id</code>. Different signal types merge into <code>case_type = 'CROSS_DOMAIN'</code>.</div>
+    <div class="asbuilt"><strong>As built:</strong> signals are deduplicated first by <code>signal_business_key</code> with <code>MERGE</code>; cases are then grouped by party and open status as designed. The cross-domain re-typing needs two distinct rules, so it comes into play as rules are added.</div>
 
-    <h3>Gap 5: Evidence Pointer Resolution</h3>
-    <div class="decision"><strong>Decided: Separate query log table.</strong> EVIDENCE stays clean (ref_type, ref_id, as_of_ts). <code>EVIDENCE_QUERY_LOG</code> stores sql_text, result_hash, query_id, executed_at — linked via FK. Reviewer re-runs SQL with <code>AT(TIMESTAMP => as_of_ts)</code> and compares hashes. RESULT_SCAN not used.</div>
+    <h3>Gap 5: Evidence Pointer Resolution <span class="badge b-built">Built, changed</span></h3>
+    <div class="decision"><strong>Decided:</strong> Separate query log table. EVIDENCE stays clean (ref_type, ref_id, as_of_ts). <code>EVIDENCE_QUERY_LOG</code> stores sql_text and result_hash, linked via FK.</div>
+    <div class="asbuilt"><strong>As built:</strong> the reviewer does not re-run SQL with <code>AT(TIMESTAMP =&gt; as_of_ts)</code>. Time Travel binds per table reference, retention is short, and dynamic tables are not freely time-travellable, so correctness would have depended on it. Instead the log stores a canonical result snapshot and a versioned hash (<code>SQL-1</code>), and the reviewer reruns the stored SQL and compares hashes.</div>
 
-    <h3>Gap 6: STR XML Generation</h3>
-    <div class="decision"><strong>Decided:</strong> <code>generate_str_xml()</code> is a Python stored procedure. Reads FINDING + EVIDENCE for structured fields via SQL. Takes narrative from FINDING.narrative as-is. Assembles with <code>xml.etree</code>. Validates against schema. LLM never touches XML.</div>
+    <h3>Gap 6: STR Generation <span class="badge b-partial">Changed</span></h3>
+    <div class="decision"><strong>Design:</strong> <code>generate_str_xml()</code> assembles XML with <code>xml.etree</code>, validated against a schema; the LLM never touches XML.</div>
+    <div class="asbuilt"><strong>As built:</strong> FIU-IND publishes a form, not an XML schema. <code>DRAFT_STR</code> fills a governed template (<code>FIU_IND_STR</code> v1, an internal transcription) and stores the artifact as JSON with a SHA-256 hash; a PDF is rendered in the agent database. XML rendering is future scope, and no conformance with FIU-IND's filing gateway is claimed.</div>
 
-    <h3>Gap 7: Verified Query Inventory</h3>
-    <div class="decision"><strong>Planned (roadmap):</strong> 20 verified queries across 8 categories: transaction lookup (1-3), velocity (4-6), threshold (7-9), network (10-12), sanctions (13-15), cross-silo (16-17), case status (18-19), refusal (20).</div>
+    <h3>Gap 7: Verified Query Inventory <span class="badge b-future">Future scope</span></h3>
+    <div class="gapnote"><strong>Future scope:</strong> 20 verified queries across 8 categories. <code>GROUND_TRUTH.GOLDEN_QUESTIONS</code> is in place for them; Cortex Analyst is already wired to the semantic view and used by the Ask page and Slack bot.</div>
 
-    <h3>Gap 8: RLS Roles</h3>
-    <div class="decision"><strong>Decided:</strong> Two roles: <code>BRANCH_ANALYST_MUMBAI</code> (branch_region = MUMBAI only) and <code>COMPLIANCE_OFFICER</code> (sees all). RLS on DT_TRANSACTIONS_ENRICHED + DT_DIM_PARTY. Masking on PAN/Aadhaar fields.</div>
+    <h3>Gap 8: RLS Roles <span class="badge b-partial">Roles only</span></h3>
+    <div class="decision"><strong>Design:</strong> two roles, branch analyst (Mumbai) and compliance officer, with row access on <code>DT_TRANSACTIONS_ENRICHED</code> and <code>DT_DIM_PARTY</code> and masking on PAN/Aadhaar.</div>
+    <div class="gapnote"><strong>As built:</strong> <code>BRANCH_ANALYST_MUMBAI_DEV</code>, <code>BRANCH_ANALYST_DELHI_DEV</code>, <code>COMPLIANCE_OFFICER_DEV</code> and hosted-app roles exist. Attaching row access and masking policies is future scope. <code>CASE_RECORD.branch_region</code> is denormalised so a policy could filter cases later. The compliance role's one enforced power is <code>ATTEST_STR</code>.</div>
 
-    <h3>Gap 9: Replay Harness</h3>
-    <div class="decision"><strong>Decided: Simplified.</strong> Python script using <code>snowflake-connector-python</code>, <code>INSERT INTO</code> batches, <code>time.sleep()</code>. <code>--inject structuring_burst</code> flag. No Snowpipe Streaming SDK.</div>
+    <h3>Gap 9: Replay Harness <span class="badge b-built">Built, extended</span></h3>
+    <div class="decision"><strong>Decided:</strong> Python script using the Snowflake connector, <code>INSERT INTO</code> batches, <code>time.sleep()</code>, and an <code>--inject</code> flag. No Snowpipe Streaming SDK.</div>
+    <div class="asbuilt"><strong>As built:</strong> as decided, plus the in-Snowflake simulator (<code>SIM_CONTROL</code>). See diagram 18.</div>
 
   </div>
 </details>
 
 <p style="color: light-dark(#94a3b8, #64748b); font-size: 0.82em; margin-top: 32px; padding-top: 16px; border-top: 1px solid light-dark(#e2e8f0, #334155);">
-  Generated from <code>enhanced-architecture-diagrams.md</code>. Diagrams are simplified from the source for rendering clarity — refer to the markdown for full column-level ER detail.
+  Diagrams originate in <code>enhanced-architecture-diagrams.md</code> and are simplified for rendering clarity; refer to the markdown for full column-level ER detail. Where the two documents disagree, this page and the markdown's BUILD STATUS section reflect the build, and the live counts above come from queries against <code>RISK_COPILOT_DEV</code> on 2026-11-18.
 </p>
 
 <script>

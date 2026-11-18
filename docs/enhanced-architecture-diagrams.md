@@ -41,11 +41,20 @@
 
 # BUILD STATUS — read this before the diagrams
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-11-18 (sections S1-S3 and the S4 rows for diagrams 7, 11, 13 and 15 refreshed against the live dev environment; the rest of S4-S5 is dated 2026-09 to 2026-10 and still accurate unless a banner says otherwise)
 
 The 18 diagrams below remain the **design intent**. This section is the **build
 truth**, and where the two disagree, this section wins. Diagram-level
-corrections are listed in §S4.
+corrections are listed in §S4. `docs/architecture.html` is the visual version:
+every diagram is tagged Built / Partial / Design only, and diagrams 4, 6, 7, 9,
+14, 15 and 18 are redrawn to match the build.
+
+> **Account changed.** The trial account `ZC14131` described in the original
+> S1-S3 is no longer the target. The build now runs on `IBIEQZU-HF18990`
+> (locator `NI08942`, AWS ap-northeast-1, Standard edition): database
+> `RISK_COPILOT_DEV` plus `RISK_COPILOT_AGENT`. Per-row Cortex inference, Cortex
+> Search and agent invocation all work there, so the trial blocks listed in S2
+> are **historical** for those features.
 
 ---
 
@@ -54,13 +63,14 @@ corrections are listed in §S4.
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Repo scaffold, three-tier config, CLI, `doctor`, idempotent SQL deployer | **Done** |
-| 1 | Bootstrap + full DDL — 38 tables across 7 schemas | **Done, deployed** |
+| 1 | Bootstrap + full DDL — **40 tables, 5 dynamic tables, 4 views** across 7 schemas (`RAW`, `CURATED`, `GOVERNANCE`, `EVIDENCE_CHAIN`, `AUDIT`, `GROUND_TRUTH`, and an empty `ML`; plus an empty repo schema `SLACK_BOT`) | **Done, deployed** (live count 2026-11-18; earlier notes said 38) |
 | 2 | Data synthesis — subgraph sampling, ID maps, reskin, injection, labels, validation gates | **Done for the dev slice** — `riskcopilot --profile dev generate` passes every blocking gate on the real HI-Small files, byte-identical per seed. Demo passes every data gate (illicit 2.06%) and fails only its hero check, which needs the unbuilt rapid-credit / device-cluster cohorts. Detail: `docs/build-log.md` |
 | 3 | Load, dynamic tables, streams/tasks, replay harness | **Done for the dev slice** (8 steps, see below) |
-| 4 | Policy ingestion, Cortex Search, semantic view, agent, 8 procedures | **Blocked** — see §S2 |
-| 5 | Governance, ML, eval suites, automations, Streamlit | **Partly blocked** — see §S3 |
+| 4 | Policy ingestion, Cortex Search, semantic view, agent, procedures | **Mostly done.** Semantic view `SV_RISK_COPILOT`, Cortex Search `REGULATORY_SEARCH_SVC` (indexes hand-seeded clauses), evidence-chain procedures (`GATHER_EVIDENCE`, `DRAFT_STR`, `REVIEW_STR`, `ATTEST_STR`), and a Cortex agent `RC_STR_AGENT` in `RISK_COPILOT_AGENT.STR` are deployed. **Not built:** policy ingestion from PDFs (`AI_PARSE_DOCUMENT` / `AI_EXTRACT`), STR XML, and the design's 8 tools (`open_case`, `generate_str_xml`, `validate_filing_schema`, `escalate_to_principal_officer`, ...) |
+| 5 | Governance, ML, eval suites, automations, Streamlit | **Partly done.** Built: Streamlit app (6 pages, analyst and officer logins), maker-checker enforced in the database, audit log (214 rows, 6 agent modes), detection eval (`riskcopilot verify`, 6 runs), liquidity slice, Slack bot (`bridge/`). **Not built:** row access and masking policies (0 deployed), DMFs (0 attached; `DATA_QUALITY_LOG` has no writer), golden-question and adversarial suites (`GOLDEN_QUESTIONS` empty; `riskcopilot eval` is a stub), ML schema (empty), scheduled automations. The case-event email alert is written (`sql/10_automations`) but not deployed: it needs `RC_ALERT_EMAIL` and no alert exists in the dev database |
+| 6 | AI STR end to end in Snowflake | **Done.** `GENERATE_AI_STR` (spend-capped) -> `RC_STR_AGENT` draft (claude-sonnet-4-6) and cross-family review -> `SUBMIT_AI_DRAFT` -> `REVIEW_STR` -> PDF. 3 of 11 findings in the live data are model-drafted; the rest are `TEMPLATE_V1`. The reviewer's narrative-trace check is what constrains the prose |
 
-Verified: `mypy --strict` clean (31 files), `ruff` clean, **555 unit tests passing**
+Verified at the 2026-09-27 checkpoint (later counts are in the README): `mypy --strict` clean (31 files), `ruff` clean, **555 unit tests passing**
 (3 skipped: capability evidence exists only for the ASHWINRAVI004 connection, and
 `conf/external.yml` now defaults to another), all SQL templates and verify
 queries rendering for both profiles (14 + 6 each), every stage deployed twice
@@ -68,7 +78,7 @@ idempotently, key-pair auth working unattended with no interactive prompt,
 `doctor --profile dev` 51 checks / 0 failed. The measured facts (M#) and
 decisions (D#) referenced below are in `docs/build-log.md`.
 
-**Phase 3 on RISK_COPILOT_DEV (ZC14131), as built:**
+**Phase 3 on RISK_COPILOT_DEV, as built (2026-09, trial account `ZC14131`; the same objects, data and counts are deployed on `NI08942`):**
 
 | Layer | Objects | Live state |
 |---|---|---|
@@ -118,6 +128,24 @@ relaxes lags; `demo` uses canonical names and full freshness.
 ---
 
 ## S2. Account constraints — the dominant planning fact
+
+> **Historical (2026-09-23 probe of trial account `ZC14131`).** The build moved
+> to `NI08942` (Standard, not trial, AWS ap-northeast-1). Status of each block
+> there, from what is deployed or recorded now:
+>
+> | Blocked on the trial | On `NI08942` |
+> |---|---|
+> | Per-row Cortex inference (`AI_COMPLETE`, `CORTEX.COMPLETE`) | **Works.** `claude-sonnet-4-6` drafts STR prose; the reviewer model is `openai-gpt-5.1` (fallback `llama3.3-70b`) |
+> | `AI_PARSE_DOCUMENT` / `AI_EXTRACT` / other `AI_*` functions | Not re-probed here, and **not used**: no policy ingestion exists |
+> | Cortex Search | **Works.** `REGULATORY_SEARCH_SVC` is deployed (1-hour lag) |
+> | Agent invocation | **Works.** `RC_STR_AGENT` is invoked through `SNOWFLAKE.CORTEX.DATA_AGENT_RUN` |
+> | External Access Integration (509009) | Recorded as **still blocked** (README); Jira/MCP/Slack-connector paths stay disabled in `conf/external.yml`. Not re-probed for this refresh |
+> | Row access, masking, aggregation/projection policies | The account is reported to support masking and row access, but **none is deployed**. Not re-probed |
+> | Data Metric Functions | Not re-probed; **none attached** |
+> | Time Travel greater than 1 day | Not relevant to correctness (see below) |
+> | `ML.CLASSIFICATION`, `TOP_INSIGHTS` (regional) | Region changed; not re-probed; not used |
+>
+> The probe tables below are kept as the record of what was measured on the trial.
 
 **Evidence:** `conf/generated/capabilities.ASHWINRAVI004.yml` — 98 probes,
 30 available. That file wins over any prose claim in this repository, including
@@ -192,6 +220,28 @@ therefore aspirational; the snapshot is the mechanism.
 ---
 
 ## S3. Revised tier map
+
+> **Status update 2026-11-18.** The tier lists below are the 2026-09 plan for
+> the trial account. What actually happened to the "genuinely deferred" items:
+>
+> | Tier 1-E item | Outcome |
+> |---|---|
+> | Agent invocation / orchestration from Python | Superseded: `GENERATE_AI_STR` (Python procedure inside Snowflake) calls the agent, with a fixed-order tool fallback. Procedures hold the deterministic logic, as recommended. The Slack bot still uses the laptop pipeline |
+> | Per-row `AI_COMPLETE` | Used only for optional STR prose. The default finding narrative stays `TEMPLATE_V1` (8 of 11 live findings) |
+> | L3 narratives | **Not built**; `kyc_note` is NULL. The template generator named here was never written |
+> | Cortex Search | **Built** over `POLICY_CLAUSE_CHUNKS`, not the `ILIKE` fallback |
+> | Policy ingestion via `AI_PARSE_DOCUMENT` | **Not built**; clauses are seeded from `conf/detection.yml` |
+> | Row access + masking policies | **Not built**, and the "parameterised view" substitute does not exist either. The app's region filter is a UI filter |
+> | DMFs | **Not built**; the SQL-assertion fallback into `AUDIT.DATA_QUALITY_LOG` has no writer |
+> | MCP / Jira / Slack | **Not built** as MCP; a standalone Socket Mode Slack bot (`bridge/`) and an undeployed email alert exist |
+>
+> Of the Tier 1-S list, what exists: L1+L2 generation, load, 5 dynamic tables,
+> stream + `ROUTE_SIGNALS`, **1 of the 5 signal rules**, the 4 evidence-chain
+> procedures plus AI-STR procedures (not "all 8"), semantic view + Analyst,
+> `AI_AGG` triage, detection eval (Suite 1), replay + `--inject`, the Streamlit
+> app. Not built from that list: the other 4 rules, fuzzy sanctions screening,
+> `ANOMALY_DETECTION` baselines, Feature Store / Model Registry use, and the
+> Suite 2 text-to-SQL eval.
 
 **Strategy:** build everything the evidence says works, for real. Narrative
 generation is the only genuinely blocked piece of the copilot, so almost nothing
@@ -308,7 +358,7 @@ and it lights up unchanged on a non-trial account.
 
 | Diagram | Stated | Correction |
 |---|---|---|
-| 2 | L2 is an "Agent-Based Simulator"; L3 via `AI_COMPLETE` | L2 is deterministic subgraph sampling + reskin + injection — no simulation. L3 is template-based until Cortex is available. |
+| 2 | L2 is an "Agent-Based Simulator"; L3 via `AI_COMPLETE` | L2 is deterministic subgraph sampling + reskin + injection — no simulation. L3 is not built (`kyc_note` is NULL); the earlier "template-based until Cortex is available" plan was never implemented, and Cortex has since become available. |
 | 2 | "5.1K labelled laundering txns" | Measured (M5): **5,177** illicit of 5,078,345 = **0.102%**. The Patterns file attributes **3,209** of them to 370 attempts across 8 typologies (M3); the other **1,968** are illicit with no attempt and stay labelled with a NULL typology. The earlier 0.063% counted the attributed rows only. The build gate band is 0.10–2.50% (D6); dev measures **1.99%**, demo **2.06%** after seeding 20 attempts per typology (D26). §25.1's figures are superseded. |
 | 2 | 18-day ledger treated as uniform | Measured (M21): **legitimate activity ends on 2022-09-10** — 99.98% of pairs fall on 09-01..09-10, while 09-11..09-18 is 59% laundering. Income is annualised over the measured *legit* span (D19); the structuring window is 7 days (D18). The tail was a temporal label proxy, so **the ledger is cut at 2022-09-10** (D25), dropping the 109 attempts that reach past it. |
 | 2 | L1 names via Faker `hi_IN` | `hi_IN` writes Devanagari (M20), which breaks Jaro-Winkler screening against the Latin-script sanctions list. `en_IN` gives Indian names in Latin script. |
@@ -320,15 +370,15 @@ and it lights up unchanged on a non-trial account.
 | 4 | `DT_TXN_VELOCITY_FEATURES` as a dynamic table with rolling windows | **Not incrementally refreshable.** Decomposed into `DT_TXN_DAILY_AGG` (incremental-safe) + `V_TXN_VELOCITY_FEATURES` (summing view) + `DT_TXN_VELOCITY_1H`. |
 | 4 | One `DT_SIGNALS_FAST` holding 5 rules | Split into `DT_SIGNALS_FAST` (row-level, incremental) and `DT_SIGNALS_AGGREGATE` (aggregate/graph, 60 min). One non-incremental rule would degrade the whole table to full refresh every 5 minutes. |
 | 4, 15 | `RAW_TRANSACTIONS` shown as the sole landing table | Three tables: `RAW_AMLWORLD_TRANS` (verbatim, pair-level, labelled) → `RAW_TRANSACTIONS` (leg-level, INR, **no label**) + `GROUND_TRUTH.TXN_LABELS`. |
-| 5 | Sanctions matching is "exact join only" | Fuzzy matching restored via `JAROWINKLER_SIMILARITY` — one built-in function, not the complexity the original assessment assumed. Exact match raises a signal; the fuzzy band raises a review task. |
+| 5 | Sanctions matching is "exact join only" | Fuzzy matching restored via `JAROWINKLER_SIMILARITY` — one built-in function, not the complexity the original assessment assumed. Exact match raises a signal; the fuzzy band raises a review task. **Design only: no sanctions loader, consolidated table or rule exists (2026-11-18).** |
 | 6, 11 | Evidence "RE-VERIFIABLE via Time Travel" | `EVIDENCE_QUERY_LOG.result_snapshot` + versioned canonical hashing is the mechanism. Time Travel is demonstrable provenance only. |
-| 7 | Single Cortex Agent, 4 modes | **Two** agent modes, not four. Reviewer becomes a stored procedure (determinism is its whole value); Sentinel becomes a SQL view + one `AI_AGG` call. Only Investigator and Drafter need planning. Agent *invocation* is trial-gated (399504) but the object deploys — orchestrate from Python over Analyst REST + the procedures meanwhile. See §S3. |
-| 8 | "Sanctions name matching scores: exact join" under DETERMINISTIC | Still deterministic, but now `JAROWINKLER_SIMILARITY`. The exact/fuzzy split matters: exact raises a signal, fuzzy raises a review task and may never alone justify a filing. |
-| 11 | RLS, masking, DMFs | All Standard-blocked (000002 Unsupported feature). Authored but deploy-gated; equivalent filtering proven via a parameterised view. |
+| 7 | Single Cortex Agent, 4 modes | **Superseded 2026-11.** Reviewer is the deterministic procedure `REVIEW_STR`; Sentinel is SQL plus one `AI_AGG` call; Investigator and Drafter are procedures (`GATHER_EVIDENCE`, `DRAFT_STR`). One Cortex agent, `RC_STR_AGENT` (database `RISK_COPILOT_AGENT`), exists only for the optional AI STR path, with four tools (`get_evidence_package`, `draft_str_narrative`, `review_str_draft`, `render_str_pdf`). The audit log records six modes: `OPERATOR`, `INVESTIGATOR`, `DRAFTER`, `REVIEWER`, `SENTINEL`, `AGENTIC`. |
+| 8 | "Sanctions name matching scores: exact join" under DETERMINISTIC | Still deterministic in design, but now `JAROWINKLER_SIMILARITY`. **Not implemented.** The exact/fuzzy split matters: exact raises a signal, fuzzy raises a review task and may never alone justify a filing. |
+| 11 | RLS, masking, DMFs | **Not built, and no substitute exists.** The earlier claim of "equivalent filtering proven via a parameterised view" is not borne out: no such view is deployed, and 0 row access policies, 0 masking policies and 0 DMF attachments exist. Maker-checker, the append-only audit log and hash-based reproducibility are the governance mechanisms that are built. |
 | 12 | 5 test suites | Suite 1 (detection F1) **and Suite 2 (text-to-SQL)** are buildable now — Analyst works, so score on result hash. The deterministic half of Suite 3 (citation resolution) also works. Suite 4 needs `AI_COMPLETE`; Suite 5 needs DMFs. |
-| 13 | Jira / Slack / Drive via MCP, agent-as-MCP-server | External Access Integration is trial-gated (509009). Automations run as Snowflake tasks writing to tables; outbound delivery and MCP exposure are out until the account is converted. |
-| 14 | Hero party `P-10042 / Rajesh Kumar` | Party ids are **generated**, so this is fiction. A selection step picks a party that provably trips every listed rule and pins it to `conf/generated/demo_entity.yml`. |
-| 15 | "16 tables" | Actual count is **38** (`sql/01_ddl`: 13 RAW/landing, 8 governance, 9 evidence chain, 8 audit + ground truth) once staging, ID maps, chunks, templates, proposals, watermark and eval tables are included. |
+| 13 | Jira / Slack / Drive via MCP, agent-as-MCP-server | Not built. External Access Integration was trial-gated (509009) and is recorded as still blocked; `mcp.jira` and `mcp.slack` are disabled in config. No scheduled automations or CTR report exist. Built instead: a standalone Slack bot (`bridge/`, Socket Mode) and a case-event email alert (written, not deployed). |
+| 14 | Hero party `P-10042 / Rajesh Kumar` | Party ids are **generated**, so this is fiction. A selection step picked **Kamya Dhar `P-754971478708`** (Mumbai, declared income ₹38.5 lakh): 10 cash deposits totalling ₹94.03 lakh into 2 accounts, all below the ₹10 lakh line, `CONFIRMED_BY_DETECTION` (case `CASE-4399c4c86db5c6ea`). Only the structuring lens exists; no fraud-velocity or credit lens. "Rajesh Menon" is the Principal Officer persona. |
+| 15 | "16 tables" | Live count (2026-11-18): **40 tables, 5 dynamic tables, 4 views** in `RISK_COPILOT_DEV` across `RAW` (13), `CURATED` (1 table), `GOVERNANCE` (8), `EVIDENCE_CHAIN` (9), `AUDIT` (3) and `GROUND_TRUTH` (6), plus an empty `ML` schema; the agent database adds 5 tables. (An earlier note said 38.) |
 | 15 | `RAW_TRANSACTIONS.source_ref` = `amlworld:<n>` / `inject:<cohort>` | **A value-level label leak** the column checks could not see: the prefix separates injected rows, the cohort name is a label, and `<n>` joins to `RAW_AMLWORLD_TRANS.is_laundering`. Now an opaque `UTR<16 hex>` token for every leg; pair ids are allocated in hash order so injected pairs interleave (D16). The leakage gate scans RAW *values* as well as column names. |
 | 18 | Snowpipe Streaming as future scope | Correct, and now also: replay inserts to `RAW_TRANSACTIONS` directly, and `ingested_at` is distinct from `txn_timestamp` so replay does not corrupt the event clock (measured: different on all 6,300 replayed legs, M40). |
 | 18 | A Python producer at "1 sim-day / 30 sec"; chaos mode "inserts 15 deposits of ₹9.5L across 4 accounts" | `riskcopilot replay` streams the legs `load` held back (`replay.hold_back_from`; dev 2022-09-03, D44), one 6-hour `sim_step` per 5 s, one transaction per tick. It is restartable and never routes (D45). **`--inject structuring_burst` invents nothing**: it releases one host's already-generated, already-labelled pending burst (the hero by default, D47), so no rupee amount is hardcoded and evaluation stays exact. Hold-back + replay gives the same `HASH_AGG` as a full load (M40). |
