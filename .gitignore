@@ -13,6 +13,8 @@ secrets/
 # Streamlit secrets hold the hosted app's private key.
 secrets.toml
 *.streamlit-secrets.toml
+# STR PDFs written by the file-strs skill (case and customer data).
+out/str_pdfs/
 
 # ---------------------------------------------------------------------------
 # Large source datasets (fetched, not committed -- see data/MANIFEST.yml)
